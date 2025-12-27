@@ -1106,6 +1106,8 @@ function serializeNotationsGroup(notations: Notation[], indent: string): string[
       if (notation.bracket !== undefined) attrs += ` bracket="${notation.bracket ? 'yes' : 'no'}"`;
       if (notation.showNumber) attrs += ` show-number="${notation.showNumber}"`;
       if (notation.showType) attrs += ` show-type="${notation.showType}"`;
+      if (notation.lineShape) attrs += ` line-shape="${notation.lineShape}"`;
+      if (notation.placement) attrs += ` placement="${notation.placement}"`;
 
       const tup = notation as TupletNotation;
       if (tup.tupletActual || tup.tupletNormal) {

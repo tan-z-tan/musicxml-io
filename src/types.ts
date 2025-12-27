@@ -625,6 +625,7 @@ export interface TupletNotation extends BaseNotation {
   bracket?: boolean;
   showNumber?: 'actual' | 'both' | 'none';
   showType?: 'actual' | 'both' | 'none';
+  lineShape?: 'straight' | 'curved';
   tupletActual?: { tupletNumber?: number; tupletType?: NoteType; tupletDots?: number };
   tupletNormal?: { tupletNumber?: number; tupletType?: NoteType; tupletDots?: number };
 }

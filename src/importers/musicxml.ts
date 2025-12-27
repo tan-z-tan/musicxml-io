@@ -1517,6 +1517,8 @@ function parseNotations(elements: OrderedElement[], notationsIndex: number = 0):
         bracket: attrs['bracket'] === 'yes' ? true : attrs['bracket'] === 'no' ? false : undefined,
         showNumber: attrs['show-number'] as 'actual' | 'both' | 'none' | undefined,
         showType: attrs['show-type'] as 'actual' | 'both' | 'none' | undefined,
+        lineShape: attrs['line-shape'] as 'straight' | 'curved' | undefined,
+        placement: attrs['placement'] as 'above' | 'below' | undefined,
         notationsIndex,
       };
 
