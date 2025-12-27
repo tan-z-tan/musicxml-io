@@ -52,6 +52,8 @@ import type {
   FiguredBassEntry,
   Figure,
   TupletNotation,
+  SoundEntry,
+  TechnicalNotation,
 } from '../types';
 
 // Parser with preserveOrder to maintain element order
@@ -755,6 +757,8 @@ function parseMeasure(elements: OrderedElement[], attrs: Record<string, string>)
       measure.entries.push(parseHarmony(el['harmony'] as OrderedElement[], getAttributes(el)));
     } else if (el['figured-bass']) {
       measure.entries.push(parseFiguredBass(el['figured-bass'] as OrderedElement[], getAttributes(el)));
+    } else if (el['sound']) {
+      measure.entries.push(parseSound(getAttributes(el)));
     }
   }
 
@@ -891,13 +895,19 @@ function parseTimeSignature(elements: OrderedElement[], parentElements: OrderedE
 function parseKeySignature(elements: OrderedElement[]): KeySignature {
   const fifths = getElementText(elements, 'fifths');
   const mode = getElementText(elements, 'mode');
+  const cancel = getElementText(elements, 'cancel');
 
   const key: KeySignature = {
     fifths: parseInt(fifths || '0', 10),
   };
 
-  if (mode === 'major' || mode === 'minor') {
-    key.mode = mode;
+  const validModes = ['major', 'minor', 'dorian', 'phrygian', 'lydian', 'mixolydian', 'aeolian', 'ionian', 'locrian'];
+  if (mode && validModes.includes(mode)) {
+    key.mode = mode as KeySignature['mode'];
+  }
+
+  if (cancel) {
+    key.cancel = parseInt(cancel, 10);
   }
 
   // Non-traditional key signatures
@@ -1014,6 +1024,22 @@ function parseNote(elements: OrderedElement[], attrs: Record<string, string>): N
       if (displayOctave) restInfo.displayOctave = parseInt(displayOctave, 10);
 
       note.rest = restInfo;
+      break;
+    }
+  }
+
+  // Unpitched (percussion)
+  for (const el of elements) {
+    if (el['unpitched'] !== undefined) {
+      const unpitchedContent = el['unpitched'] as OrderedElement[];
+      note.unpitched = {};
+
+      const displayStep = getElementText(unpitchedContent, 'display-step');
+      if (displayStep) note.unpitched.displayStep = displayStep;
+
+      const displayOctave = getElementText(unpitchedContent, 'display-octave');
+      if (displayOctave) note.unpitched.displayOctave = parseInt(displayOctave, 10);
+
       break;
     }
   }
@@ -1362,12 +1388,39 @@ function parseNotations(elements: OrderedElement[]): Notation[] {
       const technicalTypes = [
         'up-bow', 'down-bow', 'harmonic', 'open-string', 'thumb-position',
         'fingering', 'pluck', 'double-tongue', 'triple-tongue', 'stopped',
-        'snap-pizzicato', 'fret', 'string', 'hammer-on', 'pull-off', 'bend',
+        'snap-pizzicato', 'fret', 'string', 'hammer-on', 'pull-off',
         'tap', 'heel', 'toe', 'fingernails', 'hole', 'arrow', 'handbell',
         'brass-bend', 'flip', 'smear', 'open', 'half-muted', 'harmon-mute',
         'golpe', 'other-technical',
       ];
       for (const tech of techContent) {
+        // Handle bend with bend-alter
+        if (tech['bend'] !== undefined) {
+          const bendContent = tech['bend'] as OrderedElement[];
+          const techAttrs = getAttributes(tech);
+          const techNotation: TechnicalNotation = {
+            type: 'technical',
+            technical: 'bend',
+            placement: techAttrs['placement'] as 'above' | 'below' | undefined,
+          };
+          const bendAlter = getElementText(bendContent, 'bend-alter');
+          if (bendAlter) techNotation.bendAlter = parseFloat(bendAlter);
+          for (const bc of bendContent) {
+            if (bc['pre-bend'] !== undefined) techNotation.preBend = true;
+            if (bc['release'] !== undefined) techNotation.release = true;
+            if (bc['with-bar']) {
+              const wbContent = bc['with-bar'] as OrderedElement[];
+              for (const item of wbContent) {
+                if (item['#text'] !== undefined) {
+                  techNotation.withBar = parseFloat(String(item['#text']));
+                  break;
+                }
+              }
+            }
+          }
+          notations.push(techNotation);
+        }
+        // Handle other technical elements
         for (const techType of technicalTypes) {
           if (tech[techType] !== undefined) {
             const techAttrs = getAttributes(tech);
@@ -1511,6 +1564,10 @@ function parseDirection(elements: OrderedElement[], attrs: Record<string, string
 
   if (attrs['placement'] === 'above' || attrs['placement'] === 'below') {
     direction.placement = attrs['placement'];
+  }
+
+  if (attrs['directive'] === 'yes') {
+    direction.directive = true;
   }
 
   const staff = getElementText(elements, 'staff');
@@ -2056,4 +2113,22 @@ function parseFiguredBass(elements: OrderedElement[], attrs: Record<string, stri
   }
 
   return fb;
+}
+
+function parseSound(attrs: Record<string, string>): SoundEntry {
+  const sound: SoundEntry = {
+    type: 'sound',
+  };
+
+  if (attrs['tempo']) sound.tempo = parseFloat(attrs['tempo']);
+  if (attrs['dynamics']) sound.dynamics = parseFloat(attrs['dynamics']);
+  if (attrs['dacapo'] === 'yes') sound.dacapo = true;
+  if (attrs['segno']) sound.segno = attrs['segno'];
+  if (attrs['dalsegno']) sound.dalsegno = attrs['dalsegno'];
+  if (attrs['coda']) sound.coda = attrs['coda'];
+  if (attrs['tocoda']) sound.tocoda = attrs['tocoda'];
+  if (attrs['fine'] === 'yes') sound.fine = true;
+  if (attrs['forward-repeat'] === 'yes') sound.forwardRepeat = true;
+
+  return sound;
 }

@@ -242,7 +242,8 @@ export interface TimeSignature {
 
 export interface KeySignature {
   fifths: number;
-  mode?: 'major' | 'minor';
+  mode?: 'major' | 'minor' | 'dorian' | 'phrygian' | 'lydian' | 'mixolydian' | 'aeolian' | 'ionian' | 'locrian';
+  cancel?: number;
   // Non-traditional key signatures
   keySteps?: string[];
   keyAlters?: number[];
@@ -278,7 +279,7 @@ export interface Barline {
 // ============================================================
 // MeasureEntry (MusicXML順序を保持するフラット構造)
 // ============================================================
-export type MeasureEntry = NoteEntry | BackupEntry | ForwardEntry | DirectionEntry | HarmonyEntry | FiguredBassEntry;
+export type MeasureEntry = NoteEntry | BackupEntry | ForwardEntry | DirectionEntry | HarmonyEntry | FiguredBassEntry | SoundEntry;
 
 export interface NoteEntry {
   type: 'note';
@@ -345,6 +346,7 @@ export interface DirectionEntry {
   type: 'direction';
   directionTypes: DirectionType[];
   placement?: 'above' | 'below';
+  directive?: boolean;
   staff?: number;
   voice?: number;
   offset?: number;
@@ -352,6 +354,19 @@ export interface DirectionEntry {
     tempo?: number;
     dynamics?: number;
   };
+}
+
+export interface SoundEntry {
+  type: 'sound';
+  tempo?: number;
+  dynamics?: number;
+  dacapo?: boolean;
+  segno?: string;
+  dalsegno?: string;
+  coda?: string;
+  tocoda?: string;
+  fine?: boolean;
+  forwardRepeat?: boolean;
 }
 
 export interface HarmonyEntry {
@@ -517,6 +532,10 @@ export interface TechnicalNotation extends BaseNotation {
   string?: number;
   fret?: number;
   fingering?: string;
+  bendAlter?: number;
+  preBend?: boolean;
+  release?: boolean;
+  withBar?: number;
 }
 
 export type TechnicalType =

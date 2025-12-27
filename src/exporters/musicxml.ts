@@ -32,6 +32,8 @@ import type {
   HarmonyEntry,
   FiguredBassEntry,
   TupletNotation,
+  SoundEntry,
+  TechnicalNotation,
 } from '../types';
 
 export interface SerializeOptions {
@@ -644,6 +646,11 @@ function serializeKey(key: KeySignature, indent: string): string[] {
 
   lines.push(`${indent}<key>`);
 
+  // Cancel (for key changes)
+  if (key.cancel !== undefined) {
+    lines.push(`${indent}  <cancel>${key.cancel}</cancel>`);
+  }
+
   // Non-traditional key signatures
   if (key.keySteps && key.keyAlters && key.keySteps.length > 0) {
     for (let i = 0; i < key.keySteps.length; i++) {
@@ -724,6 +731,8 @@ function serializeEntry(entry: MeasureEntry, indent: string): string[] {
       return serializeHarmony(entry, indent);
     case 'figured-bass':
       return serializeFiguredBass(entry, indent);
+    case 'sound':
+      return serializeSound(entry, indent);
     default:
       return [];
   }
@@ -1074,7 +1083,25 @@ function serializeNotations(notations: Notation[], indent: string): string[] {
     for (const tech of technicals) {
       if (tech.type === 'technical') {
         const placementAttr = tech.placement ? ` placement="${tech.placement}"` : '';
-        lines.push(`${indent}    <${tech.technical}${placementAttr}/>`);
+        const techNotation = tech as TechnicalNotation;
+        if (tech.technical === 'bend' && (techNotation.bendAlter !== undefined || techNotation.preBend || techNotation.release)) {
+          lines.push(`${indent}    <bend${placementAttr}>`);
+          if (techNotation.bendAlter !== undefined) {
+            lines.push(`${indent}      <bend-alter>${techNotation.bendAlter}</bend-alter>`);
+          }
+          if (techNotation.preBend) {
+            lines.push(`${indent}      <pre-bend/>`);
+          }
+          if (techNotation.release) {
+            lines.push(`${indent}      <release/>`);
+          }
+          if (techNotation.withBar !== undefined) {
+            lines.push(`${indent}      <with-bar>${techNotation.withBar}</with-bar>`);
+          }
+          lines.push(`${indent}    </bend>`);
+        } else {
+          lines.push(`${indent}    <${tech.technical}${placementAttr}/>`);
+        }
       }
     }
     lines.push(`${indent}  </technical>`);
@@ -1136,8 +1163,10 @@ function serializeForward(forward: ForwardEntry, indent: string): string[] {
 function serializeDirection(direction: DirectionEntry, indent: string): string[] {
   const lines: string[] = [];
 
-  const placementAttr = direction.placement ? ` placement="${direction.placement}"` : '';
-  lines.push(`${indent}<direction${placementAttr}>`);
+  let attrs = '';
+  if (direction.placement) attrs += ` placement="${direction.placement}"`;
+  if (direction.directive) attrs += ' directive="yes"';
+  lines.push(`${indent}<direction${attrs}>`);
 
   for (const dirType of direction.directionTypes) {
     lines.push(...serializeDirectionType(dirType, indent + '  '));
@@ -1507,4 +1536,24 @@ function serializeFiguredBass(fb: FiguredBassEntry, indent: string): string[] {
   lines.push(`${indent}</figured-bass>`);
 
   return lines;
+}
+
+function serializeSound(sound: SoundEntry, indent: string): string[] {
+  const attrs: string[] = [];
+
+  if (sound.tempo !== undefined) attrs.push(`tempo="${sound.tempo}"`);
+  if (sound.dynamics !== undefined) attrs.push(`dynamics="${sound.dynamics}"`);
+  if (sound.dacapo) attrs.push('dacapo="yes"');
+  if (sound.segno) attrs.push(`segno="${escapeXml(sound.segno)}"`);
+  if (sound.dalsegno) attrs.push(`dalsegno="${escapeXml(sound.dalsegno)}"`);
+  if (sound.coda) attrs.push(`coda="${escapeXml(sound.coda)}"`);
+  if (sound.tocoda) attrs.push(`tocoda="${escapeXml(sound.tocoda)}"`);
+  if (sound.fine) attrs.push('fine="yes"');
+  if (sound.forwardRepeat) attrs.push('forward-repeat="yes"');
+
+  if (attrs.length === 0) {
+    return [`${indent}<sound/>`];
+  }
+
+  return [`${indent}<sound ${attrs.join(' ')}/>`];
 }
