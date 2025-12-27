@@ -96,4 +96,4 @@ export {
 export type { AddNoteOptions } from './operations';
 
 // File operations
-export { parseFile, serializeToFile } from './file';
+export { parseFile, serializeToFile, decodeBuffer } from './file';

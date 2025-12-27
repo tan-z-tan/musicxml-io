@@ -18,14 +18,41 @@ export async function parseFile(filePath: string): Promise<Score> {
   }
 
   // Parse as XML string
-  const xmlString = data.toString('utf-8');
+  const xmlString = decodeBuffer(data);
   return parse(xmlString);
 }
 
 /**
+ * Detect encoding from BOM and decode buffer to string
+ * Supports UTF-8, UTF-16BE, UTF-16LE
+ */
+export function decodeBuffer(buffer: Buffer): string {
+  // UTF-16 BE BOM: FE FF
+  if (buffer.length >= 2 && buffer[0] === 0xFE && buffer[1] === 0xFF) {
+    return buffer.swap16().toString('utf-16le'); // Node.js usually handles LE well, or just use ucs2
+    // Actually Node's utf16le is standard. efficient way to read BE is swap and read LE or use TextDecoder.
+    // simpler: TextDecoder
+  }
+
+  // UTF-16 LE BOM: FF FE
+  if (buffer.length >= 2 && buffer[0] === 0xFF && buffer[1] === 0xFE) {
+    return buffer.toString('utf16le');
+  }
+
+  // UTF-8 BOM: EF BB BF
+  if (buffer.length >= 3 && buffer[0] === 0xEF && buffer[1] === 0xBB && buffer[2] === 0xBF) {
+    return buffer.toString('utf8', 3); // Skip BOM
+  }
+
+  // Default to UTF-8
+  return buffer.toString('utf8');
+}
+
+
+/**
  * Export options combining all format options
  */
-export interface ExportOptions extends SerializeOptions, MidiExportOptions {}
+export interface ExportOptions extends SerializeOptions, MidiExportOptions { }
 
 /**
  * Serialize a Score to a file

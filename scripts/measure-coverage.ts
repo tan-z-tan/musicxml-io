@@ -14,6 +14,7 @@ import { join, relative } from 'path';
 import { XMLParser } from 'fast-xml-parser';
 import { parse } from '../src/importers/musicxml';
 import { serialize } from '../src/exporters/musicxml';
+import { decodeBuffer } from '../src/file';
 
 // ============================================================
 // Types
@@ -418,7 +419,7 @@ function findXmlFiles(dir: string): string[] {
 
     if (stat.isDirectory()) {
       files.push(...findXmlFiles(fullPath));
-    } else if (entry.endsWith('.xml')) {
+    } else if (entry.endsWith('.xml') || entry.endsWith('.musicxml')) {
       files.push(fullPath);
     }
   }
@@ -432,7 +433,10 @@ function findXmlFiles(dir: string): string[] {
 
 function analyzeFile(filePath: string): FileScore | { error: string } {
   try {
-    const originalXml = readFileSync(filePath, 'utf-8');
+    // Read as buffer to handle encoding
+    const fileBuffer = readFileSync(filePath);
+    const originalText = decodeBuffer(fileBuffer);
+    const originalXml = originalText;
 
     // Roundtrip: parse to internal representation, then serialize back
     const score = parse(originalXml);
