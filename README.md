@@ -13,9 +13,9 @@ TypeScript library for parsing and serializing MusicXML.
 │   .xml / .mxl   │─────▶│      Score      │─────▶│   .xml / .mxl   │
 └─────────────────┘      │                 │      └─────────────────┘
                    parse │   ┌─────────┐   │ serialize
-                         │   │  parts  │   │      ┌─────────────────┐
-                         │   │   └─measures      │      MIDI        │
-                         │   │       └─entries   │─────▶│   .mid          │
+                         │   │ parts  │    │      ┌─────────────────┐
+                         │   │  └─measures │   　　|     MIDI        │
+                         │   │    └─entries│─────▶│   .mid          │
                          │   └─────────┘   │      └─────────────────┘
                          │                 │ exportMidi
                          └────────┬────────┘
