@@ -1,9 +1,9 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { readFileSync, unlinkSync, existsSync } from 'fs';
 import { join } from 'path';
-import { parse } from '../src/parser';
+import { parse } from '../src';
 import { parseFile, serializeToFile } from '../src/file';
-import { isCompressed } from '../src/compressed';
+import { isCompressed } from '../src';
 
 const fixturesPath = join(__dirname, 'fixtures');
 const lilypondPath = join(fixturesPath, 'lilypond', 'xmlFiles');

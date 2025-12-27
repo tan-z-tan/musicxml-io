@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { parse } from '../src/parser';
+import { parse } from '../src';
 
 const fixturesPath = join(__dirname, 'fixtures');
 
@@ -12,10 +12,14 @@ describe('Parser', () => {
       const score = parse(xml);
 
       expect(score.metadata.workTitle).toBe('Single Note');
-      expect(score.metadata.creator?.composer).toBe('Test');
+      expect(score.metadata.creators?.find(c => c.type === 'composer')?.value).toBe('Test');
       expect(score.partList).toHaveLength(1);
-      expect(score.partList[0].id).toBe('P1');
-      expect(score.partList[0].name).toBe('Piano');
+      const part0 = score.partList[0];
+      expect(part0.type).toBe('score-part');
+      if (part0.type === 'score-part') {
+        expect(part0.id).toBe('P1');
+        expect(part0.name).toBe('Piano');
+      }
 
       expect(score.parts).toHaveLength(1);
       expect(score.parts[0].measures).toHaveLength(1);

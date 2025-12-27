@@ -2,7 +2,11 @@ import { XMLParser } from 'fast-xml-parser';
 import type {
   Score,
   ScoreMetadata,
+  PartListEntry,
   PartInfo,
+  PartGroup,
+  ScoreInstrument,
+  MidiInstrument,
   Part,
   Measure,
   MeasureAttributes,
@@ -14,9 +18,9 @@ import type {
   Pitch,
   NoteType,
   Accidental,
+  AccidentalInfo,
   BeamInfo,
   Notation,
-  NotationType,
   Lyric,
   TimeSignature,
   KeySignature,
@@ -24,6 +28,20 @@ import type {
   Transpose,
   Barline,
   DynamicsValue,
+  Print,
+  Defaults,
+  Credit,
+  CreditWords,
+  RestInfo,
+  NoteheadInfo,
+  NoteheadValue,
+  Support,
+  MiscellaneousField,
+  Creator,
+  Encoding,
+  SystemLayout,
+  PageLayout,
+  PageMargins,
 } from '../types';
 
 // Parser with preserveOrder to maintain element order
@@ -96,11 +114,15 @@ function parseScorePartwise(elements: OrderedElement[]): Score {
   const partListContent = getElementContent(elements, 'part-list');
   const partList = partListContent ? parsePartList(partListContent) : [];
   const parts = parseParts(elements);
+  const defaults = parseDefaults(elements);
+  const credits = parseCredits(elements);
 
   return {
     metadata,
     partList,
     parts,
+    defaults,
+    credits,
   };
 }
 
@@ -121,11 +143,11 @@ function parseMetadata(elements: OrderedElement[]): ScoreMetadata {
   // Identification
   const identification = getElementContent(elements, 'identification');
   if (identification) {
-    const creators: { type: string; text: string }[] = [];
+    // Creators
+    const creators: Creator[] = [];
     for (const el of identification) {
       if (el['creator']) {
         const attrs = getAttributes(el);
-        const type = attrs['type'] || '';
         const content = el['creator'] as OrderedElement[];
         let text = '';
         for (const item of content) {
@@ -134,36 +156,402 @@ function parseMetadata(elements: OrderedElement[]): ScoreMetadata {
             break;
           }
         }
-        creators.push({ type, text });
+        creators.push({ type: attrs['type'], value: text });
       }
     }
+    if (creators.length > 0) metadata.creators = creators;
 
-    if (creators.length > 0) {
-      metadata.creator = {};
-      for (const creator of creators) {
-        if (creator.type === 'composer') metadata.creator.composer = creator.text;
-        else if (creator.type === 'lyricist') metadata.creator.lyricist = creator.text;
-        else if (creator.type === 'arranger') metadata.creator.arranger = creator.text;
+    // Rights
+    const rights: string[] = [];
+    for (const el of identification) {
+      if (el['rights']) {
+        const content = el['rights'] as OrderedElement[];
+        for (const item of content) {
+          if (item['#text'] !== undefined) {
+            rights.push(String(item['#text']));
+            break;
+          }
+        }
       }
     }
+    if (rights.length > 0) metadata.rights = rights;
 
-    const rights = getElementText(identification, 'rights');
-    if (rights) metadata.rights = rights;
+    // Source
+    metadata.source = getElementText(identification, 'source');
 
+    // Encoding
     const encoding = getElementContent(identification, 'encoding');
     if (encoding) {
-      metadata.encoding = {
-        software: getElementText(encoding, 'software'),
-        encodingDate: getElementText(encoding, 'encoding-date'),
-      };
+      metadata.encoding = parseEncoding(encoding);
+    }
+
+    // Miscellaneous
+    const miscellaneous = getElementContent(identification, 'miscellaneous');
+    if (miscellaneous) {
+      const fields: MiscellaneousField[] = [];
+      for (const el of miscellaneous) {
+        if (el['miscellaneous-field']) {
+          const attrs = getAttributes(el);
+          const content = el['miscellaneous-field'] as OrderedElement[];
+          let text = '';
+          for (const item of content) {
+            if (item['#text'] !== undefined) {
+              text = String(item['#text']);
+              break;
+            }
+          }
+          fields.push({ name: attrs['name'] || '', value: text });
+        }
+      }
+      if (fields.length > 0) metadata.miscellaneous = fields;
     }
   }
 
   return metadata;
 }
 
-function parsePartList(elements: OrderedElement[]): PartInfo[] {
-  const partList: PartInfo[] = [];
+function parseEncoding(elements: OrderedElement[]): Encoding {
+  const encoding: Encoding = {};
+
+  const software: string[] = [];
+  const encoder: string[] = [];
+  const supports: Support[] = [];
+
+  for (const el of elements) {
+    if (el['software']) {
+      const content = el['software'] as OrderedElement[];
+      for (const item of content) {
+        if (item['#text'] !== undefined) {
+          software.push(String(item['#text']));
+          break;
+        }
+      }
+    } else if (el['encoding-date']) {
+      const content = el['encoding-date'] as OrderedElement[];
+      for (const item of content) {
+        if (item['#text'] !== undefined) {
+          encoding.encodingDate = String(item['#text']);
+          break;
+        }
+      }
+    } else if (el['encoder']) {
+      const content = el['encoder'] as OrderedElement[];
+      for (const item of content) {
+        if (item['#text'] !== undefined) {
+          encoder.push(String(item['#text']));
+          break;
+        }
+      }
+    } else if (el['encoding-description']) {
+      const content = el['encoding-description'] as OrderedElement[];
+      for (const item of content) {
+        if (item['#text'] !== undefined) {
+          encoding.encodingDescription = String(item['#text']);
+          break;
+        }
+      }
+    } else if (el['supports']) {
+      const attrs = getAttributes(el);
+      const support: Support = {
+        element: attrs['element'] || '',
+        type: attrs['type'] === 'no' ? 'no' : 'yes',
+      };
+      if (attrs['attribute']) support.attribute = attrs['attribute'];
+      if (attrs['value']) support.value = attrs['value'];
+      supports.push(support);
+    }
+  }
+
+  if (software.length > 0) encoding.software = software;
+  if (encoder.length > 0) encoding.encoder = encoder;
+  if (supports.length > 0) encoding.supports = supports;
+
+  return encoding;
+}
+
+function parseDefaults(elements: OrderedElement[]): Defaults | undefined {
+  const defaultsContent = getElementContent(elements, 'defaults');
+  if (!defaultsContent) return undefined;
+
+  const defaults: Defaults = {};
+
+  // Scaling
+  const scaling = getElementContent(defaultsContent, 'scaling');
+  if (scaling) {
+    const mm = getElementText(scaling, 'millimeters');
+    const tenths = getElementText(scaling, 'tenths');
+    if (mm && tenths) {
+      defaults.scaling = {
+        millimeters: parseFloat(mm),
+        tenths: parseFloat(tenths),
+      };
+    }
+  }
+
+  // Page layout
+  const pageLayout = getElementContent(defaultsContent, 'page-layout');
+  if (pageLayout) {
+    defaults.pageLayout = parsePageLayout(pageLayout);
+  }
+
+  // System layout
+  const systemLayout = getElementContent(defaultsContent, 'system-layout');
+  if (systemLayout) {
+    defaults.systemLayout = parseSystemLayout(systemLayout);
+  }
+
+  // Staff layout
+  const staffLayouts: { number?: number; staffDistance?: number }[] = [];
+  for (const el of defaultsContent) {
+    if (el['staff-layout']) {
+      const attrs = getAttributes(el);
+      const content = el['staff-layout'] as OrderedElement[];
+      const layout: { number?: number; staffDistance?: number } = {};
+      if (attrs['number']) layout.number = parseInt(attrs['number'], 10);
+      const dist = getElementText(content, 'staff-distance');
+      if (dist) layout.staffDistance = parseFloat(dist);
+      staffLayouts.push(layout);
+    }
+  }
+  if (staffLayouts.length > 0) defaults.staffLayout = staffLayouts;
+
+  // Music font
+  for (const el of defaultsContent) {
+    if (el['music-font']) {
+      const attrs = getAttributes(el);
+      defaults.musicFont = {
+        fontFamily: attrs['font-family'],
+        fontSize: attrs['font-size'],
+        fontStyle: attrs['font-style'],
+        fontWeight: attrs['font-weight'],
+      };
+      break;
+    }
+  }
+
+  // Word font
+  for (const el of defaultsContent) {
+    if (el['word-font']) {
+      const attrs = getAttributes(el);
+      defaults.wordFont = {
+        fontFamily: attrs['font-family'],
+        fontSize: attrs['font-size'],
+        fontStyle: attrs['font-style'],
+        fontWeight: attrs['font-weight'],
+      };
+      break;
+    }
+  }
+
+  // Lyric fonts
+  const lyricFonts: import('../types').LyricFontInfo[] = [];
+  for (const el of defaultsContent) {
+    if (el['lyric-font']) {
+      const attrs = getAttributes(el);
+      const lf: import('../types').LyricFontInfo = {
+        fontFamily: attrs['font-family'],
+        fontSize: attrs['font-size'],
+        fontStyle: attrs['font-style'],
+        fontWeight: attrs['font-weight'],
+      };
+      if (attrs['number']) lf.number = parseInt(attrs['number'], 10);
+      if (attrs['name']) lf.name = attrs['name'];
+      lyricFonts.push(lf);
+    }
+  }
+  if (lyricFonts.length > 0) defaults.lyricFont = lyricFonts;
+
+  // Lyric languages
+  const lyricLanguages: import('../types').LyricLanguageInfo[] = [];
+  for (const el of defaultsContent) {
+    if (el['lyric-language']) {
+      const attrs = getAttributes(el);
+      const ll: import('../types').LyricLanguageInfo = {
+        xmlLang: attrs['xml:lang'] || '',
+      };
+      if (attrs['number']) ll.number = parseInt(attrs['number'], 10);
+      if (attrs['name']) ll.name = attrs['name'];
+      lyricLanguages.push(ll);
+    }
+  }
+  if (lyricLanguages.length > 0) defaults.lyricLanguage = lyricLanguages;
+
+  // Appearance (store as raw key-value pairs)
+  for (const el of defaultsContent) {
+    if (el['appearance']) {
+      const appContent = el['appearance'] as OrderedElement[];
+      const appearance: Record<string, unknown> = {};
+      for (const appEl of appContent) {
+        // Handle common appearance children
+        if (appEl['line-width']) {
+          if (!appearance['line-widths']) appearance['line-widths'] = [];
+          const attrs = getAttributes(appEl);
+          const content = appEl['line-width'] as OrderedElement[];
+          let value = '';
+          for (const item of content) {
+            if (item['#text'] !== undefined) {
+              value = String(item['#text']);
+              break;
+            }
+          }
+          (appearance['line-widths'] as Array<{ type: string; value: number }>).push({
+            type: attrs['type'] || '',
+            value: parseFloat(value) || 0,
+          });
+        } else if (appEl['note-size']) {
+          if (!appearance['note-sizes']) appearance['note-sizes'] = [];
+          const attrs = getAttributes(appEl);
+          const content = appEl['note-size'] as OrderedElement[];
+          let value = '';
+          for (const item of content) {
+            if (item['#text'] !== undefined) {
+              value = String(item['#text']);
+              break;
+            }
+          }
+          (appearance['note-sizes'] as Array<{ type: string; value: number }>).push({
+            type: attrs['type'] || '',
+            value: parseFloat(value) || 0,
+          });
+        } else if (appEl['distance']) {
+          if (!appearance['distances']) appearance['distances'] = [];
+          const attrs = getAttributes(appEl);
+          const content = appEl['distance'] as OrderedElement[];
+          let value = '';
+          for (const item of content) {
+            if (item['#text'] !== undefined) {
+              value = String(item['#text']);
+              break;
+            }
+          }
+          (appearance['distances'] as Array<{ type: string; value: number }>).push({
+            type: attrs['type'] || '',
+            value: parseFloat(value) || 0,
+          });
+        }
+      }
+      if (Object.keys(appearance).length > 0) {
+        defaults.appearance = appearance;
+      }
+      break;
+    }
+  }
+
+  return defaults;
+}
+
+function parsePageLayout(elements: OrderedElement[]): PageLayout {
+  const layout: PageLayout = {};
+
+  const height = getElementText(elements, 'page-height');
+  if (height) layout.pageHeight = parseFloat(height);
+
+  const width = getElementText(elements, 'page-width');
+  if (width) layout.pageWidth = parseFloat(width);
+
+  const margins: PageMargins[] = [];
+  for (const el of elements) {
+    if (el['page-margins']) {
+      const attrs = getAttributes(el);
+      const content = el['page-margins'] as OrderedElement[];
+      const m: PageMargins = {};
+      if (attrs['type'] === 'odd' || attrs['type'] === 'even' || attrs['type'] === 'both') {
+        m.type = attrs['type'];
+      }
+      const left = getElementText(content, 'left-margin');
+      if (left) m.leftMargin = parseFloat(left);
+      const right = getElementText(content, 'right-margin');
+      if (right) m.rightMargin = parseFloat(right);
+      const top = getElementText(content, 'top-margin');
+      if (top) m.topMargin = parseFloat(top);
+      const bottom = getElementText(content, 'bottom-margin');
+      if (bottom) m.bottomMargin = parseFloat(bottom);
+      margins.push(m);
+    }
+  }
+  if (margins.length > 0) layout.pageMargins = margins;
+
+  return layout;
+}
+
+function parseSystemLayout(elements: OrderedElement[]): SystemLayout {
+  const layout: SystemLayout = {};
+
+  const margins = getElementContent(elements, 'system-margins');
+  if (margins) {
+    layout.systemMargins = {};
+    const left = getElementText(margins, 'left-margin');
+    if (left) layout.systemMargins.leftMargin = parseFloat(left);
+    const right = getElementText(margins, 'right-margin');
+    if (right) layout.systemMargins.rightMargin = parseFloat(right);
+  }
+
+  const dist = getElementText(elements, 'system-distance');
+  if (dist) layout.systemDistance = parseFloat(dist);
+
+  const topDist = getElementText(elements, 'top-system-distance');
+  if (topDist) layout.topSystemDistance = parseFloat(topDist);
+
+  return layout;
+}
+
+function parseCredits(elements: OrderedElement[]): Credit[] | undefined {
+  const credits: Credit[] = [];
+
+  for (const el of elements) {
+    if (el['credit']) {
+      const attrs = getAttributes(el);
+      const content = el['credit'] as OrderedElement[];
+      const credit: Credit = {};
+
+      if (attrs['page']) credit.page = parseInt(attrs['page'], 10);
+
+      const types: string[] = [];
+      const words: CreditWords[] = [];
+
+      for (const child of content) {
+        if (child['credit-type']) {
+          const typeContent = child['credit-type'] as OrderedElement[];
+          for (const item of typeContent) {
+            if (item['#text'] !== undefined) {
+              types.push(String(item['#text']));
+              break;
+            }
+          }
+        } else if (child['credit-words']) {
+          const wordAttrs = getAttributes(child);
+          const wordContent = child['credit-words'] as OrderedElement[];
+          let text = '';
+          for (const item of wordContent) {
+            if (item['#text'] !== undefined) {
+              text = String(item['#text']);
+              break;
+            }
+          }
+          const cw: CreditWords = { text };
+          if (wordAttrs['default-x']) cw.defaultX = parseFloat(wordAttrs['default-x']);
+          if (wordAttrs['default-y']) cw.defaultY = parseFloat(wordAttrs['default-y']);
+          if (wordAttrs['font-size']) cw.fontSize = wordAttrs['font-size'];
+          if (wordAttrs['font-weight']) cw.fontWeight = wordAttrs['font-weight'];
+          if (wordAttrs['font-style']) cw.fontStyle = wordAttrs['font-style'];
+          if (wordAttrs['justify']) cw.justify = wordAttrs['justify'];
+          if (wordAttrs['halign']) cw.halign = wordAttrs['halign'];
+          if (wordAttrs['valign']) cw.valign = wordAttrs['valign'];
+          words.push(cw);
+        }
+      }
+
+      if (types.length > 0) credit.creditType = types;
+      if (words.length > 0) credit.creditWords = words;
+      credits.push(credit);
+    }
+  }
+
+  return credits.length > 0 ? credits : undefined;
+}
+
+function parsePartList(elements: OrderedElement[]): PartListEntry[] {
+  const partList: PartListEntry[] = [];
 
   for (const el of elements) {
     if (el['score-part']) {
@@ -171,26 +559,98 @@ function parsePartList(elements: OrderedElement[]): PartInfo[] {
       const content = el['score-part'] as OrderedElement[];
 
       const partInfo: PartInfo = {
+        type: 'score-part',
         id: attrs['id'] || '',
-        name: getElementText(content, 'part-name') || '',
       };
+
+      // Check if part-name element exists (even if empty)
+      for (const child of content) {
+        if (child['part-name'] !== undefined) {
+          partInfo.name = getElementText(content, 'part-name') ?? '';
+          break;
+        }
+      }
 
       const abbr = getElementText(content, 'part-abbreviation');
       if (abbr) partInfo.abbreviation = abbr;
 
-      const midi = getElementContent(content, 'midi-instrument');
-      if (midi) {
-        partInfo.midiInstrument = {
-          channel: parseInt(getElementText(midi, 'midi-channel') || '1', 10),
-          program: parseInt(getElementText(midi, 'midi-program') || '1', 10),
-        };
-        const volume = getElementText(midi, 'volume');
-        if (volume) partInfo.midiInstrument.volume = parseFloat(volume);
-        const pan = getElementText(midi, 'pan');
-        if (pan) partInfo.midiInstrument.pan = parseFloat(pan);
+      // Score instruments
+      const instruments: ScoreInstrument[] = [];
+      for (const child of content) {
+        if (child['score-instrument']) {
+          const instAttrs = getAttributes(child);
+          const instContent = child['score-instrument'] as OrderedElement[];
+          const inst: ScoreInstrument = {
+            id: instAttrs['id'] || '',
+            name: getElementText(instContent, 'instrument-name') || '',
+          };
+          const abbr = getElementText(instContent, 'instrument-abbreviation');
+          if (abbr) inst.abbreviation = abbr;
+          const sound = getElementText(instContent, 'instrument-sound');
+          if (sound) inst.sound = sound;
+          instruments.push(inst);
+        }
       }
+      if (instruments.length > 0) partInfo.scoreInstruments = instruments;
+
+      // MIDI instruments
+      const midiInstruments: MidiInstrument[] = [];
+      for (const child of content) {
+        if (child['midi-instrument']) {
+          const midiAttrs = getAttributes(child);
+          const midiContent = child['midi-instrument'] as OrderedElement[];
+          const midi: MidiInstrument = {
+            id: midiAttrs['id'] || '',
+          };
+          const channel = getElementText(midiContent, 'midi-channel');
+          if (channel) midi.channel = parseInt(channel, 10);
+          const name = getElementText(midiContent, 'midi-name');
+          if (name) midi.name = name;
+          const bank = getElementText(midiContent, 'midi-bank');
+          if (bank) midi.bank = parseInt(bank, 10);
+          const program = getElementText(midiContent, 'midi-program');
+          if (program) midi.program = parseInt(program, 10);
+          const unpitched = getElementText(midiContent, 'midi-unpitched');
+          if (unpitched) midi.unpitched = parseInt(unpitched, 10);
+          const volume = getElementText(midiContent, 'volume');
+          if (volume) midi.volume = parseFloat(volume);
+          const pan = getElementText(midiContent, 'pan');
+          if (pan) midi.pan = parseFloat(pan);
+          const elevation = getElementText(midiContent, 'elevation');
+          if (elevation) midi.elevation = parseFloat(elevation);
+          midiInstruments.push(midi);
+        }
+      }
+      if (midiInstruments.length > 0) partInfo.midiInstruments = midiInstruments;
 
       partList.push(partInfo);
+    } else if (el['part-group']) {
+      const attrs = getAttributes(el);
+      const content = el['part-group'] as OrderedElement[];
+
+      const group: PartGroup = {
+        type: 'part-group',
+        groupType: attrs['type'] === 'stop' ? 'stop' : 'start',
+      };
+      if (attrs['number']) group.number = parseInt(attrs['number'], 10);
+
+      const name = getElementText(content, 'group-name');
+      if (name) group.groupName = name;
+
+      const abbr = getElementText(content, 'group-abbreviation');
+      if (abbr) group.groupAbbreviation = abbr;
+
+      const symbol = getElementText(content, 'group-symbol');
+      if (symbol && ['none', 'brace', 'line', 'bracket', 'square'].includes(symbol)) {
+        group.groupSymbol = symbol as PartGroup['groupSymbol'];
+      }
+
+      const barline = getElementText(content, 'group-barline');
+      if (barline && ['yes', 'no', 'Mensurstrich'].includes(barline)) {
+        group.groupBarline = barline as PartGroup['groupBarline'];
+      }
+
+      partList.push(group);
     }
   }
 
@@ -231,6 +691,11 @@ function parseMeasure(elements: OrderedElement[], attrs: Record<string, string>)
     entries: [],
   };
 
+  if (attrs['width']) measure.width = parseFloat(attrs['width']);
+  if (attrs['implicit'] === 'yes') measure.implicit = true;
+
+  const barlines: Barline[] = [];
+
   // Process elements in order - this is the key to maintaining order!
   for (const el of elements) {
     if (el['attributes']) {
@@ -244,11 +709,55 @@ function parseMeasure(elements: OrderedElement[], attrs: Record<string, string>)
     } else if (el['direction']) {
       measure.entries.push(parseDirection(el['direction'] as OrderedElement[], getAttributes(el)));
     } else if (el['barline']) {
-      measure.barline = parseBarline(el['barline'] as OrderedElement[], getAttributes(el));
+      barlines.push(parseBarline(el['barline'] as OrderedElement[], getAttributes(el)));
+    } else if (el['print']) {
+      measure.print = parsePrint(el['print'] as OrderedElement[], getAttributes(el));
     }
   }
 
+  if (barlines.length > 0) measure.barlines = barlines;
+
   return measure;
+}
+
+function parsePrint(elements: OrderedElement[], attrs: Record<string, string>): Print {
+  const print: Print = {};
+
+  if (attrs['new-system'] === 'yes') print.newSystem = true;
+  if (attrs['new-page'] === 'yes') print.newPage = true;
+  if (attrs['blank-page']) print.blankPage = parseInt(attrs['blank-page'], 10);
+  if (attrs['page-number']) print.pageNumber = attrs['page-number'];
+
+  const sysLayout = getElementContent(elements, 'system-layout');
+  if (sysLayout) print.systemLayout = parseSystemLayout(sysLayout);
+
+  const pageLayout = getElementContent(elements, 'page-layout');
+  if (pageLayout) print.pageLayout = parsePageLayout(pageLayout);
+
+  const staffLayouts: { number?: number; staffDistance?: number }[] = [];
+  for (const el of elements) {
+    if (el['staff-layout']) {
+      const layoutAttrs = getAttributes(el);
+      const content = el['staff-layout'] as OrderedElement[];
+      const layout: { number?: number; staffDistance?: number } = {};
+      if (layoutAttrs['number']) layout.number = parseInt(layoutAttrs['number'], 10);
+      const dist = getElementText(content, 'staff-distance');
+      if (dist) layout.staffDistance = parseFloat(dist);
+      staffLayouts.push(layout);
+    }
+  }
+  if (staffLayouts.length > 0) print.staffLayouts = staffLayouts;
+
+  const measureLayout = getElementContent(elements, 'measure-layout');
+  if (measureLayout) {
+    const dist = getElementText(measureLayout, 'measure-distance');
+    if (dist) print.measureLayout = { measureDistance: parseFloat(dist) };
+  }
+
+  const numbering = getElementText(elements, 'measure-numbering');
+  if (numbering) print.measureNumbering = numbering;
+
+  return print;
 }
 
 function parseAttributes(elements: OrderedElement[]): MeasureAttributes {
@@ -359,17 +868,43 @@ function parseTranspose(elements: OrderedElement[]): Transpose {
   return transpose;
 }
 
-function parseNote(elements: OrderedElement[], _attrs: Record<string, string>): NoteEntry {
+function parseNote(elements: OrderedElement[], attrs: Record<string, string>): NoteEntry {
   const note: NoteEntry = {
     type: 'note',
     duration: parseInt(getElementText(elements, 'duration') || '0', 10),
     voice: parseInt(getElementText(elements, 'voice') || '1', 10),
   };
 
+  // Layout attributes
+  if (attrs['default-x']) note.defaultX = parseFloat(attrs['default-x']);
+  if (attrs['default-y']) note.defaultY = parseFloat(attrs['default-y']);
+  if (attrs['relative-x']) note.relativeX = parseFloat(attrs['relative-x']);
+  if (attrs['relative-y']) note.relativeY = parseFloat(attrs['relative-y']);
+
   // Pitch or rest
   const pitch = getElementContent(elements, 'pitch');
   if (pitch) {
     note.pitch = parsePitch(pitch);
+  }
+
+  // Rest
+  for (const el of elements) {
+    if (el['rest'] !== undefined) {
+      const restContent = el['rest'] as OrderedElement[];
+      const restInfo: RestInfo = {};
+
+      const restAttrs = getAttributes(el);
+      if (restAttrs['measure'] === 'yes') restInfo.measure = true;
+
+      const displayStep = getElementText(restContent, 'display-step');
+      if (displayStep) restInfo.displayStep = displayStep;
+
+      const displayOctave = getElementText(restContent, 'display-octave');
+      if (displayOctave) restInfo.displayOctave = parseInt(displayOctave, 10);
+
+      note.rest = restInfo;
+      break;
+    }
   }
 
   // Staff
@@ -400,15 +935,56 @@ function parseNote(elements: OrderedElement[], _attrs: Record<string, string>): 
   if (dotCount > 0) note.dots = dotCount;
 
   // Accidental
-  const accidental = getElementText(elements, 'accidental');
-  if (accidental && isValidAccidental(accidental)) {
-    note.accidental = accidental;
+  for (const el of elements) {
+    if (el['accidental']) {
+      const accAttrs = getAttributes(el);
+      const accContent = el['accidental'] as OrderedElement[];
+      let accValue = '';
+      for (const item of accContent) {
+        if (item['#text'] !== undefined) {
+          accValue = String(item['#text']);
+          break;
+        }
+      }
+      if (isValidAccidental(accValue)) {
+        const accInfo: AccidentalInfo = { value: accValue };
+        if (accAttrs['cautionary'] === 'yes') accInfo.cautionary = true;
+        if (accAttrs['editorial'] === 'yes') accInfo.editorial = true;
+        if (accAttrs['parentheses'] === 'yes') accInfo.parentheses = true;
+        if (accAttrs['bracket'] === 'yes') accInfo.bracket = true;
+        note.accidental = accInfo;
+      }
+      break;
+    }
   }
 
   // Stem
   const stem = getElementText(elements, 'stem');
-  if (stem === 'up' || stem === 'down' || stem === 'none') {
+  if (stem === 'up' || stem === 'down' || stem === 'none' || stem === 'double') {
     note.stem = stem;
+  }
+
+  // Notehead
+  for (const el of elements) {
+    if (el['notehead']) {
+      const nhAttrs = getAttributes(el);
+      const nhContent = el['notehead'] as OrderedElement[];
+      let nhValue = '';
+      for (const item of nhContent) {
+        if (item['#text'] !== undefined) {
+          nhValue = String(item['#text']);
+          break;
+        }
+      }
+      if (isValidNotehead(nhValue)) {
+        const nhInfo: NoteheadInfo = { value: nhValue };
+        if (nhAttrs['filled'] === 'yes') nhInfo.filled = true;
+        else if (nhAttrs['filled'] === 'no') nhInfo.filled = false;
+        if (nhAttrs['parentheses'] === 'yes') nhInfo.parentheses = true;
+        note.notehead = nhInfo;
+      }
+      break;
+    }
   }
 
   // Tie
@@ -487,7 +1063,7 @@ function parsePitch(elements: OrderedElement[]): Pitch {
   const pitch: Pitch = { step, octave };
 
   if (alter) {
-    const alterValue = parseInt(alter, 10);
+    const alterValue = parseFloat(alter);
     if (alterValue !== 0) {
       pitch.alter = alterValue;
     }
@@ -522,62 +1098,161 @@ function parseNotations(elements: OrderedElement[]): Notation[] {
   for (const el of elements) {
     if (el['tied']) {
       const attrs = getAttributes(el);
-      const notation: Notation = { type: 'tied' };
-      if (attrs['type'] === 'start' || attrs['type'] === 'stop') {
-        notation.startStop = attrs['type'];
-      }
-      notations.push(notation);
+      notations.push({
+        type: 'tied',
+        tiedType: (attrs['type'] as 'start' | 'stop' | 'continue' | 'let-ring') || 'start',
+        number: attrs['number'] ? parseInt(attrs['number'], 10) : undefined,
+      });
     } else if (el['slur']) {
       const attrs = getAttributes(el);
-      const notation: Notation = { type: 'slur' };
-      if (attrs['type'] === 'start' || attrs['type'] === 'stop') {
-        notation.startStop = attrs['type'];
-      }
-      if (attrs['number']) {
-        notation.number = parseInt(attrs['number'], 10);
-      }
-      notations.push(notation);
+      notations.push({
+        type: 'slur',
+        slurType: (attrs['type'] as 'start' | 'stop' | 'continue') || 'start',
+        number: attrs['number'] ? parseInt(attrs['number'], 10) : undefined,
+      });
+    } else if (el['tuplet']) {
+      const attrs = getAttributes(el);
+      notations.push({
+        type: 'tuplet',
+        tupletType: attrs['type'] === 'stop' ? 'stop' : 'start',
+        number: attrs['number'] ? parseInt(attrs['number'], 10) : undefined,
+        bracket: attrs['bracket'] === 'yes' ? true : attrs['bracket'] === 'no' ? false : undefined,
+        showNumber: attrs['show-number'] as 'actual' | 'both' | 'none' | undefined,
+        showType: attrs['show-type'] as 'actual' | 'both' | 'none' | undefined,
+      });
     } else if (el['articulations']) {
       const artContent = el['articulations'] as OrderedElement[];
-      const articulationTypes: NotationType[] = [
+      const articulationTypes = [
         'accent', 'strong-accent', 'staccato', 'staccatissimo',
-        'tenuto', 'detached-legato', 'marcato',
+        'tenuto', 'detached-legato', 'marcato', 'spiccato',
+        'scoop', 'plop', 'doit', 'falloff', 'breath-mark',
+        'caesura', 'stress', 'unstress', 'soft-accent',
       ];
       for (const art of artContent) {
         for (const artType of articulationTypes) {
           if (art[artType] !== undefined) {
-            notations.push({ type: artType });
+            const artAttrs = getAttributes(art);
+            notations.push({
+              type: 'articulation',
+              articulation: artType as any,
+              placement: artAttrs['placement'] as 'above' | 'below' | undefined,
+            });
           }
         }
       }
     } else if (el['ornaments']) {
       const ornContent = el['ornaments'] as OrderedElement[];
-      const ornamentTypes: NotationType[] = [
+      const ornamentTypes = [
         'trill-mark', 'mordent', 'inverted-mordent', 'turn', 'inverted-turn',
+        'delayed-turn', 'delayed-inverted-turn', 'vertical-turn', 'shake',
+        'wavy-line', 'schleifer', 'tremolo', 'haydn',
       ];
       for (const orn of ornContent) {
         for (const ornType of ornamentTypes) {
           if (orn[ornType] !== undefined) {
-            notations.push({ type: ornType });
+            const ornAttrs = getAttributes(orn);
+            notations.push({
+              type: 'ornament',
+              ornament: ornType as any,
+              placement: ornAttrs['placement'] as 'above' | 'below' | undefined,
+            });
           }
         }
       }
     } else if (el['technical']) {
       const techContent = el['technical'] as OrderedElement[];
-      const technicalTypes: NotationType[] = [
-        'up-bow', 'down-bow', 'harmonic', 'pizzicato',
+      const technicalTypes = [
+        'up-bow', 'down-bow', 'harmonic', 'open-string', 'thumb-position',
+        'fingering', 'pluck', 'double-tongue', 'triple-tongue', 'stopped',
+        'snap-pizzicato', 'fret', 'string', 'hammer-on', 'pull-off', 'bend',
+        'tap', 'heel', 'toe', 'fingernails', 'hole', 'arrow', 'handbell',
+        'brass-bend', 'flip', 'smear', 'open', 'half-muted', 'harmon-mute',
+        'golpe', 'other-technical',
       ];
       for (const tech of techContent) {
         for (const techType of technicalTypes) {
           if (tech[techType] !== undefined) {
-            notations.push({ type: techType });
+            const techAttrs = getAttributes(tech);
+            notations.push({
+              type: 'technical',
+              technical: techType as any,
+              placement: techAttrs['placement'] as 'above' | 'below' | undefined,
+            });
           }
         }
       }
+    } else if (el['dynamics']) {
+      const dynContent = el['dynamics'] as OrderedElement[];
+      const dynamicsValues: DynamicsValue[] = [];
+      const allDynamics: DynamicsValue[] = [
+        'ppppp', 'pppp', 'ppp', 'pp', 'p',
+        'mp', 'mf',
+        'f', 'ff', 'fff', 'ffff', 'fffff',
+        'sf', 'sfz', 'sfp', 'fp', 'rf', 'rfz', 'fz',
+      ];
+      for (const dyn of dynContent) {
+        for (const dv of allDynamics) {
+          if (dyn[dv] !== undefined) {
+            dynamicsValues.push(dv);
+          }
+        }
+      }
+      if (dynamicsValues.length > 0) {
+        const dynAttrs = getAttributes(el);
+        notations.push({
+          type: 'dynamics',
+          dynamics: dynamicsValues,
+          placement: dynAttrs['placement'] as 'above' | 'below' | undefined,
+        });
+      }
     } else if (el['fermata'] !== undefined) {
-      notations.push({ type: 'fermata' });
+      const fermataContent = el['fermata'] as OrderedElement[];
+      const fermataAttrs = getAttributes(el);
+      let shape: string | undefined;
+      for (const item of fermataContent) {
+        if (item['#text'] !== undefined) {
+          shape = String(item['#text']);
+          break;
+        }
+      }
+      notations.push({
+        type: 'fermata',
+        shape: shape as any,
+        fermataType: fermataAttrs['type'] as 'upright' | 'inverted' | undefined,
+        placement: fermataAttrs['placement'] as 'above' | 'below' | undefined,
+      });
     } else if (el['arpeggiate'] !== undefined) {
-      notations.push({ type: 'arpeggiate' });
+      const arpAttrs = getAttributes(el);
+      notations.push({
+        type: 'arpeggiate',
+        direction: arpAttrs['direction'] as 'up' | 'down' | undefined,
+        number: arpAttrs['number'] ? parseInt(arpAttrs['number'], 10) : undefined,
+      });
+    } else if (el['glissando']) {
+      const glissAttrs = getAttributes(el);
+      const glissContent = el['glissando'] as OrderedElement[];
+      let text: string | undefined;
+      for (const item of glissContent) {
+        if (item['#text'] !== undefined) {
+          text = String(item['#text']);
+          break;
+        }
+      }
+      notations.push({
+        type: 'glissando',
+        glissandoType: glissAttrs['type'] === 'stop' ? 'stop' : 'start',
+        number: glissAttrs['number'] ? parseInt(glissAttrs['number'], 10) : undefined,
+        lineType: glissAttrs['line-type'] as 'solid' | 'dashed' | 'dotted' | 'wavy' | undefined,
+        text,
+      });
+    } else if (el['slide']) {
+      const slideAttrs = getAttributes(el);
+      notations.push({
+        type: 'slide',
+        slideType: slideAttrs['type'] === 'stop' ? 'stop' : 'start',
+        number: slideAttrs['number'] ? parseInt(slideAttrs['number'], 10) : undefined,
+        lineType: slideAttrs['line-type'] as 'solid' | 'dashed' | 'dotted' | 'wavy' | undefined,
+      });
     }
   }
 
@@ -822,12 +1497,28 @@ function isValidNoteType(value: string): value is NoteType {
 function isValidAccidental(value: string): value is Accidental {
   const validAccidentals = [
     'sharp', 'natural', 'flat',
-    'double-sharp', 'double-flat',
+    'double-sharp', 'double-flat', 'sharp-sharp', 'flat-flat',
     'natural-sharp', 'natural-flat',
     'quarter-flat', 'quarter-sharp',
     'three-quarters-flat', 'three-quarters-sharp',
+    'sharp-down', 'sharp-up', 'natural-down', 'natural-up',
+    'flat-down', 'flat-up', 'double-sharp-down', 'double-sharp-up',
+    'flat-flat-down', 'flat-flat-up', 'arrow-down', 'arrow-up',
+    'triple-sharp', 'triple-flat', 'slash-quarter-sharp', 'slash-sharp',
+    'slash-flat', 'double-slash-flat', 'sharp-1', 'sharp-2', 'sharp-3', 'sharp-5',
+    'flat-1', 'flat-2', 'flat-3', 'flat-4', 'sori', 'koron', 'other',
   ];
   return validAccidentals.includes(value);
+}
+
+function isValidNotehead(value: string): value is NoteheadValue {
+  const validNoteheads = [
+    'slash', 'triangle', 'diamond', 'square', 'cross', 'x', 'circle-x',
+    'inverted triangle', 'arrow down', 'arrow up', 'circled', 'slashed',
+    'back slashed', 'normal', 'cluster', 'circle dot', 'left triangle',
+    'rectangle', 'none', 'do', 're', 'mi', 'fa', 'fa up', 'so', 'la', 'ti', 'other',
+  ];
+  return validNoteheads.includes(value);
 }
 
 function isValidBarStyle(value: string): value is NonNullable<Barline['barStyle']> {

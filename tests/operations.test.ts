@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { parse } from '../src/parser';
+import { parse } from '../src';
 import {
   transpose,
   addNote,

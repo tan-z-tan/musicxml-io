@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
-import { parse } from '../src/parser';
-import { serialize } from '../src/serializer';
+import { parse } from '../src';
+import { serialize } from '../src';
 
 const fixturesPath = join(__dirname, 'fixtures');
 

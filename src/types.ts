@@ -3,8 +3,10 @@
 // ============================================================
 export interface Score {
   metadata: ScoreMetadata;
-  partList: PartInfo[];
+  partList: PartListEntry[];
   parts: Part[];
+  defaults?: Defaults;
+  credits?: Credit[];
 }
 
 export interface ScoreMetadata {
@@ -12,28 +14,155 @@ export interface ScoreMetadata {
   workNumber?: string;
   movementTitle?: string;
   movementNumber?: string;
-  creator?: {
-    composer?: string;
-    lyricist?: string;
-    arranger?: string;
-  };
-  rights?: string;
-  encoding?: {
-    software?: string;
-    encodingDate?: string;
-  };
+  creators?: Creator[];
+  rights?: string[];
+  encoding?: Encoding;
+  source?: string;
+  miscellaneous?: MiscellaneousField[];
 }
 
+export interface Creator {
+  type?: string;
+  value: string;
+}
+
+export interface Encoding {
+  software?: string[];
+  encodingDate?: string;
+  encoder?: string[];
+  encodingDescription?: string;
+  supports?: Support[];
+}
+
+export interface Support {
+  element: string;
+  type: 'yes' | 'no';
+  attribute?: string;
+  value?: string;
+}
+
+export interface MiscellaneousField {
+  name: string;
+  value: string;
+}
+
+export interface Defaults {
+  scaling?: { millimeters: number; tenths: number };
+  pageLayout?: PageLayout;
+  systemLayout?: SystemLayout;
+  staffLayout?: { number?: number; staffDistance?: number }[];
+  appearance?: Record<string, unknown>;
+  musicFont?: FontInfo;
+  wordFont?: FontInfo;
+  lyricFont?: LyricFontInfo[];
+  lyricLanguage?: LyricLanguageInfo[];
+}
+
+export interface LyricFontInfo extends FontInfo {
+  number?: number;
+  name?: string;
+}
+
+export interface LyricLanguageInfo {
+  number?: number;
+  name?: string;
+  xmlLang: string;
+}
+
+export interface PageLayout {
+  pageHeight?: number;
+  pageWidth?: number;
+  pageMargins?: PageMargins[];
+}
+
+export interface PageMargins {
+  type?: 'odd' | 'even' | 'both';
+  leftMargin?: number;
+  rightMargin?: number;
+  topMargin?: number;
+  bottomMargin?: number;
+}
+
+export interface SystemLayout {
+  systemMargins?: { leftMargin?: number; rightMargin?: number };
+  systemDistance?: number;
+  topSystemDistance?: number;
+}
+
+export interface FontInfo {
+  fontFamily?: string;
+  fontSize?: string;
+  fontStyle?: string;
+  fontWeight?: string;
+}
+
+export interface Credit {
+  page?: number;
+  creditType?: string[];
+  creditWords?: CreditWords[];
+  creditImage?: { source: string; type: string; height?: number; width?: number };
+}
+
+export interface CreditWords {
+  text: string;
+  defaultX?: number;
+  defaultY?: number;
+  fontSize?: string;
+  fontWeight?: string;
+  fontStyle?: string;
+  justify?: string;
+  halign?: string;
+  valign?: string;
+}
+
+// PartListEntry is either a PartInfo (score-part) or PartGroup
+export type PartListEntry = PartInfo | PartGroup;
+
 export interface PartInfo {
+  type: 'score-part';
+  id: string;
+  name?: string;
+  partNameDisplay?: string;
+  abbreviation?: string;
+  partAbbreviationDisplay?: string;
+  scoreInstruments?: ScoreInstrument[];
+  midiDevices?: MidiDevice[];
+  midiInstruments?: MidiInstrument[];
+}
+
+export interface ScoreInstrument {
   id: string;
   name: string;
   abbreviation?: string;
-  midiInstrument?: {
-    channel: number;
-    program: number;
-    volume?: number;
-    pan?: number;
-  };
+  sound?: string;
+}
+
+export interface MidiDevice {
+  id?: string;
+  port?: number;
+}
+
+export interface MidiInstrument {
+  id: string;
+  channel?: number;
+  name?: string;
+  bank?: number;
+  program?: number;
+  unpitched?: number;
+  volume?: number;
+  pan?: number;
+  elevation?: number;
+}
+
+export interface PartGroup {
+  type: 'part-group';
+  groupType: 'start' | 'stop';
+  number?: number;
+  groupName?: string;
+  groupNameDisplay?: string;
+  groupAbbreviation?: string;
+  groupSymbol?: 'none' | 'brace' | 'line' | 'bracket' | 'square';
+  groupBarline?: 'yes' | 'no' | 'Mensurstrich';
 }
 
 // ============================================================
@@ -46,9 +175,24 @@ export interface Part {
 
 export interface Measure {
   number: number;
+  width?: number;
+  implicit?: boolean;
   attributes?: MeasureAttributes;
   entries: MeasureEntry[];
-  barline?: Barline;
+  barlines?: Barline[];
+  print?: Print;
+}
+
+export interface Print {
+  newSystem?: boolean;
+  newPage?: boolean;
+  blankPage?: number;
+  pageNumber?: string;
+  systemLayout?: SystemLayout;
+  pageLayout?: PageLayout;
+  staffLayouts?: { number?: number; staffDistance?: number }[];
+  measureLayout?: { measureDistance?: number };
+  measureNumbering?: string;
 }
 
 export interface MeasureAttributes {
@@ -104,16 +248,26 @@ export type MeasureEntry = NoteEntry | BackupEntry | ForwardEntry | DirectionEnt
 export interface NoteEntry {
   type: 'note';
   pitch?: Pitch;
+  rest?: RestInfo;
+  unpitched?: { displayStep?: string; displayOctave?: number };
   duration: number;
   voice: number;
   staff?: number;
   chord?: boolean;
 
+  // Layout attributes
+  defaultX?: number;
+  defaultY?: number;
+  relativeX?: number;
+  relativeY?: number;
+
   // Note details
   noteType?: NoteType;
   dots?: number;
-  accidental?: Accidental;
-  stem?: 'up' | 'down' | 'none';
+  accidental?: AccidentalInfo;
+  stem?: 'up' | 'down' | 'none' | 'double';
+  notehead?: NoteheadInfo;
+  noteheadText?: string;
 
   // Connections
   tie?: TieInfo;
@@ -171,6 +325,12 @@ export interface Pitch {
   alter?: number;
 }
 
+export interface RestInfo {
+  measure?: boolean;
+  displayStep?: string;
+  displayOctave?: number;
+}
+
 export type NoteType =
   | 'maxima' | 'long' | 'breve'
   | 'whole' | 'half' | 'quarter'
@@ -178,10 +338,36 @@ export type NoteType =
 
 export type Accidental =
   | 'sharp' | 'natural' | 'flat'
-  | 'double-sharp' | 'double-flat'
+  | 'double-sharp' | 'double-flat' | 'sharp-sharp' | 'flat-flat'
   | 'natural-sharp' | 'natural-flat'
   | 'quarter-flat' | 'quarter-sharp'
-  | 'three-quarters-flat' | 'three-quarters-sharp';
+  | 'three-quarters-flat' | 'three-quarters-sharp'
+  | 'sharp-down' | 'sharp-up' | 'natural-down' | 'natural-up'
+  | 'flat-down' | 'flat-up' | 'double-sharp-down' | 'double-sharp-up'
+  | 'flat-flat-down' | 'flat-flat-up' | 'arrow-down' | 'arrow-up'
+  | 'triple-sharp' | 'triple-flat' | 'slash-quarter-sharp' | 'slash-sharp'
+  | 'slash-flat' | 'double-slash-flat' | 'sharp-1' | 'sharp-2' | 'sharp-3' | 'sharp-5'
+  | 'flat-1' | 'flat-2' | 'flat-3' | 'flat-4' | 'sori' | 'koron' | 'other';
+
+export interface AccidentalInfo {
+  value: Accidental;
+  cautionary?: boolean;
+  editorial?: boolean;
+  parentheses?: boolean;
+  bracket?: boolean;
+}
+
+export interface NoteheadInfo {
+  value: NoteheadValue;
+  filled?: boolean;
+  parentheses?: boolean;
+}
+
+export type NoteheadValue =
+  | 'slash' | 'triangle' | 'diamond' | 'square' | 'cross' | 'x' | 'circle-x'
+  | 'inverted triangle' | 'arrow down' | 'arrow up' | 'circled' | 'slashed'
+  | 'back slashed' | 'normal' | 'cluster' | 'circle dot' | 'left triangle'
+  | 'rectangle' | 'none' | 'do' | 're' | 'mi' | 'fa' | 'fa up' | 'so' | 'la' | 'ti' | 'other';
 
 export interface TieInfo {
   type: 'start' | 'stop' | 'continue';
@@ -195,25 +381,121 @@ export interface BeamInfo {
 // ============================================================
 // Notation (装飾、アーティキュレーション)
 // ============================================================
-export interface Notation {
-  type: NotationType;
+export type Notation =
+  | ArticulationNotation
+  | OrnamentNotation
+  | TechnicalNotation
+  | SlurNotation
+  | TiedNotation
+  | TupletNotation
+  | DynamicsNotation
+  | FermataNotation
+  | ArpeggiateNotation
+  | GlissandoNotation
+  | SlideNotation
+  | OtherNotation;
+
+export interface BaseNotation {
   placement?: 'above' | 'below';
-  number?: number;
-  startStop?: 'start' | 'stop';
 }
 
-export type NotationType =
-  // Articulation
+export interface ArticulationNotation extends BaseNotation {
+  type: 'articulation';
+  articulation: ArticulationType;
+}
+
+export type ArticulationType =
   | 'accent' | 'strong-accent' | 'staccato' | 'staccatissimo'
-  | 'tenuto' | 'detached-legato' | 'marcato'
-  // Ornaments
+  | 'tenuto' | 'detached-legato' | 'marcato' | 'spiccato'
+  | 'scoop' | 'plop' | 'doit' | 'falloff' | 'breath-mark'
+  | 'caesura' | 'stress' | 'unstress' | 'soft-accent';
+
+export interface OrnamentNotation extends BaseNotation {
+  type: 'ornament';
+  ornament: OrnamentType;
+  accidentalMark?: Accidental;
+}
+
+export type OrnamentType =
   | 'trill-mark' | 'mordent' | 'inverted-mordent' | 'turn' | 'inverted-turn'
-  // Technical
-  | 'up-bow' | 'down-bow' | 'pizzicato' | 'harmonic'
-  // Other
-  | 'fermata' | 'arpeggiate'
-  // Slur/Tied (スパナー)
-  | 'slur' | 'tied';
+  | 'delayed-turn' | 'delayed-inverted-turn' | 'vertical-turn' | 'shake'
+  | 'wavy-line' | 'schleifer' | 'tremolo' | 'haydn';
+
+export interface TechnicalNotation extends BaseNotation {
+  type: 'technical';
+  technical: TechnicalType;
+  string?: number;
+  fret?: number;
+  fingering?: string;
+}
+
+export type TechnicalType =
+  | 'up-bow' | 'down-bow' | 'harmonic' | 'open-string' | 'thumb-position'
+  | 'fingering' | 'pluck' | 'double-tongue' | 'triple-tongue' | 'stopped'
+  | 'snap-pizzicato' | 'fret' | 'string' | 'hammer-on' | 'pull-off' | 'bend'
+  | 'tap' | 'heel' | 'toe' | 'fingernails' | 'hole' | 'arrow' | 'handbell'
+  | 'brass-bend' | 'flip' | 'smear' | 'open' | 'half-muted' | 'harmon-mute'
+  | 'golpe' | 'other-technical';
+
+export interface SlurNotation extends BaseNotation {
+  type: 'slur';
+  slurType: 'start' | 'stop' | 'continue';
+  number?: number;
+  lineType?: 'solid' | 'dashed' | 'dotted' | 'wavy';
+}
+
+export interface TiedNotation extends BaseNotation {
+  type: 'tied';
+  tiedType: 'start' | 'stop' | 'continue' | 'let-ring';
+  number?: number;
+}
+
+export interface TupletNotation extends BaseNotation {
+  type: 'tuplet';
+  tupletType: 'start' | 'stop';
+  number?: number;
+  bracket?: boolean;
+  showNumber?: 'actual' | 'both' | 'none';
+  showType?: 'actual' | 'both' | 'none';
+}
+
+export interface DynamicsNotation extends BaseNotation {
+  type: 'dynamics';
+  dynamics: DynamicsValue[];
+}
+
+export interface FermataNotation extends BaseNotation {
+  type: 'fermata';
+  shape?: 'normal' | 'angled' | 'square' | 'double-angled' | 'double-square' | 'double-dot' | 'half-curve' | 'curlew';
+  fermataType?: 'upright' | 'inverted';
+}
+
+export interface ArpeggiateNotation extends BaseNotation {
+  type: 'arpeggiate';
+  direction?: 'up' | 'down';
+  number?: number;
+}
+
+export interface GlissandoNotation extends BaseNotation {
+  type: 'glissando';
+  glissandoType: 'start' | 'stop';
+  number?: number;
+  lineType?: 'solid' | 'dashed' | 'dotted' | 'wavy';
+  text?: string;
+}
+
+export interface SlideNotation extends BaseNotation {
+  type: 'slide';
+  slideType: 'start' | 'stop';
+  number?: number;
+  lineType?: 'solid' | 'dashed' | 'dotted' | 'wavy';
+}
+
+export interface OtherNotation extends BaseNotation {
+  type: 'other-notation';
+  name: string;
+  text?: string;
+}
 
 // ============================================================
 // Direction (強弱、テンポ、etc)

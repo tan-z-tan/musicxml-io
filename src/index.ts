@@ -3,6 +3,8 @@ export type {
   Score,
   ScoreMetadata,
   PartInfo,
+  PartGroup,
+  PartListEntry,
   Part,
   Measure,
   MeasureAttributes,
@@ -14,10 +16,10 @@ export type {
   Pitch,
   NoteType,
   Accidental,
+  AccidentalInfo,
   TieInfo,
   BeamInfo,
   Notation,
-  NotationType,
   DirectionType,
   DynamicsValue,
   Lyric,
@@ -31,6 +33,9 @@ export type {
   NoteWithPosition,
   Chord,
   NoteIteratorItem,
+  Print,
+  Defaults,
+  Credit,
 } from './types';
 
 // Importers
