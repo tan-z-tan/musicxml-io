@@ -853,3 +853,162 @@ export interface NoteIteratorItem {
   note: NoteEntry;
   position: number;
 }
+
+// ============================================================
+// Extended Query Types
+// ============================================================
+
+/**
+ * Voice to Staff mapping for inferring staff when not explicitly specified
+ */
+export interface VoiceToStaffMap {
+  get(voice: number): number | undefined;
+  has(voice: number): boolean;
+  entries(): IterableIterator<[number, number]>;
+  size: number;
+}
+
+/**
+ * Note with full context information
+ */
+export interface NoteWithContext {
+  note: NoteEntry;
+  part: Part;
+  partIndex: number;
+  measure: Measure;
+  measureIndex: number;
+  position: number;
+}
+
+/**
+ * Entry with context (for iterateEntries)
+ */
+export interface EntryWithContext {
+  entry: MeasureEntry;
+  part: Part;
+  partIndex: number;
+  measure: Measure;
+  measureIndex: number;
+  position: number;
+}
+
+/**
+ * Direction with context information
+ */
+export interface DirectionWithContext {
+  direction: DirectionEntry;
+  part: Part;
+  partIndex: number;
+  measure: Measure;
+  measureIndex: number;
+  position: number;
+}
+
+/**
+ * Staff range (min and max staff numbers)
+ */
+export interface StaffRange {
+  min: number;
+  max: number;
+}
+
+/**
+ * Options for position-based queries
+ */
+export interface PositionQueryOptions {
+  staff?: number;
+  voice?: number;
+  includeChordNotes?: boolean;
+}
+
+/**
+ * Vertical slice - all notes at a specific position across all parts
+ */
+export interface VerticalSlice {
+  measureIndex: number;
+  position: number;
+  parts: Map<number, NoteEntry[]>;
+}
+
+/**
+ * Voice line - continuous melodic line across measures
+ */
+export interface VoiceLine {
+  partIndex: number;
+  voice: number;
+  staff?: number;
+  notes: NoteWithContext[];
+}
+
+/**
+ * Adjacent notes (previous and next)
+ */
+export interface AdjacentNotes {
+  prev: NoteWithContext | null;
+  next: NoteWithContext | null;
+}
+
+/**
+ * Direction kind type for filtering
+ */
+export type DirectionKind = DirectionType['kind'];
+
+/**
+ * Dynamic marking with context
+ */
+export interface DynamicWithContext {
+  dynamic: DynamicsValue;
+  direction: DirectionEntry;
+  part: Part;
+  partIndex: number;
+  measure: Measure;
+  measureIndex: number;
+  position: number;
+}
+
+/**
+ * Tempo marking with context
+ */
+export interface TempoWithContext {
+  beatUnit: NoteType;
+  perMinute?: number | string;
+  beatUnitDot?: boolean;
+  direction: DirectionEntry;
+  partIndex: number;
+  measureIndex: number;
+  position: number;
+}
+
+/**
+ * Pedal marking with context
+ */
+export interface PedalWithContext {
+  pedalType: 'start' | 'stop' | 'change' | 'continue';
+  direction: DirectionEntry;
+  partIndex: number;
+  measureIndex: number;
+  position: number;
+}
+
+/**
+ * Wedge (crescendo/diminuendo) with context
+ */
+export interface WedgeWithContext {
+  wedgeType: 'crescendo' | 'diminuendo' | 'stop';
+  direction: DirectionEntry;
+  partIndex: number;
+  measureIndex: number;
+  position: number;
+}
+
+/**
+ * Octave shift with context
+ */
+export interface OctaveShiftWithContext {
+  shiftType: 'up' | 'down' | 'stop';
+  size?: number;
+  direction: DirectionEntry;
+  partIndex: number;
+  measureIndex: number;
+  position: number;
+}

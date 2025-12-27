@@ -49,7 +49,7 @@ Query/Accessorは読み取り専用で、Scoreを変更しない純粋関数。
 
 ---
 
-## 3. Staff アクセス ⭐ Phase 1
+## 3. Staff アクセス ⭐ Phase 1 ✅
 
 MusicXMLのStaff構造を正しく扱うための関数群。
 
@@ -60,7 +60,7 @@ MusicXMLのStaff構造を正しく扱うための関数群。
 | `hasMultipleStaves(score, partIndex)` | 複数Staff判定 | ✅ |
 | `getStaveCount(score, partIndex)` | Staff数を取得 | ✅ |
 | `getStaves(measure)` | Measure内の使用中Staff一覧 | ✅ |
-| `getStaffRange(score, partIndex)` | Staff番号の範囲（min, max） | ⬜ |
+| `getStaffRange(score, partIndex)` | Staff番号の範囲（min, max） | ✅ |
 
 ### 3.2 Staff別データ取得
 
@@ -68,9 +68,9 @@ MusicXMLのStaff構造を正しく扱うための関数群。
 |------|------|:----:|
 | `getNotesForStaff(measure, staff)` | Staff内のNoteを取得 | ✅ |
 | `groupByStaff(measure)` | Staff単位でグループ化 | ✅ |
-| `getEntriesForStaff(measure, staff)` | Staff内の全Entry（note以外含む）を取得 | ⬜ |
-| `getClefForStaff(score, {part, measure, staff})` | 特定Staffの音部記号を取得 | ⬜ |
-| `getVoicesForStaff(measure, staff)` | Staff内のVoice一覧 | ⬜ |
+| `getEntriesForStaff(measure, staff)` | Staff内の全Entry（note以外含む）を取得 | ✅ |
+| `getClefForStaff(score, {part, measure, staff})` | 特定Staffの音部記号を取得 | ✅ |
+| `getVoicesForStaff(measure, staff)` | Staff内のVoice一覧 | ✅ |
 
 ### 3.3 Voice→Staff マッピング
 
@@ -78,10 +78,10 @@ MusicXMLのStaff構造を正しく扱うための関数群。
 
 | 関数 | 説明 | 実装 |
 |------|------|:----:|
-| `buildVoiceToStaffMap(measure)` | Voice→Staffマッピングを構築 | ⬜ |
-| `buildVoiceToStaffMapForPart(part)` | Part全体でマッピングを構築 | ⬜ |
-| `inferStaff(entry, voiceToStaffMap)` | Staff省略時の推測 | ⬜ |
-| `getEffectiveStaff(entry, measure)` | 明示的or推測でStaffを取得 | ⬜ |
+| `buildVoiceToStaffMap(measure)` | Voice→Staffマッピングを構築 | ✅ |
+| `buildVoiceToStaffMapForPart(part)` | Part全体でマッピングを構築 | ✅ |
+| `inferStaff(entry, voiceToStaffMap)` | Staff省略時の推測 | ✅ |
+| `getEffectiveStaff(entry, measure)` | 明示的or推測でStaffを取得 | ✅ |
 
 ---
 
@@ -92,12 +92,12 @@ MusicXMLのStaff構造を正しく扱うための関数群。
 | `getVoices(measure)` | Measure内のVoice一覧 | ✅ |
 | `getNotesForVoice(measure, {voice, staff?})` | Voice内のNoteを取得 | ✅ |
 | `groupByVoice(measure)` | Voice単位でグループ化 | ✅ |
-| `getVoiceLine(score, {part, voice, staff?})` | 連続した旋律線（複数Measure横断） | ⬜ |
-| `getVoiceLineInRange(score, {part, voice, startMeasure, endMeasure})` | 範囲内の旋律線 | ⬜ |
+| `getVoiceLine(score, {part, voice, staff?})` | 連続した旋律線（複数Measure横断） | ✅ |
+| `getVoiceLineInRange(score, {part, voice, startMeasure, endMeasure})` | 範囲内の旋律線 | ✅ |
 
 ---
 
-## 5. 位置・時間軸 ⭐ Phase 2
+## 5. 位置・時間軸 ⭐ Phase 2 ✅
 
 ### 5.1 基本位置計算
 
@@ -112,11 +112,11 @@ MusicXMLのStaff構造を正しく扱うための関数群。
 
 | 関数 | 説明 | 実装 |
 |------|------|:----:|
-| `getEntriesAtPosition(measure, position, options?)` | 特定位置の全Entryを取得 | ⬜ |
-| `getNotesAtPosition(measure, position, options?)` | 特定位置のNoteを取得 | ⬜ |
-| `getEntriesInRange(measure, {start, end}, options?)` | 範囲内の全Entryを取得 | ⬜ |
-| `getNotesInRange(measure, {start, end}, options?)` | 範囲内のNoteを取得 | ⬜ |
-| `getVerticalSlice(score, {measureIndex, position})` | 全Part横断の同時発音 | ⬜ |
+| `getEntriesAtPosition(measure, position, options?)` | 特定位置の全Entryを取得 | ✅ |
+| `getNotesAtPosition(measure, position, options?)` | 特定位置のNoteを取得 | ✅ |
+| `getEntriesInRange(measure, {start, end}, options?)` | 範囲内の全Entryを取得 | ✅ |
+| `getNotesInRange(measure, {start, end}, options?)` | 範囲内のNoteを取得 | ✅ |
+| `getVerticalSlice(score, {measureIndex, position})` | 全Part横断の同時発音 | ✅ |
 
 ---
 
@@ -128,7 +128,7 @@ MusicXMLのStaff構造を正しく扱うための関数群。
 |------|------|:----:|
 | `iterateNotes(score)` | 全Noteをイテレート | ✅ |
 | `getAllNotes(score)` | 全Noteを配列で取得 | ✅ |
-| `iterateEntries(score)` | 全Entryをイテレート（note以外含む） | ⬜ |
+| `iterateEntries(score)` | 全Entryをイテレート（note以外含む） | ✅ |
 
 ### 6.2 検索
 
@@ -140,13 +140,13 @@ MusicXMLのStaff構造を正しく扱うための関数群。
 | `isRestMeasure(measure)` | 全休符か判定 | ✅ |
 | `findNotesWithNotation(score, notationType)` | 特定Notation付きNoteを検索 | ⬜ |
 
-### 6.3 ナビゲーション
+### 6.3 ナビゲーション ⭐ Phase 3 ✅
 
 | 関数 | 説明 | 実装 |
 |------|------|:----:|
-| `getNextNote(score, noteContext)` | 次のNote（同一voice内） | ⬜ |
-| `getPrevNote(score, noteContext)` | 前のNote（同一voice内） | ⬜ |
-| `getAdjacentNotes(score, noteContext)` | 前後のNoteをペアで取得 | ⬜ |
+| `getNextNote(score, noteContext)` | 次のNote（同一voice内） | ✅ |
+| `getPrevNote(score, noteContext)` | 前のNote（同一voice内） | ✅ |
+| `getAdjacentNotes(score, noteContext)` | 前後のNoteをペアで取得 | ✅ |
 
 ---
 
@@ -162,29 +162,29 @@ MusicXMLのStaff構造を正しく扱うための関数群。
 
 ---
 
-## 8. Direction・Expression ⭐ Phase 3
+## 8. Direction・Expression ⭐ Phase 4 ✅
 
 ### 8.1 Direction取得
 
 | 関数 | 説明 | 実装 |
 |------|------|:----:|
-| `getDirections(score, {part?, measure?})` | Direction要素を取得 | ⬜ |
-| `getDirectionsAtPosition(measure, position)` | 特定位置のDirectionを取得 | ⬜ |
-| `findDirectionsByType(score, directionKind)` | 種類でDirectionを検索 | ⬜ |
+| `getDirections(score, {part?, measure?})` | Direction要素を取得 | ✅ |
+| `getDirectionsAtPosition(measure, position)` | 特定位置のDirectionを取得 | ✅ |
+| `findDirectionsByType(score, directionKind)` | 種類でDirectionを検索 | ✅ |
 
 ### 8.2 表情記号
 
 | 関数 | 説明 | 実装 |
 |------|------|:----:|
-| `getDynamics(score, {part?})` | 強弱記号を取得 | ⬜ |
-| `getTempoMarkings(score)` | テンポ指示を取得 | ⬜ |
-| `getPedalMarkings(score, {part?})` | ペダル記号を取得 | ⬜ |
-| `getWedges(score, {part?})` | クレッシェンド/デクレッシェンドを取得 | ⬜ |
-| `getOctaveShifts(score, {part?})` | オクターブ記号を取得 | ⬜ |
+| `getDynamics(score, {part?})` | 強弱記号を取得 | ✅ |
+| `getTempoMarkings(score)` | テンポ指示を取得 | ✅ |
+| `getPedalMarkings(score, {part?})` | ペダル記号を取得 | ✅ |
+| `getWedges(score, {part?})` | クレッシェンド/デクレッシェンドを取得 | ✅ |
+| `getOctaveShifts(score, {part?})` | オクターブ記号を取得 | ✅ |
 
 ---
 
-## 9. Harmony・Lyrics ⭐ Phase 4
+## 9. Harmony・Lyrics ⭐ Phase 5
 
 ### 9.1 Harmony（コード記号）
 
@@ -204,7 +204,7 @@ MusicXMLのStaff構造を正しく扱うための関数群。
 
 ---
 
-## 10. 構造・ナビゲーション ⭐ Phase 5
+## 10. 構造・ナビゲーション ⭐ Phase 6
 
 ### 10.1 繰り返し構造
 
@@ -246,40 +246,40 @@ MusicXMLのStaff構造を正しく扱うための関数群。
 
 ## 実装優先度
 
-### Phase 1: Staff強化（最優先）
-- [ ] `getEntriesForStaff`
-- [ ] `buildVoiceToStaffMap`
-- [ ] `buildVoiceToStaffMapForPart`
-- [ ] `inferStaff`
-- [ ] `getEffectiveStaff`
-- [ ] `getClefForStaff`
-- [ ] `getVoicesForStaff`
-- [ ] `getStaffRange`
+### Phase 1: Staff強化 ✅
+- [x] `getEntriesForStaff`
+- [x] `buildVoiceToStaffMap`
+- [x] `buildVoiceToStaffMapForPart`
+- [x] `inferStaff`
+- [x] `getEffectiveStaff`
+- [x] `getClefForStaff`
+- [x] `getVoicesForStaff`
+- [x] `getStaffRange`
 
-### Phase 2: 位置・旋律線
-- [ ] `getEntriesAtPosition`
-- [ ] `getNotesAtPosition`
-- [ ] `getEntriesInRange`
-- [ ] `getNotesInRange`
-- [ ] `getVerticalSlice`
-- [ ] `getVoiceLine`
-- [ ] `getVoiceLineInRange`
+### Phase 2: 位置・旋律線 ✅
+- [x] `getEntriesAtPosition`
+- [x] `getNotesAtPosition`
+- [x] `getEntriesInRange`
+- [x] `getNotesInRange`
+- [x] `getVerticalSlice`
+- [x] `getVoiceLine`
+- [x] `getVoiceLineInRange`
 
-### Phase 3: ナビゲーション
-- [ ] `getNextNote`
-- [ ] `getPrevNote`
-- [ ] `getAdjacentNotes`
-- [ ] `iterateEntries`
+### Phase 3: ナビゲーション ✅
+- [x] `getNextNote`
+- [x] `getPrevNote`
+- [x] `getAdjacentNotes`
+- [x] `iterateEntries`
 
-### Phase 4: Direction・Expression
-- [ ] `getDirections`
-- [ ] `getDirectionsAtPosition`
-- [ ] `findDirectionsByType`
-- [ ] `getDynamics`
-- [ ] `getTempoMarkings`
-- [ ] `getPedalMarkings`
-- [ ] `getWedges`
-- [ ] `getOctaveShifts`
+### Phase 4: Direction・Expression ✅
+- [x] `getDirections`
+- [x] `getDirectionsAtPosition`
+- [x] `findDirectionsByType`
+- [x] `getDynamics`
+- [x] `getTempoMarkings`
+- [x] `getPedalMarkings`
+- [x] `getWedges`
+- [x] `getOctaveShifts`
 
 ### Phase 5: グループ・スパン
 - [ ] `getTiedNoteGroups`
@@ -312,18 +312,32 @@ MusicXMLのStaff構造を正しく扱うための関数群。
 
 ---
 
-## 型定義（追加が必要なもの）
+## 型定義（実装済み）
 
 ```typescript
 // Voice→Staffマッピング
 interface VoiceToStaffMap {
   get(voice: number): number | undefined;
   has(voice: number): boolean;
+  entries(): IterableIterator<[number, number]>;
+  size: number;
 }
 
 // 旋律線の音符（コンテキスト付き）
 interface NoteWithContext {
   note: NoteEntry;
+  part: Part;
+  partIndex: number;
+  measure: Measure;
+  measureIndex: number;
+  position: number;
+}
+
+// Entry with context
+interface EntryWithContext {
+  entry: MeasureEntry;
+  part: Part;
+  partIndex: number;
   measure: Measure;
   measureIndex: number;
   position: number;
@@ -336,34 +350,91 @@ interface PositionQueryOptions {
   includeChordNotes?: boolean;
 }
 
-// スパン要素
-interface SlurSpan {
-  startNote: NoteWithContext;
-  endNote: NoteWithContext;
-  number?: number;
-}
-
-interface TiedNoteGroup {
-  notes: NoteWithContext[];
-  totalDuration: number;
-}
-
 // Direction with context
 interface DirectionWithContext {
   direction: DirectionEntry;
+  part: Part;
+  partIndex: number;
   measure: Measure;
   measureIndex: number;
-  partIndex: number;
+  position: number;
 }
 
-// 構造変化点
-interface StructuralChange {
-  type: 'key' | 'time' | 'clef';
-  measureNumber: string;
+// Staff range
+interface StaffRange {
+  min: number;
+  max: number;
+}
+
+// Vertical slice
+interface VerticalSlice {
   measureIndex: number;
-  partIndex?: number;
+  position: number;
+  parts: Map<number, NoteEntry[]>;
+}
+
+// Voice line
+interface VoiceLine {
+  partIndex: number;
+  voice: number;
   staff?: number;
-  value: KeySignature | TimeSignature | Clef;
+  notes: NoteWithContext[];
+}
+
+// Adjacent notes
+interface AdjacentNotes {
+  prev: NoteWithContext | null;
+  next: NoteWithContext | null;
+}
+
+// Dynamic with context
+interface DynamicWithContext {
+  dynamic: DynamicsValue;
+  direction: DirectionEntry;
+  part: Part;
+  partIndex: number;
+  measure: Measure;
+  measureIndex: number;
+  position: number;
+}
+
+// Tempo with context
+interface TempoWithContext {
+  beatUnit: NoteType;
+  perMinute?: number | string;
+  beatUnitDot?: boolean;
+  direction: DirectionEntry;
+  partIndex: number;
+  measureIndex: number;
+  position: number;
+}
+
+// Pedal with context
+interface PedalWithContext {
+  pedalType: 'start' | 'stop' | 'change' | 'continue';
+  direction: DirectionEntry;
+  partIndex: number;
+  measureIndex: number;
+  position: number;
+}
+
+// Wedge with context
+interface WedgeWithContext {
+  wedgeType: 'crescendo' | 'diminuendo' | 'stop';
+  direction: DirectionEntry;
+  partIndex: number;
+  measureIndex: number;
+  position: number;
+}
+
+// Octave shift with context
+interface OctaveShiftWithContext {
+  shiftType: 'up' | 'down' | 'stop';
+  size?: number;
+  direction: DirectionEntry;
+  partIndex: number;
+  measureIndex: number;
+  position: number;
 }
 ```
 

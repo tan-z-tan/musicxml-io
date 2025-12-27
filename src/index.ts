@@ -36,6 +36,22 @@ export type {
   Print,
   Defaults,
   Credit,
+  // Extended Query Types
+  VoiceToStaffMap,
+  NoteWithContext,
+  EntryWithContext,
+  DirectionWithContext,
+  StaffRange,
+  PositionQueryOptions,
+  VerticalSlice,
+  VoiceLine,
+  AdjacentNotes,
+  DirectionKind,
+  DynamicWithContext,
+  TempoWithContext,
+  PedalWithContext,
+  WedgeWithContext,
+  OctaveShiftWithContext,
 } from './types';
 
 // Importers
@@ -62,6 +78,37 @@ export {
   isRestMeasure,
   getNormalizedPosition,
   getNormalizedDuration,
+  // Phase 1: Staff Enhancement
+  getEntriesForStaff,
+  buildVoiceToStaffMap,
+  buildVoiceToStaffMapForPart,
+  inferStaff,
+  getEffectiveStaff,
+  getClefForStaff,
+  getVoicesForStaff,
+  getStaffRange,
+  // Phase 2: Position and Voice Line
+  getEntriesAtPosition,
+  getNotesAtPosition,
+  getEntriesInRange,
+  getNotesInRange,
+  getVerticalSlice,
+  getVoiceLine,
+  getVoiceLineInRange,
+  // Phase 3: Navigation
+  iterateEntries,
+  getNextNote,
+  getPrevNote,
+  getAdjacentNotes,
+  // Phase 4: Direction and Expression
+  getDirections,
+  getDirectionsAtPosition,
+  findDirectionsByType,
+  getDynamics,
+  getTempoMarkings,
+  getPedalMarkings,
+  getWedges,
+  getOctaveShifts,
 } from './accessors';
 export type { VoiceFilter, NormalizedPositionOptions } from './accessors';
 
