@@ -1,0 +1,60 @@
+{
+  "name": "musicxml-io",
+  "version": "0.1.0",
+  "description": "A TypeScript library for parsing, manipulating, and serializing MusicXML with high round-trip fidelity",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    },
+    "./accessors": {
+      "types": "./dist/accessors/index.d.ts",
+      "import": "./dist/accessors/index.mjs",
+      "require": "./dist/accessors/index.js"
+    },
+    "./operations": {
+      "types": "./dist/operations/index.d.ts",
+      "import": "./dist/operations/index.mjs",
+      "require": "./dist/operations/index.js"
+    },
+    "./query": {
+      "types": "./dist/query/index.d.ts",
+      "import": "./dist/query/index.mjs",
+      "require": "./dist/query/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint src --ext .ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "musicxml",
+    "music",
+    "notation",
+    "parser",
+    "serializer",
+    "typescript"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "tsup": "^8.0.1",
+    "typescript": "^5.3.3",
+    "vitest": "^1.1.0"
+  },
+  "dependencies": {
+    "fast-xml-parser": "^4.3.2",
+    "fflate": "^0.8.2"
+  },
+  "files": [
+    "dist"
+  ]
+}
