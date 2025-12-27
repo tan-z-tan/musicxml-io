@@ -1876,7 +1876,13 @@ function parseLyric(elements: OrderedElement[], attrs: Record<string, string>): 
 
   for (const el of elements) {
     if (el['extend'] !== undefined) {
-      lyric.extend = true;
+      const extendAttrs = getAttributes(el);
+      const extendType = extendAttrs['type'] as 'start' | 'stop' | 'continue' | undefined;
+      if (extendType) {
+        lyric.extend = { type: extendType };
+      } else {
+        lyric.extend = true;
+      }
     } else if (el['end-line'] !== undefined) {
       lyric.endLine = true;
     } else if (el['end-paragraph'] !== undefined) {
@@ -2537,7 +2543,13 @@ function parseFiguredBass(elements: OrderedElement[], attrs: Record<string, stri
             }
           }
         } else if (figEl['extend'] !== undefined) {
-          figure.extend = true;
+          const extendAttrs = getAttributes(figEl);
+          const extendType = extendAttrs['type'] as 'start' | 'stop' | 'continue' | undefined;
+          if (extendType) {
+            figure.extend = { type: extendType };
+          } else {
+            figure.extend = true;
+          }
         }
       }
 

@@ -454,7 +454,7 @@ export interface Figure {
   figureNumber?: string;
   prefix?: string;
   suffix?: string;
-  extend?: boolean;
+  extend?: boolean | { type?: 'start' | 'stop' | 'continue' };
 }
 
 // ============================================================
@@ -713,7 +713,7 @@ export interface Lyric {
   text: string;
   textElements?: LyricTextElement[]; // For multiple text/elision pairs
   elision?: boolean; // Simple flag for single elision
-  extend?: boolean;
+  extend?: boolean | { type?: 'start' | 'stop' | 'continue' };
   endLine?: boolean;
   endParagraph?: boolean;
   defaultY?: number;

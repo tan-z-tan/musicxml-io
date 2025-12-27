@@ -1303,7 +1303,11 @@ function serializeLyric(lyric: Lyric, indent: string): string[] {
   }
 
   if (lyric.extend) {
-    lines.push(`${indent}  <extend/>`);
+    if (typeof lyric.extend === 'object' && lyric.extend.type) {
+      lines.push(`${indent}  <extend type="${lyric.extend.type}"/>`);
+    } else {
+      lines.push(`${indent}  <extend/>`);
+    }
   }
 
   if (lyric.endLine) {
@@ -1759,7 +1763,11 @@ function serializeFiguredBass(fb: FiguredBassEntry, indent: string): string[] {
       lines.push(`${indent}    <suffix>${escapeXml(fig.suffix)}</suffix>`);
     }
     if (fig.extend) {
-      lines.push(`${indent}    <extend/>`);
+      if (typeof fig.extend === 'object' && fig.extend.type) {
+        lines.push(`${indent}    <extend type="${fig.extend.type}"/>`);
+      } else {
+        lines.push(`${indent}    <extend/>`);
+      }
     }
     lines.push(`${indent}  </figure>`);
   }
