@@ -1299,9 +1299,24 @@ function parseNote(elements: OrderedElement[], attrs: Record<string, string>): N
   }
 
   // Note type
-  const noteType = getElementText(elements, 'type');
-  if (noteType && isValidNoteType(noteType)) {
-    note.noteType = noteType;
+  for (const el of elements) {
+    if (el['type']) {
+      const typeContent = el['type'] as OrderedElement[];
+      for (const item of typeContent) {
+        if (item['#text'] !== undefined) {
+          const noteType = String(item['#text']);
+          if (isValidNoteType(noteType)) {
+            note.noteType = noteType;
+          }
+          break;
+        }
+      }
+      const typeAttrs = getAttributes(el);
+      if (typeAttrs['size']) {
+        note.noteTypeSize = typeAttrs['size'];
+      }
+      break;
+    }
   }
 
   // Dots
@@ -1832,6 +1847,13 @@ function parseNotations(elements: OrderedElement[], notationsIndex: number = 0):
             if (techType === 'heel' || techType === 'toe') {
               if (techAttrs['substitution'] === 'yes') notation.substitution = true;
             }
+            // Positioning attributes
+            if (techAttrs['default-x']) {
+              notation.defaultX = parseFloat(techAttrs['default-x']);
+            }
+            if (techAttrs['default-y']) {
+              notation.defaultY = parseFloat(techAttrs['default-y']);
+            }
             notations.push(notation);
           }
         }
@@ -2069,6 +2091,10 @@ function parseDirection(elements: OrderedElement[], attrs: Record<string, string
 
   if (attrs['directive'] === 'yes') {
     direction.directive = true;
+  }
+
+  if (attrs['system'] === 'only-top' || attrs['system'] === 'also-top' || attrs['system'] === 'none') {
+    direction.system = attrs['system'];
   }
 
   const staff = getElementText(elements, 'staff');
@@ -2317,10 +2343,16 @@ function parseDirectionType(elements: OrderedElement[]): DirectionType | null {
 
     // Other direction
     if (el['other-direction']) {
+      const otherAttrs = getAttributes(el);
       const otherContent = el['other-direction'] as OrderedElement[];
       for (const o of otherContent) {
         if (o['#text'] !== undefined) {
-          return { kind: 'other-direction', text: String(o['#text']) };
+          const result: DirectionType = { kind: 'other-direction', text: String(o['#text']) };
+          if (otherAttrs['default-x']) result.defaultX = parseFloat(otherAttrs['default-x']);
+          if (otherAttrs['default-y']) result.defaultY = parseFloat(otherAttrs['default-y']);
+          if (otherAttrs['halign']) result.halign = otherAttrs['halign'];
+          if (otherAttrs['print-object'] === 'no') result.printObject = false;
+          return result;
         }
       }
     }

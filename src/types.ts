@@ -351,6 +351,7 @@ export interface NoteEntry {
 
   // Note details
   noteType?: NoteType;
+  noteTypeSize?: string;
   dots?: number;
   accidental?: AccidentalInfo;
   stem?: StemInfo;
@@ -416,6 +417,7 @@ export interface DirectionEntry {
   offset?: number;
   offsetSound?: boolean;
   sound?: DirectionSound;
+  system?: 'only-top' | 'also-top' | 'none';
 }
 
 export interface Swing {
@@ -657,6 +659,9 @@ export interface TechnicalNotation extends BaseNotation {
   startStop?: 'start' | 'stop';
   // For heel, toe
   substitution?: boolean;
+  // Positioning
+  defaultX?: number;
+  defaultY?: number;
 }
 
 export type TechnicalType =
@@ -764,7 +769,7 @@ export type DirectionType =
   | { kind: 'scordatura'; accords?: Accord[] }
   | { kind: 'harp-pedals'; pedalTunings?: PedalTuning[] }
   | { kind: 'image'; source?: string; type?: string }
-  | { kind: 'other-direction'; text: string };
+  | { kind: 'other-direction'; text: string; defaultX?: number; defaultY?: number; halign?: string; printObject?: boolean };
 
 export interface Accord {
   string: number;

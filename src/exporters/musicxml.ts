@@ -941,7 +941,8 @@ function serializeNote(note: NoteEntry, indent: string): string[] {
 
   // Type
   if (note.noteType) {
-    lines.push(`${indent}  <type>${note.noteType}</type>`);
+    const typeAttrs = note.noteTypeSize ? ` size="${escapeXml(note.noteTypeSize)}"` : '';
+    lines.push(`${indent}  <type${typeAttrs}>${note.noteType}</type>`);
   }
 
   // Dots
@@ -1283,8 +1284,10 @@ function serializeNotationsGroup(notations: Notation[], indent: string): string[
     lines.push(`${indent}  <technical>`);
     for (const tech of technicals) {
       if (tech.type === 'technical') {
-        const placementAttr = tech.placement ? ` placement="${tech.placement}"` : '';
+        let placementAttr = tech.placement ? ` placement="${tech.placement}"` : '';
         const techNotation = tech as TechnicalNotation;
+        if (techNotation.defaultX !== undefined) placementAttr += ` default-x="${techNotation.defaultX}"`;
+        if (techNotation.defaultY !== undefined) placementAttr += ` default-y="${techNotation.defaultY}"`;
         if (tech.technical === 'bend' && (techNotation.bendAlter !== undefined || techNotation.preBend || techNotation.release)) {
           lines.push(`${indent}    <bend${placementAttr}>`);
           if (techNotation.bendAlter !== undefined) {
@@ -1443,6 +1446,7 @@ function serializeDirection(direction: DirectionEntry, indent: string): string[]
   let attrs = '';
   if (direction.placement) attrs += ` placement="${direction.placement}"`;
   if (direction.directive) attrs += ' directive="yes"';
+  if (direction.system) attrs += ` system="${direction.system}"`;
   lines.push(`${indent}<direction${attrs}>`);
 
   for (const dirType of direction.directionTypes) {
@@ -1609,8 +1613,14 @@ function serializeDirectionType(dirType: DirectionType, indent: string): string[
       lines.push(`${indent}  </accordion-registration>`);
       break;
 
-    case 'other-direction':
-      lines.push(`${indent}  <other-direction>${escapeXml(dirType.text)}</other-direction>`);
+    case 'other-direction': {
+      let otherAttrs = '';
+      if (dirType.defaultX !== undefined) otherAttrs += ` default-x="${dirType.defaultX}"`;
+      if (dirType.defaultY !== undefined) otherAttrs += ` default-y="${dirType.defaultY}"`;
+      if (dirType.halign) otherAttrs += ` halign="${escapeXml(dirType.halign)}"`;
+      if (dirType.printObject === false) otherAttrs += ' print-object="no"';
+      lines.push(`${indent}  <other-direction${otherAttrs}>${escapeXml(dirType.text)}</other-direction>`);
+    }
       break;
 
     case 'segno':
