@@ -152,6 +152,46 @@ function getAttributes(element: OrderedElement): Record<string, string> {
   return attrs;
 }
 
+/**
+ * Collect and parse all elements of a given tag name
+ */
+function collectElements<T>(
+  elements: OrderedElement[],
+  tagName: string,
+  parser: (content: OrderedElement[], attrs: Record<string, string>) => T
+): T[] {
+  const results: T[] = [];
+  for (const el of elements) {
+    if (el[tagName]) {
+      results.push(parser(el[tagName] as OrderedElement[], getAttributes(el)));
+    }
+  }
+  return results;
+}
+
+/**
+ * Find first element with tag and parse it
+ */
+function parseFirstElement<T>(
+  elements: OrderedElement[],
+  tagName: string,
+  parser: (content: OrderedElement[], attrs: Record<string, string>) => T
+): T | undefined {
+  for (const el of elements) {
+    if (el[tagName]) {
+      return parser(el[tagName] as OrderedElement[], getAttributes(el));
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Check if an element with the given tag name exists
+ */
+function hasElement(elements: OrderedElement[], tagName: string): boolean {
+  return elements.some(el => el[tagName] !== undefined);
+}
+
 function parseScorePartwise(elements: OrderedElement[]): Score {
   const metadata = parseMetadata(elements);
   const partListContent = getElementContent(elements, 'part-list');
@@ -1243,23 +1283,13 @@ function parseNote(elements: OrderedElement[], attrs: Record<string, string>): N
   if (attrs['print-spacing'] === 'no') note.printSpacing = false;
 
   // Cue note
-  for (const el of elements) {
-    if (el['cue'] !== undefined) {
-      note.cue = true;
-      break;
-    }
+  if (hasElement(elements, 'cue')) {
+    note.cue = true;
   }
 
   // Instrument reference
-  for (const el of elements) {
-    if (el['instrument'] !== undefined) {
-      const instAttrs = getAttributes(el);
-      if (instAttrs['id']) {
-        note.instrument = instAttrs['id'];
-      }
-      break;
-    }
-  }
+  const instData = parseFirstElement(elements, 'instrument', (_, attrs) => attrs['id']);
+  if (instData) note.instrument = instData;
 
   // Pitch or rest
   const pitch = getElementContent(elements, 'pitch');
@@ -1308,11 +1338,8 @@ function parseNote(elements: OrderedElement[], attrs: Record<string, string>): N
   if (staff !== undefined) note.staff = staff;
 
   // Chord - check if chord element exists
-  for (const el of elements) {
-    if (el['chord'] !== undefined) {
-      note.chord = true;
-      break;
-    }
+  if (hasElement(elements, 'chord')) {
+    note.chord = true;
   }
 
   // Note type
@@ -2555,49 +2582,52 @@ function parseBarline(elements: OrderedElement[], attrs: Record<string, string>)
   return barline;
 }
 
-// Helper functions
+// ============================================================
+// Type Validators (using Sets for O(1) lookup)
+// ============================================================
+
+const VALID_NOTE_TYPES = new Set<string>([
+  'maxima', 'long', 'breve', 'whole', 'half', 'quarter',
+  'eighth', '16th', '32nd', '64th', '128th', '256th', '512th', '1024th',
+]);
+
+const VALID_ACCIDENTALS = new Set<string>([
+  'sharp', 'natural', 'flat', 'double-sharp', 'double-flat', 'sharp-sharp', 'flat-flat',
+  'natural-sharp', 'natural-flat', 'quarter-flat', 'quarter-sharp',
+  'three-quarters-flat', 'three-quarters-sharp', 'sharp-down', 'sharp-up',
+  'natural-down', 'natural-up', 'flat-down', 'flat-up', 'double-sharp-down',
+  'double-sharp-up', 'flat-flat-down', 'flat-flat-up', 'arrow-down', 'arrow-up',
+  'triple-sharp', 'triple-flat', 'slash-quarter-sharp', 'slash-sharp',
+  'slash-flat', 'double-slash-flat', 'sharp-1', 'sharp-2', 'sharp-3', 'sharp-5',
+  'flat-1', 'flat-2', 'flat-3', 'flat-4', 'sori', 'koron', 'other',
+]);
+
+const VALID_NOTEHEADS = new Set<string>([
+  'slash', 'triangle', 'diamond', 'square', 'cross', 'x', 'circle-x',
+  'inverted triangle', 'arrow down', 'arrow up', 'circled', 'slashed',
+  'back slashed', 'normal', 'cluster', 'circle dot', 'left triangle',
+  'rectangle', 'none', 'do', 're', 'mi', 'fa', 'fa up', 'so', 'la', 'ti', 'other',
+]);
+
+const VALID_BAR_STYLES = new Set<string>([
+  'regular', 'dotted', 'dashed', 'heavy',
+  'light-light', 'light-heavy', 'heavy-light', 'heavy-heavy', 'none',
+]);
+
 function isValidNoteType(value: string): value is NoteType {
-  const validTypes = [
-    'maxima', 'long', 'breve',
-    'whole', 'half', 'quarter',
-    'eighth', '16th', '32nd', '64th', '128th', '256th', '512th', '1024th',
-  ];
-  return validTypes.includes(value);
+  return VALID_NOTE_TYPES.has(value);
 }
 
 function isValidAccidental(value: string): value is Accidental {
-  const validAccidentals = [
-    'sharp', 'natural', 'flat',
-    'double-sharp', 'double-flat', 'sharp-sharp', 'flat-flat',
-    'natural-sharp', 'natural-flat',
-    'quarter-flat', 'quarter-sharp',
-    'three-quarters-flat', 'three-quarters-sharp',
-    'sharp-down', 'sharp-up', 'natural-down', 'natural-up',
-    'flat-down', 'flat-up', 'double-sharp-down', 'double-sharp-up',
-    'flat-flat-down', 'flat-flat-up', 'arrow-down', 'arrow-up',
-    'triple-sharp', 'triple-flat', 'slash-quarter-sharp', 'slash-sharp',
-    'slash-flat', 'double-slash-flat', 'sharp-1', 'sharp-2', 'sharp-3', 'sharp-5',
-    'flat-1', 'flat-2', 'flat-3', 'flat-4', 'sori', 'koron', 'other',
-  ];
-  return validAccidentals.includes(value);
+  return VALID_ACCIDENTALS.has(value);
 }
 
 function isValidNotehead(value: string): value is NoteheadValue {
-  const validNoteheads = [
-    'slash', 'triangle', 'diamond', 'square', 'cross', 'x', 'circle-x',
-    'inverted triangle', 'arrow down', 'arrow up', 'circled', 'slashed',
-    'back slashed', 'normal', 'cluster', 'circle dot', 'left triangle',
-    'rectangle', 'none', 'do', 're', 'mi', 'fa', 'fa up', 'so', 'la', 'ti', 'other',
-  ];
-  return validNoteheads.includes(value);
+  return VALID_NOTEHEADS.has(value);
 }
 
 function isValidBarStyle(value: string): value is NonNullable<Barline['barStyle']> {
-  const validStyles = [
-    'regular', 'dotted', 'dashed', 'heavy',
-    'light-light', 'light-heavy', 'heavy-light', 'heavy-heavy', 'none',
-  ];
-  return validStyles.includes(value);
+  return VALID_BAR_STYLES.has(value);
 }
 
 // ============================================================

@@ -885,26 +885,24 @@ function serializeNote(note: NoteEntry, indent: string): string[] {
   const lines: string[] = [];
 
   // Build note attributes
-  let noteAttrs = '';
-  if (note.defaultX !== undefined) noteAttrs += ` default-x="${note.defaultX}"`;
-  if (note.defaultY !== undefined) noteAttrs += ` default-y="${note.defaultY}"`;
-  if (note.relativeX !== undefined) noteAttrs += ` relative-x="${note.relativeX}"`;
-  if (note.relativeY !== undefined) noteAttrs += ` relative-y="${note.relativeY}"`;
-  if (note.dynamics !== undefined) noteAttrs += ` dynamics="${note.dynamics}"`;
-  if (note.printObject === false) noteAttrs += ' print-object="no"';
-  if (note.printSpacing !== undefined) noteAttrs += ` print-spacing="${note.printSpacing ? 'yes' : 'no'}"`;
+  const noteAttrs = buildAttrs({
+    'default-x': note.defaultX,
+    'default-y': note.defaultY,
+    'relative-x': note.relativeX,
+    'relative-y': note.relativeY,
+    'dynamics': note.dynamics,
+    'print-object': note.printObject === false ? false : undefined,
+    'print-spacing': note.printSpacing,
+  });
   lines.push(`${indent}<note${noteAttrs}>`);
 
   // Grace note
   if (note.grace) {
-    let graceAttrs = '';
-    if (note.grace.slash) graceAttrs += ' slash="yes"';
-    if (note.grace.stealTimePrevious !== undefined) {
-      graceAttrs += ` steal-time-previous="${note.grace.stealTimePrevious}"`;
-    }
-    if (note.grace.stealTimeFollowing !== undefined) {
-      graceAttrs += ` steal-time-following="${note.grace.stealTimeFollowing}"`;
-    }
+    const graceAttrs = buildAttrs({
+      'slash': note.grace.slash || undefined,
+      'steal-time-previous': note.grace.stealTimePrevious,
+      'steal-time-following': note.grace.stealTimeFollowing,
+    });
     lines.push(`${indent}  <grace${graceAttrs}/>`);
   }
 
@@ -985,16 +983,17 @@ function serializeNote(note: NoteEntry, indent: string): string[] {
 
   // Accidental
   if (note.accidental) {
-    let accAttrs = '';
-    if (note.accidental.cautionary) accAttrs += ' cautionary="yes"';
-    if (note.accidental.editorial) accAttrs += ' editorial="yes"';
-    if (note.accidental.parentheses) accAttrs += ' parentheses="yes"';
-    if (note.accidental.bracket) accAttrs += ' bracket="yes"';
-    if (note.accidental.relativeX !== undefined) accAttrs += ` relative-x="${note.accidental.relativeX}"`;
-    if (note.accidental.relativeY !== undefined) accAttrs += ` relative-y="${note.accidental.relativeY}"`;
-    if (note.accidental.color) accAttrs += ` color="${escapeXml(note.accidental.color)}"`;
-    if (note.accidental.size) accAttrs += ` size="${escapeXml(note.accidental.size)}"`;
-    if (note.accidental.fontSize) accAttrs += ` font-size="${escapeXml(note.accidental.fontSize)}"`;
+    const accAttrs = buildAttrs({
+      'cautionary': note.accidental.cautionary || undefined,
+      'editorial': note.accidental.editorial || undefined,
+      'parentheses': note.accidental.parentheses || undefined,
+      'bracket': note.accidental.bracket || undefined,
+      'relative-x': note.accidental.relativeX,
+      'relative-y': note.accidental.relativeY,
+      'color': note.accidental.color,
+      'size': note.accidental.size,
+      'font-size': note.accidental.fontSize,
+    });
     lines.push(`${indent}  <accidental${accAttrs}>${note.accidental.value}</accidental>`);
   }
 
@@ -1016,19 +1015,19 @@ function serializeNote(note: NoteEntry, indent: string): string[] {
 
   // Stem
   if (note.stem) {
-    let stemAttrs = '';
-    if (note.stem.defaultX !== undefined) stemAttrs += ` default-x="${note.stem.defaultX}"`;
-    if (note.stem.defaultY !== undefined) stemAttrs += ` default-y="${note.stem.defaultY}"`;
+    const stemAttrs = buildAttrs({
+      'default-x': note.stem.defaultX,
+      'default-y': note.stem.defaultY,
+    });
     lines.push(`${indent}  <stem${stemAttrs}>${note.stem.value}</stem>`);
   }
 
   // Notehead
   if (note.notehead) {
-    let nhAttrs = '';
-    if (note.notehead.filled !== undefined) {
-      nhAttrs += ` filled="${note.notehead.filled ? 'yes' : 'no'}"`;
-    }
-    if (note.notehead.parentheses) nhAttrs += ' parentheses="yes"';
+    const nhAttrs = buildAttrs({
+      'filled': note.notehead.filled,
+      'parentheses': note.notehead.parentheses || undefined,
+    });
     lines.push(`${indent}  <notehead${nhAttrs}>${note.notehead.value}</notehead>`);
   }
 
