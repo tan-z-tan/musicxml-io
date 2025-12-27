@@ -55,6 +55,7 @@ import type {
   Figure,
   TupletNotation,
   SoundEntry,
+  Swing,
   TechnicalNotation,
   DisplayText,
   MeasureNumbering,
@@ -845,7 +846,7 @@ function parseMeasure(elements: OrderedElement[], attrs: Record<string, string>)
     } else if (el['figured-bass']) {
       measure.entries.push(parseFiguredBass(el['figured-bass'] as OrderedElement[], getAttributes(el)));
     } else if (el['sound']) {
-      measure.entries.push(parseSound(getAttributes(el)));
+      measure.entries.push(parseSound(el['sound'] as OrderedElement[], getAttributes(el)));
     }
   }
 
@@ -1952,9 +1953,29 @@ function parseDirection(elements: OrderedElement[], attrs: Record<string, string
   for (const el of elements) {
     if (el['sound']) {
       const soundAttrs = getAttributes(el);
+      const soundContent = el['sound'] as OrderedElement[];
       direction.sound = {};
       if (soundAttrs['tempo']) direction.sound.tempo = parseFloat(soundAttrs['tempo']);
       if (soundAttrs['dynamics']) direction.sound.dynamics = parseFloat(soundAttrs['dynamics']);
+
+      // Parse midi-instrument
+      for (const soundEl of soundContent) {
+        if (soundEl['midi-instrument']) {
+          const midiAttrs = getAttributes(soundEl);
+          const midiContent = soundEl['midi-instrument'] as OrderedElement[];
+          direction.sound.midiInstrument = {
+            id: midiAttrs['id'] || '',
+          };
+          const midiProgram = getElementText(midiContent, 'midi-program');
+          if (midiProgram) direction.sound.midiInstrument.midiProgram = parseInt(midiProgram, 10);
+          const midiChannel = getElementText(midiContent, 'midi-channel');
+          if (midiChannel) direction.sound.midiInstrument.midiChannel = parseInt(midiChannel, 10);
+          const volume = getElementText(midiContent, 'volume');
+          if (volume) direction.sound.midiInstrument.volume = parseFloat(volume);
+          const pan = getElementText(midiContent, 'pan');
+          if (pan) direction.sound.midiInstrument.pan = parseFloat(pan);
+        }
+      }
       break;
     }
   }
@@ -2560,7 +2581,7 @@ function parseFiguredBass(elements: OrderedElement[], attrs: Record<string, stri
   return fb;
 }
 
-function parseSound(attrs: Record<string, string>): SoundEntry {
+function parseSound(elements: OrderedElement[], attrs: Record<string, string>): SoundEntry {
   const sound: SoundEntry = {
     type: 'sound',
   };
@@ -2574,6 +2595,46 @@ function parseSound(attrs: Record<string, string>): SoundEntry {
   if (attrs['tocoda']) sound.tocoda = attrs['tocoda'];
   if (attrs['fine'] === 'yes') sound.fine = true;
   if (attrs['forward-repeat'] === 'yes') sound.forwardRepeat = true;
+
+  // Parse swing element
+  for (const el of elements) {
+    if (el['swing']) {
+      const swingContent = el['swing'] as OrderedElement[];
+      const swing: Swing = {};
+      for (const swingEl of swingContent) {
+        if (swingEl['straight'] !== undefined) {
+          swing.straight = true;
+        } else if (swingEl['first'] !== undefined) {
+          const firstContent = swingEl['first'] as OrderedElement[];
+          for (const item of firstContent) {
+            if (item['#text'] !== undefined) {
+              swing.first = parseInt(String(item['#text']), 10);
+              break;
+            }
+          }
+        } else if (swingEl['second'] !== undefined) {
+          const secondContent = swingEl['second'] as OrderedElement[];
+          for (const item of secondContent) {
+            if (item['#text'] !== undefined) {
+              swing.second = parseInt(String(item['#text']), 10);
+              break;
+            }
+          }
+        } else if (swingEl['swing-type'] !== undefined) {
+          const typeContent = swingEl['swing-type'] as OrderedElement[];
+          for (const item of typeContent) {
+            if (item['#text'] !== undefined) {
+              swing.swingType = String(item['#text']);
+              break;
+            }
+          }
+        }
+      }
+      if (Object.keys(swing).length > 0) {
+        sound.swing = swing;
+      }
+    }
+  }
 
   return sound;
 }

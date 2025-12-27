@@ -1378,8 +1378,28 @@ function serializeDirection(direction: DirectionEntry, indent: string): string[]
     if (direction.sound.dynamics !== undefined) {
       attrs.push(`dynamics="${direction.sound.dynamics}"`);
     }
-    if (attrs.length > 0) {
-      lines.push(`${indent}  <sound ${attrs.join(' ')}/>`);
+    const attrStr = attrs.length > 0 ? ` ${attrs.join(' ')}` : '';
+
+    if (direction.sound.midiInstrument) {
+      lines.push(`${indent}  <sound${attrStr}>`);
+      const midi = direction.sound.midiInstrument;
+      lines.push(`${indent}    <midi-instrument id="${escapeXml(midi.id)}">`);
+      if (midi.midiChannel !== undefined) {
+        lines.push(`${indent}      <midi-channel>${midi.midiChannel}</midi-channel>`);
+      }
+      if (midi.midiProgram !== undefined) {
+        lines.push(`${indent}      <midi-program>${midi.midiProgram}</midi-program>`);
+      }
+      if (midi.volume !== undefined) {
+        lines.push(`${indent}      <volume>${midi.volume}</volume>`);
+      }
+      if (midi.pan !== undefined) {
+        lines.push(`${indent}      <pan>${midi.pan}</pan>`);
+      }
+      lines.push(`${indent}    </midi-instrument>`);
+      lines.push(`${indent}  </sound>`);
+    } else if (attrs.length > 0) {
+      lines.push(`${indent}  <sound${attrStr}/>`);
     }
   }
 
@@ -1782,6 +1802,7 @@ function serializeFiguredBass(fb: FiguredBassEntry, indent: string): string[] {
 }
 
 function serializeSound(sound: SoundEntry, indent: string): string[] {
+  const lines: string[] = [];
   const attrs: string[] = [];
 
   if (sound.tempo !== undefined) attrs.push(`tempo="${sound.tempo}"`);
@@ -1794,9 +1815,32 @@ function serializeSound(sound: SoundEntry, indent: string): string[] {
   if (sound.fine) attrs.push('fine="yes"');
   if (sound.forwardRepeat) attrs.push('forward-repeat="yes"');
 
-  if (attrs.length === 0) {
-    return [`${indent}<sound/>`];
+  const attrStr = attrs.length > 0 ? ` ${attrs.join(' ')}` : '';
+
+  // If there's a swing element, we need opening/closing tags
+  if (sound.swing) {
+    lines.push(`${indent}<sound${attrStr}>`);
+    lines.push(`${indent}  <swing>`);
+    if (sound.swing.straight) {
+      lines.push(`${indent}    <straight/>`);
+    } else {
+      if (sound.swing.first !== undefined) {
+        lines.push(`${indent}    <first>${sound.swing.first}</first>`);
+      }
+      if (sound.swing.second !== undefined) {
+        lines.push(`${indent}    <second>${sound.swing.second}</second>`);
+      }
+      if (sound.swing.swingType) {
+        lines.push(`${indent}    <swing-type>${sound.swing.swingType}</swing-type>`);
+      }
+    }
+    lines.push(`${indent}  </swing>`);
+    lines.push(`${indent}</sound>`);
+  } else if (attrs.length === 0) {
+    lines.push(`${indent}<sound/>`);
+  } else {
+    lines.push(`${indent}<sound${attrStr}/>`);
   }
 
-  return [`${indent}<sound ${attrs.join(' ')}/>`];
+  return lines;
 }

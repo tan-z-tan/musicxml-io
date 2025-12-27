@@ -383,6 +383,18 @@ export interface ForwardEntry {
   staff?: number;
 }
 
+export interface DirectionSound {
+  tempo?: number;
+  dynamics?: number;
+  midiInstrument?: {
+    id: string;
+    midiProgram?: number;
+    midiChannel?: number;
+    volume?: number;
+    pan?: number;
+  };
+}
+
 export interface DirectionEntry {
   type: 'direction';
   directionTypes: DirectionType[];
@@ -391,10 +403,14 @@ export interface DirectionEntry {
   staff?: number;
   voice?: number;
   offset?: number;
-  sound?: {
-    tempo?: number;
-    dynamics?: number;
-  };
+  sound?: DirectionSound;
+}
+
+export interface Swing {
+  straight?: boolean;
+  first?: number;
+  second?: number;
+  swingType?: string;
 }
 
 export interface SoundEntry {
@@ -408,6 +424,7 @@ export interface SoundEntry {
   tocoda?: string;
   fine?: boolean;
   forwardRepeat?: boolean;
+  swing?: Swing;
 }
 
 export interface HarmonyEntry {
