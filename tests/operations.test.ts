@@ -169,10 +169,10 @@ describe('Operations', () => {
       const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
       const score = parse(xml);
 
-      const updated = changeTime(score, { beats: 3, beatType: 4 }, { fromMeasure: 2 });
+      const updated = changeTime(score, { beats: '3', beatType: 4 }, { fromMeasure: 2 });
 
-      expect(updated.parts[0].measures[0].attributes?.time?.beats).toBe(4);
-      expect(updated.parts[0].measures[1].attributes?.time?.beats).toBe(3);
+      expect(updated.parts[0].measures[0].attributes?.time?.beats).toBe('4');
+      expect(updated.parts[0].measures[1].attributes?.time?.beats).toBe('3');
       expect(updated.parts[0].measures[1].attributes?.time?.beatType).toBe(4);
     });
   });
@@ -185,9 +185,9 @@ describe('Operations', () => {
       const updated = insertMeasure(score, { afterMeasure: 1 });
 
       expect(updated.parts[0].measures).toHaveLength(3);
-      expect(updated.parts[0].measures[0].number).toBe(1);
-      expect(updated.parts[0].measures[1].number).toBe(2);
-      expect(updated.parts[0].measures[2].number).toBe(3);
+      expect(updated.parts[0].measures[0].number).toBe('1');
+      expect(updated.parts[0].measures[1].number).toBe('2');
+      expect(updated.parts[0].measures[2].number).toBe('3');
     });
 
     it('should copy attributes when requested', () => {
@@ -201,7 +201,7 @@ describe('Operations', () => {
 
       const newMeasure = updated.parts[0].measures[1];
       expect(newMeasure.attributes?.key?.fifths).toBe(0);
-      expect(newMeasure.attributes?.time?.beats).toBe(4);
+      expect(newMeasure.attributes?.time?.beats).toBe('4');
     });
   });
 
@@ -213,7 +213,7 @@ describe('Operations', () => {
       const updated = deleteMeasure(score, 1);
 
       expect(updated.parts[0].measures).toHaveLength(1);
-      expect(updated.parts[0].measures[0].number).toBe(1); // Was measure 2, now renumbered
+      expect(updated.parts[0].measures[0].number).toBe('1'); // Was measure 2, now renumbered
     });
   });
 
