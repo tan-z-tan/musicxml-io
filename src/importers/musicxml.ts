@@ -22,8 +22,10 @@ import type {
   BeamInfo,
   Notation,
   Lyric,
+  LyricTextElement,
   TimeSignature,
   KeySignature,
+  KeyOctave,
   Clef,
   Transpose,
   Barline,
@@ -53,7 +55,11 @@ import type {
   Figure,
   TupletNotation,
   SoundEntry,
+  Swing,
   TechnicalNotation,
+  DisplayText,
+  MeasureNumbering,
+  AttributesEntry,
 } from '../types';
 
 // Parser with preserveOrder to maintain element order
@@ -105,7 +111,8 @@ function getElementText(elements: OrderedElement[], tagName: string): string | u
       return String(item['#text']);
     }
   }
-  return undefined;
+  // Element exists but has no text content - return empty string
+  return '';
 }
 
 function getAttributes(element: OrderedElement): Record<string, string> {
@@ -562,6 +569,30 @@ function parseCredits(elements: OrderedElement[]): Credit[] | undefined {
   return credits.length > 0 ? credits : undefined;
 }
 
+function parseDisplayTexts(elements: OrderedElement[]): DisplayText[] {
+  const displayTexts: DisplayText[] = [];
+  for (const el of elements) {
+    if (el['display-text']) {
+      const dtAttrs = getAttributes(el);
+      const dtContent = el['display-text'] as OrderedElement[];
+      let text = '';
+      for (const item of dtContent) {
+        if (item['#text'] !== undefined) {
+          text = String(item['#text']);
+          break;
+        }
+      }
+      const dt: DisplayText = { text };
+      if (dtAttrs['font-family']) dt.fontFamily = dtAttrs['font-family'];
+      if (dtAttrs['font-size']) dt.fontSize = dtAttrs['font-size'];
+      if (dtAttrs['font-style']) dt.fontStyle = dtAttrs['font-style'];
+      if (dtAttrs['font-weight']) dt.fontWeight = dtAttrs['font-weight'];
+      displayTexts.push(dt);
+    }
+  }
+  return displayTexts;
+}
+
 function parsePartList(elements: OrderedElement[]): PartListEntry[] {
   const partList: PartListEntry[] = [];
 
@@ -578,13 +609,42 @@ function parsePartList(elements: OrderedElement[]): PartListEntry[] {
       // Check if part-name element exists (even if empty)
       for (const child of content) {
         if (child['part-name'] !== undefined) {
+          const pnAttrs = getAttributes(child);
           partInfo.name = getElementText(content, 'part-name') ?? '';
+          if (pnAttrs['print-object'] === 'no') {
+            partInfo.namePrintObject = false;
+          }
           break;
         }
       }
 
-      const abbr = getElementText(content, 'part-abbreviation');
-      if (abbr) partInfo.abbreviation = abbr;
+      // part-name-display
+      for (const child of content) {
+        if (child['part-name-display']) {
+          partInfo.partNameDisplay = parseDisplayTexts(child['part-name-display'] as OrderedElement[]);
+          break;
+        }
+      }
+
+      // part-abbreviation
+      for (const child of content) {
+        if (child['part-abbreviation'] !== undefined) {
+          const paAttrs = getAttributes(child);
+          partInfo.abbreviation = getElementText(content, 'part-abbreviation') ?? '';
+          if (paAttrs['print-object'] === 'no') {
+            partInfo.abbreviationPrintObject = false;
+          }
+          break;
+        }
+      }
+
+      // part-abbreviation-display
+      for (const child of content) {
+        if (child['part-abbreviation-display']) {
+          partInfo.partAbbreviationDisplay = parseDisplayTexts(child['part-abbreviation-display'] as OrderedElement[]);
+          break;
+        }
+      }
 
       // Score instruments
       const instruments: ScoreInstrument[] = [];
@@ -678,8 +738,24 @@ function parsePartList(elements: OrderedElement[]): PartListEntry[] {
       const name = getElementText(content, 'group-name');
       if (name) group.groupName = name;
 
+      // group-name-display
+      for (const child of content) {
+        if (child['group-name-display']) {
+          group.groupNameDisplay = parseDisplayTexts(child['group-name-display'] as OrderedElement[]);
+          break;
+        }
+      }
+
       const abbr = getElementText(content, 'group-abbreviation');
       if (abbr) group.groupAbbreviation = abbr;
+
+      // group-abbreviation-display
+      for (const child of content) {
+        if (child['group-abbreviation-display']) {
+          group.groupAbbreviationDisplay = parseDisplayTexts(child['group-abbreviation-display'] as OrderedElement[]);
+          break;
+        }
+      }
 
       const symbol = getElementText(content, 'group-symbol');
       if (symbol && ['none', 'brace', 'line', 'bracket', 'square'].includes(symbol)) {
@@ -728,7 +804,7 @@ function parseParts(elements: OrderedElement[]): Part[] {
 
 function parseMeasure(elements: OrderedElement[], attrs: Record<string, string>): Measure {
   const measure: Measure = {
-    number: parseInt(attrs['number'] || '0', 10),
+    number: attrs['number'] || '0', // Keep as string per MusicXML spec (token type)
     entries: [],
   };
 
@@ -736,11 +812,23 @@ function parseMeasure(elements: OrderedElement[], attrs: Record<string, string>)
   if (attrs['implicit'] === 'yes') measure.implicit = true;
 
   const barlines: Barline[] = [];
+  let isFirstAttributes = true;
 
   // Process elements in order - this is the key to maintaining order!
   for (const el of elements) {
     if (el['attributes']) {
-      measure.attributes = parseAttributes(el['attributes'] as OrderedElement[]);
+      const parsedAttrs = parseAttributes(el['attributes'] as OrderedElement[]);
+      if (isFirstAttributes) {
+        measure.attributes = parsedAttrs;
+        isFirstAttributes = false;
+      } else {
+        // Mid-measure attributes go into entries
+        const attrEntry: AttributesEntry = {
+          type: 'attributes',
+          attributes: parsedAttrs,
+        };
+        measure.entries.push(attrEntry);
+      }
     } else if (el['note']) {
       measure.entries.push(parseNote(el['note'] as OrderedElement[], getAttributes(el)));
     } else if (el['backup']) {
@@ -758,7 +846,7 @@ function parseMeasure(elements: OrderedElement[], attrs: Record<string, string>)
     } else if (el['figured-bass']) {
       measure.entries.push(parseFiguredBass(el['figured-bass'] as OrderedElement[], getAttributes(el)));
     } else if (el['sound']) {
-      measure.entries.push(parseSound(getAttributes(el)));
+      measure.entries.push(parseSound(el['sound'] as OrderedElement[], getAttributes(el)));
     }
   }
 
@@ -801,8 +889,42 @@ function parsePrint(elements: OrderedElement[], attrs: Record<string, string>): 
     if (dist) print.measureLayout = { measureDistance: parseFloat(dist) };
   }
 
-  const numbering = getElementText(elements, 'measure-numbering');
-  if (numbering) print.measureNumbering = numbering;
+  // measure-numbering with attributes
+  for (const el of elements) {
+    if (el['measure-numbering']) {
+      const mnAttrs = getAttributes(el);
+      const mnContent = el['measure-numbering'] as OrderedElement[];
+      let value = '';
+      for (const item of mnContent) {
+        if (item['#text'] !== undefined) {
+          value = String(item['#text']);
+          break;
+        }
+      }
+      const measureNumbering: MeasureNumbering = { value };
+      if (mnAttrs['system'] && ['only-top', 'only-bottom', 'all-system-parts', 'none'].includes(mnAttrs['system'])) {
+        measureNumbering.system = mnAttrs['system'] as MeasureNumbering['system'];
+      }
+      print.measureNumbering = measureNumbering;
+      break;
+    }
+  }
+
+  // part-name-display
+  for (const el of elements) {
+    if (el['part-name-display']) {
+      print.partNameDisplay = parseDisplayTexts(el['part-name-display'] as OrderedElement[]);
+      break;
+    }
+  }
+
+  // part-abbreviation-display
+  for (const el of elements) {
+    if (el['part-abbreviation-display']) {
+      print.partAbbreviationDisplay = parseDisplayTexts(el['part-abbreviation-display'] as OrderedElement[]);
+      break;
+    }
+  }
 
   return print;
 }
@@ -822,10 +944,22 @@ function parseAttributes(elements: OrderedElement[]): MeasureAttributes {
     attrs.time = parseTimeSignature(time, elements);
   }
 
-  // Key signature
-  const key = getElementContent(elements, 'key');
-  if (key) {
-    attrs.key = parseKeySignature(key);
+  // Key signature(s) - can be multiple for multi-staff
+  const keys: KeySignature[] = [];
+  for (const el of elements) {
+    if (el['key']) {
+      const keyAttrs = getAttributes(el);
+      const keyContent = el['key'] as OrderedElement[];
+      const key = parseKeySignature(keyContent);
+      if (keyAttrs['number']) key.number = parseInt(keyAttrs['number'], 10);
+      keys.push(key);
+    }
+  }
+  if (keys.length === 1) {
+    attrs.key = keys[0];
+  } else if (keys.length > 1) {
+    // Store as array in a separate property
+    attrs.keys = keys;
   }
 
   // Clef(s)
@@ -870,20 +1004,65 @@ function parseAttributes(elements: OrderedElement[]): MeasureAttributes {
 }
 
 function parseTimeSignature(elements: OrderedElement[], parentElements: OrderedElement[]): TimeSignature {
-  const beats = getElementText(elements, 'beats');
-  const beatType = getElementText(elements, 'beat-type');
+  // Check for senza-misura first
+  for (const el of elements) {
+    if (el['senza-misura'] !== undefined) {
+      const time: TimeSignature = {
+        beats: '',
+        beatType: 0,
+        senzaMisura: true,
+      };
+      return time;
+    }
+  }
+
+  // Collect all beats and beat-type values for compound time signatures
+  const beatsList: number[] = [];
+  const beatTypeList: number[] = [];
+
+  for (const el of elements) {
+    if (el['beats']) {
+      const content = el['beats'] as OrderedElement[];
+      for (const item of content) {
+        if (item['#text'] !== undefined) {
+          beatsList.push(parseInt(String(item['#text']), 10));
+          break;
+        }
+      }
+    } else if (el['beat-type']) {
+      const content = el['beat-type'] as OrderedElement[];
+      for (const item of content) {
+        if (item['#text'] !== undefined) {
+          beatTypeList.push(parseInt(String(item['#text']), 10));
+          break;
+        }
+      }
+    }
+  }
 
   const time: TimeSignature = {
-    beats: parseInt(beats || '4', 10),
-    beatType: parseInt(beatType || '4', 10),
+    beats: beatsList.length > 0 ? String(beatsList[0]) : '4',
+    beatType: beatTypeList.length > 0 ? beatTypeList[0] : 4,
   };
 
-  // Get symbol attribute from parent
+  // Store compound time signature data
+  if (beatsList.length > 1 || beatTypeList.length > 1) {
+    time.beatsList = beatsList;
+    time.beatTypeList = beatTypeList;
+  }
+
+  // Get symbol and print-object attributes from parent
   for (const el of parentElements) {
     if (el['time']) {
       const attrs = getAttributes(el);
-      if (attrs['symbol'] === 'common' || attrs['symbol'] === 'cut') {
-        time.symbol = attrs['symbol'];
+      if (attrs['symbol']) {
+        const sym = attrs['symbol'];
+        if (['common', 'cut', 'single-number', 'note', 'dotted-note', 'normal'].includes(sym)) {
+          time.symbol = sym as TimeSignature['symbol'];
+        }
+      }
+      if (attrs['print-object'] === 'no') {
+        time.printObject = false;
       }
       break;
     }
@@ -895,7 +1074,6 @@ function parseTimeSignature(elements: OrderedElement[], parentElements: OrderedE
 function parseKeySignature(elements: OrderedElement[]): KeySignature {
   const fifths = getElementText(elements, 'fifths');
   const mode = getElementText(elements, 'mode');
-  const cancel = getElementText(elements, 'cancel');
 
   const key: KeySignature = {
     fifths: parseInt(fifths || '0', 10),
@@ -906,14 +1084,28 @@ function parseKeySignature(elements: OrderedElement[]): KeySignature {
     key.mode = mode as KeySignature['mode'];
   }
 
-  if (cancel) {
-    key.cancel = parseInt(cancel, 10);
+  // Parse cancel element with its location attribute
+  for (const el of elements) {
+    if (el['cancel'] !== undefined) {
+      const cancelContent = el['cancel'] as OrderedElement[];
+      const cancelAttrs = getAttributes(el);
+      for (const item of cancelContent) {
+        if (item['#text'] !== undefined) {
+          key.cancel = parseInt(String(item['#text']), 10);
+          break;
+        }
+      }
+      if (cancelAttrs['location']) {
+        key.cancelLocation = cancelAttrs['location'] as 'left' | 'right' | 'before-barline';
+      }
+      break;
+    }
   }
 
   // Non-traditional key signatures
   const keySteps: string[] = [];
   const keyAlters: number[] = [];
-  const keyOctaves: { number: number; octave: number }[] = [];
+  const keyOctaves: KeyOctave[] = [];
 
   for (const el of elements) {
     if (el['key-step']) {
@@ -933,14 +1125,16 @@ function parseKeySignature(elements: OrderedElement[]): KeySignature {
         }
       }
     } else if (el['key-octave']) {
-      const attrs = getAttributes(el);
+      const koAttrs = getAttributes(el);
       const content = el['key-octave'] as OrderedElement[];
       for (const item of content) {
         if (item['#text'] !== undefined) {
-          keyOctaves.push({
-            number: parseInt(attrs['number'] || '1', 10),
+          const ko: KeyOctave = {
+            number: parseInt(koAttrs['number'] || '1', 10),
             octave: parseInt(String(item['#text']), 10),
-          });
+          };
+          if (koAttrs['cancel'] === 'yes') ko.cancel = true;
+          keyOctaves.push(ko);
           break;
         }
       }
@@ -1001,6 +1195,25 @@ function parseNote(elements: OrderedElement[], attrs: Record<string, string>): N
   if (attrs['default-y']) note.defaultY = parseFloat(attrs['default-y']);
   if (attrs['relative-x']) note.relativeX = parseFloat(attrs['relative-x']);
   if (attrs['relative-y']) note.relativeY = parseFloat(attrs['relative-y']);
+
+  // Cue note
+  for (const el of elements) {
+    if (el['cue'] !== undefined) {
+      note.cue = true;
+      break;
+    }
+  }
+
+  // Instrument reference
+  for (const el of elements) {
+    if (el['instrument'] !== undefined) {
+      const instAttrs = getAttributes(el);
+      if (instAttrs['id']) {
+        note.instrument = instAttrs['id'];
+      }
+      break;
+    }
+  }
 
   // Pitch or rest
   const pitch = getElementContent(elements, 'pitch');
@@ -1166,10 +1379,18 @@ function parseNote(elements: OrderedElement[], attrs: Record<string, string>): N
   }
   if (beams.length > 0) note.beam = beams;
 
-  // Notations
-  const notations = getElementContent(elements, 'notations');
-  if (notations) {
-    note.notations = parseNotations(notations);
+  // Notations - collect ALL notations elements, not just the first
+  const allNotations: Notation[] = [];
+  let notationsIndex = 0;
+  for (const el of elements) {
+    if (el['notations']) {
+      const parsedNotations = parseNotations(el['notations'] as OrderedElement[], notationsIndex);
+      allNotations.push(...parsedNotations);
+      notationsIndex++;
+    }
+  }
+  if (allNotations.length > 0) {
+    note.notations = allNotations;
   }
 
   // Lyrics
@@ -1257,8 +1478,9 @@ function parseBeam(elements: OrderedElement[], attrs: Record<string, string>): B
   return beam;
 }
 
-function parseNotations(elements: OrderedElement[]): Notation[] {
+function parseNotations(elements: OrderedElement[], notationsIndex: number = 0): Notation[] {
   const notations: Notation[] = [];
+  let articulationsIndex = 0;
 
   for (const el of elements) {
     if (el['tied']) {
@@ -1267,6 +1489,7 @@ function parseNotations(elements: OrderedElement[]): Notation[] {
         type: 'tied',
         tiedType: (attrs['type'] as 'start' | 'stop' | 'continue' | 'let-ring') || 'start',
         number: attrs['number'] ? parseInt(attrs['number'], 10) : undefined,
+        notationsIndex,
       });
     } else if (el['slur']) {
       const attrs = getAttributes(el);
@@ -1282,6 +1505,7 @@ function parseNotations(elements: OrderedElement[]): Notation[] {
         bezierX2: attrs['bezier-x2'] ? parseFloat(attrs['bezier-x2']) : undefined,
         bezierY2: attrs['bezier-y2'] ? parseFloat(attrs['bezier-y2']) : undefined,
         placement: attrs['placement'] as 'above' | 'below' | undefined,
+        notationsIndex,
       };
       notations.push(slur);
     } else if (el['tuplet']) {
@@ -1294,6 +1518,9 @@ function parseNotations(elements: OrderedElement[]): Notation[] {
         bracket: attrs['bracket'] === 'yes' ? true : attrs['bracket'] === 'no' ? false : undefined,
         showNumber: attrs['show-number'] as 'actual' | 'both' | 'none' | undefined,
         showType: attrs['show-type'] as 'actual' | 'both' | 'none' | undefined,
+        lineShape: attrs['line-shape'] as 'straight' | 'curved' | undefined,
+        placement: attrs['placement'] as 'above' | 'below' | undefined,
+        notationsIndex,
       };
 
       // Parse tuplet-actual and tuplet-normal
@@ -1336,6 +1563,8 @@ function parseNotations(elements: OrderedElement[]): Notation[] {
         'scoop', 'plop', 'doit', 'falloff', 'breath-mark',
         'caesura', 'stress', 'unstress', 'soft-accent',
       ];
+      const currentArtIndex = articulationsIndex;
+      articulationsIndex++;
       for (const art of artContent) {
         for (const artType of articulationTypes) {
           if (art[artType] !== undefined) {
@@ -1344,6 +1573,8 @@ function parseNotations(elements: OrderedElement[]): Notation[] {
               type: 'articulation',
               articulation: artType as any,
               placement: artAttrs['placement'] as 'above' | 'below' | undefined,
+              notationsIndex,
+              articulationsIndex: currentArtIndex,
             });
           }
         }
@@ -1364,6 +1595,7 @@ function parseNotations(elements: OrderedElement[]): Notation[] {
               type: 'ornament',
               ornament: ornType as any,
               placement: ornAttrs['placement'] as 'above' | 'below' | undefined,
+              notationsIndex,
             });
           }
         }
@@ -1376,6 +1608,7 @@ function parseNotations(elements: OrderedElement[]): Notation[] {
             wavyLineType: wlAttrs['type'] as 'start' | 'stop' | 'continue' | undefined,
             number: wlAttrs['number'] ? parseInt(wlAttrs['number'], 10) : undefined,
             placement: wlAttrs['placement'] as 'above' | 'below' | undefined,
+            notationsIndex,
           });
         }
         // Tremolo
@@ -1395,11 +1628,14 @@ function parseNotations(elements: OrderedElement[]): Notation[] {
             tremoloMarks: marks,
             tremoloType: tremAttrs['type'] as 'start' | 'stop' | 'single' | 'unmeasured' | undefined,
             placement: tremAttrs['placement'] as 'above' | 'below' | undefined,
+            notationsIndex,
           });
         }
       }
     } else if (el['technical']) {
       const techContent = el['technical'] as OrderedElement[];
+      // Technical elements that can have text content
+      const technicalWithText = ['hammer-on', 'pull-off', 'tap', 'pluck', 'fingering', 'other-technical'];
       const technicalTypes = [
         'up-bow', 'down-bow', 'harmonic', 'open-string', 'thumb-position',
         'fingering', 'pluck', 'double-tongue', 'triple-tongue', 'stopped',
@@ -1417,6 +1653,7 @@ function parseNotations(elements: OrderedElement[]): Notation[] {
             type: 'technical',
             technical: 'bend',
             placement: techAttrs['placement'] as 'above' | 'below' | undefined,
+            notationsIndex,
           };
           const bendAlter = getElementText(bendContent, 'bend-alter');
           if (bendAlter) techNotation.bendAlter = parseFloat(bendAlter);
@@ -1439,11 +1676,42 @@ function parseNotations(elements: OrderedElement[]): Notation[] {
         for (const techType of technicalTypes) {
           if (tech[techType] !== undefined) {
             const techAttrs = getAttributes(tech);
-            notations.push({
+            const notation: TechnicalNotation = {
               type: 'technical',
               technical: techType as any,
               placement: techAttrs['placement'] as 'above' | 'below' | undefined,
-            });
+              notationsIndex,
+            };
+            // Get text content for elements that have it
+            if (technicalWithText.includes(techType)) {
+              const techElContent = tech[techType] as OrderedElement[];
+              for (const item of techElContent) {
+                if (item['#text'] !== undefined) {
+                  notation.text = String(item['#text']);
+                  break;
+                }
+              }
+            }
+            // Get string/fret for those elements
+            if (techType === 'string') {
+              const techElContent = tech[techType] as OrderedElement[];
+              for (const item of techElContent) {
+                if (item['#text'] !== undefined) {
+                  notation.string = parseInt(String(item['#text']), 10);
+                  break;
+                }
+              }
+            }
+            if (techType === 'fret') {
+              const techElContent = tech[techType] as OrderedElement[];
+              for (const item of techElContent) {
+                if (item['#text'] !== undefined) {
+                  notation.fret = parseInt(String(item['#text']), 10);
+                  break;
+                }
+              }
+            }
+            notations.push(notation);
           }
         }
       }
@@ -1451,10 +1719,10 @@ function parseNotations(elements: OrderedElement[]): Notation[] {
       const dynContent = el['dynamics'] as OrderedElement[];
       const dynamicsValues: DynamicsValue[] = [];
       const allDynamics: DynamicsValue[] = [
-        'ppppp', 'pppp', 'ppp', 'pp', 'p',
+        'pppppp', 'ppppp', 'pppp', 'ppp', 'pp', 'p',
         'mp', 'mf',
-        'f', 'ff', 'fff', 'ffff', 'fffff',
-        'sf', 'sfz', 'sfp', 'fp', 'rf', 'rfz', 'fz',
+        'f', 'ff', 'fff', 'ffff', 'fffff', 'ffffff',
+        'sf', 'sfz', 'sffz', 'sfp', 'sfpp', 'fp', 'rf', 'rfz', 'fz', 'n', 'pf',
       ];
       for (const dyn of dynContent) {
         for (const dv of allDynamics) {
@@ -1469,6 +1737,7 @@ function parseNotations(elements: OrderedElement[]): Notation[] {
           type: 'dynamics',
           dynamics: dynamicsValues,
           placement: dynAttrs['placement'] as 'above' | 'below' | undefined,
+          notationsIndex,
         });
       }
     } else if (el['fermata'] !== undefined) {
@@ -1486,6 +1755,7 @@ function parseNotations(elements: OrderedElement[]): Notation[] {
         shape: shape as any,
         fermataType: fermataAttrs['type'] as 'upright' | 'inverted' | undefined,
         placement: fermataAttrs['placement'] as 'above' | 'below' | undefined,
+        notationsIndex,
       });
     } else if (el['arpeggiate'] !== undefined) {
       const arpAttrs = getAttributes(el);
@@ -1493,6 +1763,7 @@ function parseNotations(elements: OrderedElement[]): Notation[] {
         type: 'arpeggiate',
         direction: arpAttrs['direction'] as 'up' | 'down' | undefined,
         number: arpAttrs['number'] ? parseInt(arpAttrs['number'], 10) : undefined,
+        notationsIndex,
       });
     } else if (el['glissando']) {
       const glissAttrs = getAttributes(el);
@@ -1510,6 +1781,7 @@ function parseNotations(elements: OrderedElement[]): Notation[] {
         number: glissAttrs['number'] ? parseInt(glissAttrs['number'], 10) : undefined,
         lineType: glissAttrs['line-type'] as 'solid' | 'dashed' | 'dotted' | 'wavy' | undefined,
         text,
+        notationsIndex,
       });
     } else if (el['slide']) {
       const slideAttrs = getAttributes(el);
@@ -1518,6 +1790,7 @@ function parseNotations(elements: OrderedElement[]): Notation[] {
         slideType: slideAttrs['type'] === 'stop' ? 'stop' : 'start',
         number: slideAttrs['number'] ? parseInt(slideAttrs['number'], 10) : undefined,
         lineType: slideAttrs['line-type'] as 'solid' | 'dashed' | 'dotted' | 'wavy' | undefined,
+        notationsIndex,
       });
     }
   }
@@ -1526,23 +1799,95 @@ function parseNotations(elements: OrderedElement[]): Notation[] {
 }
 
 function parseLyric(elements: OrderedElement[], attrs: Record<string, string>): Lyric {
+  // Collect all text elements and check for elision
+  const textElements: LyricTextElement[] = [];
+  let hasElision = false;
+  let currentSyllabic: 'single' | 'begin' | 'middle' | 'end' | undefined;
+
+  for (const el of elements) {
+    if (el['syllabic']) {
+      const content = el['syllabic'] as OrderedElement[];
+      for (const item of content) {
+        if (item['#text'] !== undefined) {
+          const syl = String(item['#text']);
+          if (syl === 'single' || syl === 'begin' || syl === 'middle' || syl === 'end') {
+            currentSyllabic = syl;
+          }
+          break;
+        }
+      }
+    } else if (el['text']) {
+      const content = el['text'] as OrderedElement[];
+      for (const item of content) {
+        if (item['#text'] !== undefined) {
+          textElements.push({
+            text: String(item['#text']),
+            syllabic: currentSyllabic,
+          });
+          currentSyllabic = undefined;
+          break;
+        }
+      }
+    } else if (el['elision'] !== undefined) {
+      hasElision = true;
+    }
+  }
+
   const lyric: Lyric = {
-    text: getElementText(elements, 'text') || '',
+    text: textElements.length > 0 ? textElements[0].text : '',
   };
 
   if (attrs['number']) {
     lyric.number = parseInt(attrs['number'], 10);
   }
 
-  const syllabic = getElementText(elements, 'syllabic');
-  if (syllabic === 'single' || syllabic === 'begin' || syllabic === 'middle' || syllabic === 'end') {
-    lyric.syllabic = syllabic;
+  if (attrs['default-y']) {
+    lyric.defaultY = parseFloat(attrs['default-y']);
+  }
+
+  if (attrs['name']) {
+    lyric.name = attrs['name'];
+  }
+
+  if (attrs['justify']) {
+    lyric.justify = attrs['justify'];
+  }
+
+  if (attrs['relative-x']) {
+    lyric.relativeX = parseFloat(attrs['relative-x']);
+  }
+
+  if (attrs['placement']) {
+    lyric.placement = attrs['placement'] as 'above' | 'below';
+  }
+
+  // Set syllabic from first text element
+  if (textElements.length > 0 && textElements[0].syllabic) {
+    lyric.syllabic = textElements[0].syllabic;
+  }
+
+  // If multiple text elements (elision case), store all of them
+  if (textElements.length > 1) {
+    lyric.textElements = textElements;
+  }
+
+  if (hasElision) {
+    lyric.elision = true;
   }
 
   for (const el of elements) {
     if (el['extend'] !== undefined) {
-      lyric.extend = true;
-      break;
+      const extendAttrs = getAttributes(el);
+      const extendType = extendAttrs['type'] as 'start' | 'stop' | 'continue' | undefined;
+      if (extendType) {
+        lyric.extend = { type: extendType };
+      } else {
+        lyric.extend = true;
+      }
+    } else if (el['end-line'] !== undefined) {
+      lyric.endLine = true;
+    } else if (el['end-paragraph'] !== undefined) {
+      lyric.endParagraph = true;
     }
   }
 
@@ -1608,9 +1953,29 @@ function parseDirection(elements: OrderedElement[], attrs: Record<string, string
   for (const el of elements) {
     if (el['sound']) {
       const soundAttrs = getAttributes(el);
+      const soundContent = el['sound'] as OrderedElement[];
       direction.sound = {};
       if (soundAttrs['tempo']) direction.sound.tempo = parseFloat(soundAttrs['tempo']);
       if (soundAttrs['dynamics']) direction.sound.dynamics = parseFloat(soundAttrs['dynamics']);
+
+      // Parse midi-instrument
+      for (const soundEl of soundContent) {
+        if (soundEl['midi-instrument']) {
+          const midiAttrs = getAttributes(soundEl);
+          const midiContent = soundEl['midi-instrument'] as OrderedElement[];
+          direction.sound.midiInstrument = {
+            id: midiAttrs['id'] || '',
+          };
+          const midiProgram = getElementText(midiContent, 'midi-program');
+          if (midiProgram) direction.sound.midiInstrument.midiProgram = parseInt(midiProgram, 10);
+          const midiChannel = getElementText(midiContent, 'midi-channel');
+          if (midiChannel) direction.sound.midiInstrument.midiChannel = parseInt(midiChannel, 10);
+          const volume = getElementText(midiContent, 'volume');
+          if (volume) direction.sound.midiInstrument.volume = parseFloat(volume);
+          const pan = getElementText(midiContent, 'pan');
+          if (pan) direction.sound.midiInstrument.pan = parseFloat(pan);
+        }
+      }
       break;
     }
   }
@@ -1622,17 +1987,21 @@ function parseDirectionType(elements: OrderedElement[]): DirectionType | null {
   for (const el of elements) {
     // Dynamics
     if (el['dynamics']) {
+      const dynAttrs = getAttributes(el);
       const dynContent = el['dynamics'] as OrderedElement[];
       const dynamicsValues: DynamicsValue[] = [
-        'ppppp', 'pppp', 'ppp', 'pp', 'p',
+        'pppppp', 'ppppp', 'pppp', 'ppp', 'pp', 'p',
         'mp', 'mf',
-        'f', 'ff', 'fff', 'ffff', 'fffff',
-        'sf', 'sfz', 'sfp', 'fp', 'rf', 'rfz', 'fz',
+        'f', 'ff', 'fff', 'ffff', 'fffff', 'ffffff',
+        'sf', 'sfz', 'sffz', 'sfp', 'sfpp', 'fp', 'rf', 'rfz', 'fz', 'n', 'pf',
       ];
       for (const dyn of dynContent) {
         for (const dv of dynamicsValues) {
           if (dyn[dv] !== undefined) {
-            return { kind: 'dynamics', value: dv };
+            const result: DirectionType = { kind: 'dynamics', value: dv };
+            if (dynAttrs['default-y']) result.defaultY = parseFloat(dynAttrs['default-y']);
+            if (dynAttrs['halign']) result.halign = dynAttrs['halign'];
+            return result;
           }
         }
       }
@@ -1645,6 +2014,7 @@ function parseDirectionType(elements: OrderedElement[]): DirectionType | null {
       if (wedgeType === 'crescendo' || wedgeType === 'diminuendo' || wedgeType === 'stop') {
         const result: DirectionType = { kind: 'wedge', type: wedgeType };
         if (wedgeAttrs['spread']) result.spread = parseFloat(wedgeAttrs['spread']);
+        if (wedgeAttrs['default-y']) result.defaultY = parseFloat(wedgeAttrs['default-y']);
         return result;
       }
     }
@@ -1698,6 +2068,7 @@ function parseDirectionType(elements: OrderedElement[]): DirectionType | null {
           const result: DirectionType = { kind: 'words', text: String(w['#text']) };
           if (wordAttrs['default-x']) result.defaultX = parseFloat(wordAttrs['default-x']);
           if (wordAttrs['default-y']) result.defaultY = parseFloat(wordAttrs['default-y']);
+          if (wordAttrs['relative-x']) result.relativeX = parseFloat(wordAttrs['relative-x']);
           if (wordAttrs['font-family']) result.fontFamily = wordAttrs['font-family'];
           if (wordAttrs['font-size']) result.fontSize = wordAttrs['font-size'];
           if (wordAttrs['font-style']) result.fontStyle = wordAttrs['font-style'];
@@ -1786,6 +2157,36 @@ function parseDirectionType(elements: OrderedElement[]): DirectionType | null {
       return { kind: 'coda' };
     }
 
+    // Eyeglasses
+    if (el['eyeglasses'] !== undefined) {
+      return { kind: 'eyeglasses' };
+    }
+
+    // Damp
+    if (el['damp'] !== undefined) {
+      return { kind: 'damp' };
+    }
+
+    // Damp-all
+    if (el['damp-all'] !== undefined) {
+      return { kind: 'damp-all' };
+    }
+
+    // Scordatura
+    if (el['scordatura'] !== undefined) {
+      return { kind: 'scordatura' };
+    }
+
+    // Image
+    if (el['image'] !== undefined) {
+      const imgAttrs = getAttributes(el);
+      return {
+        kind: 'image',
+        source: imgAttrs['source'],
+        type: imgAttrs['type'],
+      };
+    }
+
     // Pedal
     if (el['pedal']) {
       const pedalAttrs = getAttributes(el);
@@ -1804,6 +2205,44 @@ function parseDirectionType(elements: OrderedElement[]): DirectionType | null {
         if (shiftAttrs['size']) result.size = parseInt(shiftAttrs['size'], 10);
         return result;
       }
+    }
+
+    // Swing
+    if (el['swing']) {
+      const swingContent = el['swing'] as OrderedElement[];
+      const result: DirectionType = { kind: 'swing' };
+
+      for (const sw of swingContent) {
+        if (sw['straight'] !== undefined) {
+          result.straight = true;
+        } else if (sw['first']) {
+          const firstContent = sw['first'] as OrderedElement[];
+          for (const item of firstContent) {
+            if (item['#text'] !== undefined) {
+              result.first = parseInt(String(item['#text']), 10);
+              break;
+            }
+          }
+        } else if (sw['second']) {
+          const secondContent = sw['second'] as OrderedElement[];
+          for (const item of secondContent) {
+            if (item['#text'] !== undefined) {
+              result.second = parseInt(String(item['#text']), 10);
+              break;
+            }
+          }
+        } else if (sw['swing-type']) {
+          const stContent = sw['swing-type'] as OrderedElement[];
+          for (const item of stContent) {
+            if (item['#text'] !== undefined && isValidNoteType(String(item['#text']))) {
+              result.swingType = String(item['#text']) as any;
+              break;
+            }
+          }
+        }
+      }
+
+      return result;
     }
   }
 
@@ -1976,6 +2415,12 @@ function parseHarmony(elements: OrderedElement[], attrs: Record<string, string>)
     harmony.placement = attrs['placement'];
   }
 
+  if (attrs['print-frame'] === 'yes') {
+    harmony.printFrame = true;
+  } else if (attrs['print-frame'] === 'no') {
+    harmony.printFrame = false;
+  }
+
   // Parse root
   const root = getElementContent(elements, 'root');
   if (root) {
@@ -2119,7 +2564,13 @@ function parseFiguredBass(elements: OrderedElement[], attrs: Record<string, stri
             }
           }
         } else if (figEl['extend'] !== undefined) {
-          figure.extend = true;
+          const extendAttrs = getAttributes(figEl);
+          const extendType = extendAttrs['type'] as 'start' | 'stop' | 'continue' | undefined;
+          if (extendType) {
+            figure.extend = { type: extendType };
+          } else {
+            figure.extend = true;
+          }
         }
       }
 
@@ -2130,7 +2581,7 @@ function parseFiguredBass(elements: OrderedElement[], attrs: Record<string, stri
   return fb;
 }
 
-function parseSound(attrs: Record<string, string>): SoundEntry {
+function parseSound(elements: OrderedElement[], attrs: Record<string, string>): SoundEntry {
   const sound: SoundEntry = {
     type: 'sound',
   };
@@ -2144,6 +2595,46 @@ function parseSound(attrs: Record<string, string>): SoundEntry {
   if (attrs['tocoda']) sound.tocoda = attrs['tocoda'];
   if (attrs['fine'] === 'yes') sound.fine = true;
   if (attrs['forward-repeat'] === 'yes') sound.forwardRepeat = true;
+
+  // Parse swing element
+  for (const el of elements) {
+    if (el['swing']) {
+      const swingContent = el['swing'] as OrderedElement[];
+      const swing: Swing = {};
+      for (const swingEl of swingContent) {
+        if (swingEl['straight'] !== undefined) {
+          swing.straight = true;
+        } else if (swingEl['first'] !== undefined) {
+          const firstContent = swingEl['first'] as OrderedElement[];
+          for (const item of firstContent) {
+            if (item['#text'] !== undefined) {
+              swing.first = parseInt(String(item['#text']), 10);
+              break;
+            }
+          }
+        } else if (swingEl['second'] !== undefined) {
+          const secondContent = swingEl['second'] as OrderedElement[];
+          for (const item of secondContent) {
+            if (item['#text'] !== undefined) {
+              swing.second = parseInt(String(item['#text']), 10);
+              break;
+            }
+          }
+        } else if (swingEl['swing-type'] !== undefined) {
+          const typeContent = swingEl['swing-type'] as OrderedElement[];
+          for (const item of typeContent) {
+            if (item['#text'] !== undefined) {
+              swing.swingType = String(item['#text']);
+              break;
+            }
+          }
+        }
+      }
+      if (Object.keys(swing).length > 0) {
+        sound.swing = swing;
+      }
+    }
+  }
 
   return sound;
 }

@@ -176,9 +176,9 @@ describe('Accessors', () => {
       expect(notes).toHaveLength(8); // 4 notes in measure 1, 4 in measure 2
 
       expect(notes[0].note.pitch?.step).toBe('C');
-      expect(notes[0].measure.number).toBe(1);
+      expect(notes[0].measure.number).toBe('1');
       expect(notes[4].note.pitch?.step).toBe('G');
-      expect(notes[4].measure.number).toBe(2);
+      expect(notes[4].measure.number).toBe('2');
     });
   });
 
@@ -227,7 +227,7 @@ describe('Accessors', () => {
     });
 
     it('should return false for empty measures', () => {
-      expect(hasNotes({ number: 1, entries: [] })).toBe(false);
+      expect(hasNotes({ number: '1', entries: [] })).toBe(false);
     });
   });
 
@@ -241,7 +241,7 @@ describe('Accessors', () => {
     });
 
     it('should return true for empty measures', () => {
-      expect(isRestMeasure({ number: 1, entries: [] })).toBe(true);
+      expect(isRestMeasure({ number: '1', entries: [] })).toBe(true);
     });
   });
 

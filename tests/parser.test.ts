@@ -25,10 +25,10 @@ describe('Parser', () => {
       expect(score.parts[0].measures).toHaveLength(1);
 
       const measure = score.parts[0].measures[0];
-      expect(measure.number).toBe(1);
+      expect(measure.number).toBe('1');
       expect(measure.attributes?.divisions).toBe(1);
       expect(measure.attributes?.key?.fifths).toBe(0);
-      expect(measure.attributes?.time?.beats).toBe(4);
+      expect(measure.attributes?.time?.beats).toBe('4');
       expect(measure.attributes?.time?.beatType).toBe(4);
       expect(measure.attributes?.clef).toHaveLength(1);
       expect(measure.attributes?.clef?.[0].sign).toBe('G');
