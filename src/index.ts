@@ -116,6 +116,8 @@ export {
   validateSlurs,
   validateTuplets,
   validatePartReferences,
+  validatePartStructure,
+  validateStaffStructure,
   validateVoiceStaff,
   validateTiesAcrossMeasures,
   validateSlursAcrossMeasures,

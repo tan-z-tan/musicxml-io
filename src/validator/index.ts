@@ -40,10 +40,21 @@ export type ValidationErrorCode =
   // Part references
   | 'PART_ID_NOT_IN_PART_LIST'
   | 'PART_LIST_ID_NOT_IN_PARTS'
+  // Part structure
+  | 'PART_MEASURE_COUNT_MISMATCH'
+  | 'PART_MEASURE_NUMBER_MISMATCH'
+  | 'PART_GROUP_START_WITHOUT_STOP'
+  | 'PART_GROUP_STOP_WITHOUT_START'
+  | 'DUPLICATE_PART_ID'
   // Voice/Staff
   | 'INVALID_VOICE_NUMBER'
   | 'INVALID_STAFF_NUMBER'
   | 'STAFF_EXCEEDS_STAVES'
+  // Staff structure
+  | 'MISSING_STAVES_DECLARATION'
+  | 'STAVES_DECLARATION_MISMATCH'
+  | 'MISSING_CLEF_FOR_STAFF'
+  | 'CLEF_STAFF_EXCEEDS_STAVES'
   // General
   | 'INVALID_DURATION'
   | 'EMPTY_MEASURE';
@@ -92,8 +103,12 @@ export interface ValidateOptions {
   checkTuplets?: boolean;
   /** Check part ID references (default: true) */
   checkPartReferences?: boolean;
+  /** Check part structure (measure count, numbers) (default: true) */
+  checkPartStructure?: boolean;
   /** Check voice/staff numbers (default: true) */
   checkVoiceStaff?: boolean;
+  /** Check staff structure (staves declaration, clefs) (default: true) */
+  checkStaffStructure?: boolean;
   /** Tolerance for measure duration (in divisions, default: 0) */
   durationTolerance?: number;
 }
@@ -107,7 +122,9 @@ const DEFAULT_OPTIONS: Required<ValidateOptions> = {
   checkSlurs: true,
   checkTuplets: true,
   checkPartReferences: true,
+  checkPartStructure: true,
   checkVoiceStaff: true,
+  checkStaffStructure: true,
   durationTolerance: 0,
 };
 
@@ -124,6 +141,10 @@ export function validate(score: Score, options: ValidateOptions = {}): Validatio
 
   if (opts.checkPartReferences) {
     allErrors.push(...validatePartReferences(score));
+  }
+
+  if (opts.checkPartStructure) {
+    allErrors.push(...validatePartStructure(score));
   }
 
   if (opts.checkDivisions) {
@@ -193,6 +214,11 @@ export function validate(score: Score, options: ValidateOptions = {}): Validatio
       if (opts.checkVoiceStaff) {
         allErrors.push(...validateVoiceStaff(measure, currentStaves, location));
       }
+    }
+
+    // Staff structure validation for the entire part
+    if (opts.checkStaffStructure) {
+      allErrors.push(...validateStaffStructure(part, partIndex));
     }
   }
 
@@ -746,6 +772,261 @@ export function validateVoiceStaff(
         details: { duration: entry.duration },
       });
     }
+  }
+
+  return errors;
+}
+
+// ============================================================
+// Part Structure Validators
+// ============================================================
+
+/**
+ * Validate part structure (measure counts and numbers match across parts)
+ */
+export function validatePartStructure(score: Score): ValidationError[] {
+  const errors: ValidationError[] = [];
+
+  if (score.parts.length === 0) {
+    return errors;
+  }
+
+  // Check for duplicate part IDs
+  const partIds = new Map<string, number>();
+  for (let partIndex = 0; partIndex < score.parts.length; partIndex++) {
+    const part = score.parts[partIndex];
+    if (partIds.has(part.id)) {
+      errors.push({
+        code: 'DUPLICATE_PART_ID',
+        level: 'error',
+        message: `Duplicate part ID "${part.id}" found at index ${partIndex} (first at index ${partIds.get(part.id)})`,
+        location: { partIndex, partId: part.id },
+        details: { firstIndex: partIds.get(part.id) },
+      });
+    } else {
+      partIds.set(part.id, partIndex);
+    }
+  }
+
+  // Use first part as reference
+  const referencePart = score.parts[0];
+  const referenceMeasureCount = referencePart.measures.length;
+
+  // Check all other parts
+  for (let partIndex = 1; partIndex < score.parts.length; partIndex++) {
+    const part = score.parts[partIndex];
+
+    // Check measure count
+    if (part.measures.length !== referenceMeasureCount) {
+      errors.push({
+        code: 'PART_MEASURE_COUNT_MISMATCH',
+        level: 'error',
+        message: `Part "${part.id}" has ${part.measures.length} measures, expected ${referenceMeasureCount} (same as first part)`,
+        location: { partIndex, partId: part.id },
+        details: {
+          expected: referenceMeasureCount,
+          actual: part.measures.length,
+        },
+      });
+    }
+
+    // Check measure numbers match
+    const minLength = Math.min(part.measures.length, referenceMeasureCount);
+    for (let measureIndex = 0; measureIndex < minLength; measureIndex++) {
+      const refMeasure = referencePart.measures[measureIndex];
+      const partMeasure = part.measures[measureIndex];
+
+      if (refMeasure.number !== partMeasure.number) {
+        errors.push({
+          code: 'PART_MEASURE_NUMBER_MISMATCH',
+          level: 'warning',
+          message: `Part "${part.id}" measure at index ${measureIndex} has number "${partMeasure.number}", expected "${refMeasure.number}"`,
+          location: {
+            partIndex,
+            partId: part.id,
+            measureIndex,
+            measureNumber: partMeasure.number,
+          },
+          details: {
+            expected: refMeasure.number,
+            actual: partMeasure.number,
+          },
+        });
+      }
+    }
+  }
+
+  // Check part-group pairing in partList
+  const openGroups = new Map<number, number>(); // groupNumber -> index in partList
+
+  for (let i = 0; i < score.partList.length; i++) {
+    const entry = score.partList[i];
+    if (entry.type !== 'part-group') continue;
+
+    const groupNumber = entry.number ?? 1;
+
+    if (entry.groupType === 'start') {
+      if (openGroups.has(groupNumber)) {
+        errors.push({
+          code: 'PART_GROUP_START_WITHOUT_STOP',
+          level: 'error',
+          message: `Part group ${groupNumber} started again at index ${i} before previous group ended`,
+          location: {},
+          details: { groupNumber, partListIndex: i },
+        });
+      }
+      openGroups.set(groupNumber, i);
+    } else if (entry.groupType === 'stop') {
+      if (!openGroups.has(groupNumber)) {
+        errors.push({
+          code: 'PART_GROUP_STOP_WITHOUT_START',
+          level: 'error',
+          message: `Part group ${groupNumber} stop at index ${i} without matching start`,
+          location: {},
+          details: { groupNumber, partListIndex: i },
+        });
+      } else {
+        openGroups.delete(groupNumber);
+      }
+    }
+  }
+
+  // Report unclosed groups
+  for (const [groupNumber, startIndex] of openGroups.entries()) {
+    errors.push({
+      code: 'PART_GROUP_START_WITHOUT_STOP',
+      level: 'error',
+      message: `Part group ${groupNumber} started at index ${startIndex} but never stopped`,
+      location: {},
+      details: { groupNumber, partListIndex: startIndex },
+    });
+  }
+
+  return errors;
+}
+
+// ============================================================
+// Staff Structure Validators
+// ============================================================
+
+/**
+ * Validate staff structure within a part
+ */
+export function validateStaffStructure(part: Part, partIndex: number): ValidationError[] {
+  const errors: ValidationError[] = [];
+
+  let currentStaves: number | undefined = undefined;
+  let stavesDeclarationMeasure: string | undefined = undefined;
+  const clefsDeclaredForStaves = new Set<number>();
+
+  for (let measureIndex = 0; measureIndex < part.measures.length; measureIndex++) {
+    const measure = part.measures[measureIndex];
+    const location: ValidationLocation = {
+      partIndex,
+      partId: part.id,
+      measureIndex,
+      measureNumber: measure.number,
+    };
+
+    // Check staves declaration
+    if (measure.attributes?.staves !== undefined) {
+      const newStaves = measure.attributes.staves;
+
+      if (currentStaves !== undefined && newStaves !== currentStaves) {
+        // Staves count changed - this is valid but might indicate an issue
+        errors.push({
+          code: 'STAVES_DECLARATION_MISMATCH',
+          level: 'info',
+          message: `Staves count changed from ${currentStaves} to ${newStaves}`,
+          location,
+          details: {
+            previous: currentStaves,
+            new: newStaves,
+            previousMeasure: stavesDeclarationMeasure,
+          },
+        });
+        // Reset clef tracking when staves change
+        clefsDeclaredForStaves.clear();
+      }
+
+      currentStaves = newStaves;
+      stavesDeclarationMeasure = measure.number;
+    }
+
+    // Check clef declarations
+    if (measure.attributes?.clef) {
+      for (const clef of measure.attributes.clef) {
+        const staffNum = clef.staff ?? 1;
+        clefsDeclaredForStaves.add(staffNum);
+
+        // Check if clef staff exceeds staves
+        if (currentStaves !== undefined && staffNum > currentStaves) {
+          errors.push({
+            code: 'CLEF_STAFF_EXCEEDS_STAVES',
+            level: 'error',
+            message: `Clef declared for staff ${staffNum}, but only ${currentStaves} staves declared`,
+            location,
+            details: {
+              clefStaff: staffNum,
+              declaredStaves: currentStaves,
+            },
+          });
+        }
+      }
+    }
+
+    // Check if notes use staff numbers that exceed staves
+    if (currentStaves !== undefined) {
+      const usedStaves = new Set<number>();
+      for (const entry of measure.entries) {
+        if (entry.type === 'note') {
+          usedStaves.add(entry.staff ?? 1);
+        } else if (entry.type === 'forward' && entry.staff) {
+          usedStaves.add(entry.staff);
+        }
+      }
+
+      for (const usedStaff of usedStaves) {
+        if (usedStaff > currentStaves) {
+          // This is already caught by validateVoiceStaff, so we skip it here
+        }
+      }
+    }
+  }
+
+  // Check if multi-staff parts have clefs for all staves (at the end)
+  if (currentStaves !== undefined && currentStaves > 1) {
+    for (let staff = 1; staff <= currentStaves; staff++) {
+      if (!clefsDeclaredForStaves.has(staff)) {
+        errors.push({
+          code: 'MISSING_CLEF_FOR_STAFF',
+          level: 'warning',
+          message: `No clef declared for staff ${staff} in part "${part.id}"`,
+          location: { partIndex, partId: part.id },
+          details: { staff, totalStaves: currentStaves },
+        });
+      }
+    }
+  }
+
+  // Check if notes use multiple staves but staves not declared
+  const allUsedStaves = new Set<number>();
+  for (const measure of part.measures) {
+    for (const entry of measure.entries) {
+      if (entry.type === 'note' && entry.staff !== undefined) {
+        allUsedStaves.add(entry.staff);
+      }
+    }
+  }
+
+  if (allUsedStaves.size > 1 && currentStaves === undefined) {
+    errors.push({
+      code: 'MISSING_STAVES_DECLARATION',
+      level: 'warning',
+      message: `Part "${part.id}" uses staff numbers ${Array.from(allUsedStaves).sort().join(', ')} but has no staves declaration`,
+      location: { partIndex, partId: part.id },
+      details: { usedStaves: Array.from(allUsedStaves).sort() },
+    });
   }
 
   return errors;

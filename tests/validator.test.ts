@@ -15,6 +15,8 @@ import {
   validateSlurs,
   validateTuplets,
   validatePartReferences,
+  validatePartStructure,
+  validateStaffStructure,
   validateVoiceStaff,
   validateTiesAcrossMeasures,
   validateSlursAcrossMeasures,
@@ -79,8 +81,11 @@ describe('Validator', () => {
       const score = createMinimalScore();
       score.parts.push({ id: 'P2', measures: [] });
 
-      // Disable part reference checking
-      const result = validate(score, { checkPartReferences: false });
+      // Disable part reference and structure checking
+      const result = validate(score, {
+        checkPartReferences: false,
+        checkPartStructure: false,
+      });
       expect(result.valid).toBe(true);
     });
   });
@@ -683,6 +688,213 @@ describe('Validator', () => {
       const errors = validateSlursAcrossMeasures(part);
       expect(errors).toHaveLength(1);
       expect(errors[0].code).toBe('SLUR_START_WITHOUT_STOP');
+    });
+  });
+
+  describe('validatePartStructure', () => {
+    it('should pass when all parts have same measure count', () => {
+      const score = createMinimalScore();
+      score.partList.push({ type: 'score-part', id: 'P2', name: 'Part 2' });
+      score.parts.push({
+        id: 'P2',
+        measures: [{ number: '1', entries: [] }],
+      });
+
+      const errors = validatePartStructure(score);
+      expect(errors.filter(e => e.level === 'error')).toHaveLength(0);
+    });
+
+    it('should error when parts have different measure counts', () => {
+      const score = createMinimalScore();
+      score.partList.push({ type: 'score-part', id: 'P2', name: 'Part 2' });
+      score.parts.push({
+        id: 'P2',
+        measures: [
+          { number: '1', entries: [] },
+          { number: '2', entries: [] },
+        ],
+      });
+
+      const errors = validatePartStructure(score);
+      expect(errors).toHaveLength(1);
+      expect(errors[0].code).toBe('PART_MEASURE_COUNT_MISMATCH');
+    });
+
+    it('should warn when measure numbers do not match', () => {
+      const score = createMinimalScore();
+      score.partList.push({ type: 'score-part', id: 'P2', name: 'Part 2' });
+      score.parts.push({
+        id: 'P2',
+        measures: [{ number: '2', entries: [] }], // Different number
+      });
+
+      const errors = validatePartStructure(score);
+      expect(errors).toHaveLength(1);
+      expect(errors[0].code).toBe('PART_MEASURE_NUMBER_MISMATCH');
+      expect(errors[0].level).toBe('warning');
+    });
+
+    it('should error for duplicate part IDs', () => {
+      const score = createMinimalScore();
+      score.partList.push({ type: 'score-part', id: 'P1', name: 'Part 1 copy' });
+      score.parts.push({
+        id: 'P1', // Duplicate
+        measures: [{ number: '1', entries: [] }],
+      });
+
+      const errors = validatePartStructure(score);
+      expect(errors.some(e => e.code === 'DUPLICATE_PART_ID')).toBe(true);
+    });
+
+    it('should error for part-group start without stop', () => {
+      const score = createMinimalScore();
+      score.partList.unshift({
+        type: 'part-group',
+        groupType: 'start',
+        number: 1,
+      });
+
+      const errors = validatePartStructure(score);
+      expect(errors.some(e => e.code === 'PART_GROUP_START_WITHOUT_STOP')).toBe(true);
+    });
+
+    it('should error for part-group stop without start', () => {
+      const score = createMinimalScore();
+      score.partList.push({
+        type: 'part-group',
+        groupType: 'stop',
+        number: 1,
+      });
+
+      const errors = validatePartStructure(score);
+      expect(errors.some(e => e.code === 'PART_GROUP_STOP_WITHOUT_START')).toBe(true);
+    });
+
+    it('should pass for valid part-group pairs', () => {
+      const score = createMinimalScore();
+      score.partList.unshift({
+        type: 'part-group',
+        groupType: 'start',
+        number: 1,
+      });
+      score.partList.push({
+        type: 'part-group',
+        groupType: 'stop',
+        number: 1,
+      });
+
+      const errors = validatePartStructure(score);
+      expect(errors.filter(e => e.code.startsWith('PART_GROUP'))).toHaveLength(0);
+    });
+  });
+
+  describe('validateStaffStructure', () => {
+    it('should pass for single staff part', () => {
+      const part: Part = {
+        id: 'P1',
+        measures: [{
+          number: '1',
+          attributes: {
+            clef: [{ sign: 'G', line: 2 }],
+          },
+          entries: [createNote({ voice: 1 })],
+        }],
+      };
+
+      const errors = validateStaffStructure(part, 0);
+      expect(errors.filter(e => e.level === 'error')).toHaveLength(0);
+    });
+
+    it('should warn when multi-staff part missing clef for a staff', () => {
+      const part: Part = {
+        id: 'P1',
+        measures: [{
+          number: '1',
+          attributes: {
+            staves: 2,
+            clef: [{ sign: 'G', line: 2, staff: 1 }], // Only staff 1 has clef
+          },
+          entries: [],
+        }],
+      };
+
+      const errors = validateStaffStructure(part, 0);
+      expect(errors.some(e => e.code === 'MISSING_CLEF_FOR_STAFF')).toBe(true);
+    });
+
+    it('should pass when all staves have clefs', () => {
+      const part: Part = {
+        id: 'P1',
+        measures: [{
+          number: '1',
+          attributes: {
+            staves: 2,
+            clef: [
+              { sign: 'G', line: 2, staff: 1 },
+              { sign: 'F', line: 4, staff: 2 },
+            ],
+          },
+          entries: [],
+        }],
+      };
+
+      const errors = validateStaffStructure(part, 0);
+      expect(errors.filter(e => e.code === 'MISSING_CLEF_FOR_STAFF')).toHaveLength(0);
+    });
+
+    it('should error when clef staff exceeds staves', () => {
+      const part: Part = {
+        id: 'P1',
+        measures: [{
+          number: '1',
+          attributes: {
+            staves: 1,
+            clef: [{ sign: 'F', line: 4, staff: 2 }], // Staff 2 but only 1 staff
+          },
+          entries: [],
+        }],
+      };
+
+      const errors = validateStaffStructure(part, 0);
+      expect(errors.some(e => e.code === 'CLEF_STAFF_EXCEEDS_STAVES')).toBe(true);
+    });
+
+    it('should warn when multiple staves used without declaration', () => {
+      const part: Part = {
+        id: 'P1',
+        measures: [{
+          number: '1',
+          entries: [
+            createNote({ voice: 1, staff: 1 }),
+            createNote({ voice: 2, staff: 2 }),
+          ],
+        }],
+      };
+
+      const errors = validateStaffStructure(part, 0);
+      expect(errors.some(e => e.code === 'MISSING_STAVES_DECLARATION')).toBe(true);
+    });
+
+    it('should info when staves count changes', () => {
+      const part: Part = {
+        id: 'P1',
+        measures: [
+          {
+            number: '1',
+            attributes: { staves: 2 },
+            entries: [],
+          },
+          {
+            number: '2',
+            attributes: { staves: 1 }, // Changed
+            entries: [],
+          },
+        ],
+      };
+
+      const errors = validateStaffStructure(part, 0);
+      expect(errors.some(e => e.code === 'STAVES_DECLARATION_MISMATCH')).toBe(true);
+      expect(errors.find(e => e.code === 'STAVES_DECLARATION_MISMATCH')?.level).toBe('info');
     });
   });
 
