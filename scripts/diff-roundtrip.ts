@@ -1,10 +1,11 @@
 import { readFileSync } from 'fs';
 import { parse } from '../src/importers/musicxml';
+import { decodeBuffer } from '../src/file';
 import { serialize } from '../src/exporters/musicxml';
 
 const filePath = process.argv[2] || 'tests/fixtures/basic/single-note.xml';
 
-const original = readFileSync(filePath, 'utf-8');
+const original = decodeBuffer(readFileSync(filePath));
 const score = parse(original);
 const roundtrip = serialize(score);
 
