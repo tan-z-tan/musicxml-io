@@ -30,6 +30,7 @@ interface FileScore {
   file: string;
   totalNodes: number;
   matchedNodes: number;
+  addedNodes: number;  // Penalty: extra elements in roundtrip
   totalAttributes: number;
   matchedAttributes: number;
   totalTextValues: number;
@@ -52,6 +53,7 @@ interface CoverageReport {
     averageOverallScore: number;
     totalNodes: number;
     matchedNodes: number;
+    addedNodes: number;
     totalAttributes: number;
     matchedAttributes: number;
     totalTextValues: number;
@@ -88,6 +90,7 @@ function parseXml(xml: string): unknown[] {
 interface CompareStats {
   totalNodes: number;
   matchedNodes: number;
+  addedNodes: number;  // Penalty for extra elements in roundtrip
   totalAttributes: number;
   matchedAttributes: number;
   totalTextValues: number;
@@ -99,6 +102,7 @@ function compareXml(original: unknown[], roundtrip: unknown[]): CompareStats {
   const stats: CompareStats = {
     totalNodes: 0,
     matchedNodes: 0,
+    addedNodes: 0,
     totalAttributes: 0,
     matchedAttributes: 0,
     totalTextValues: 0,
@@ -108,6 +112,20 @@ function compareXml(original: unknown[], roundtrip: unknown[]): CompareStats {
 
   compareNodes(original, roundtrip, '', stats);
   return stats;
+}
+
+// Create a signature for an element to match regardless of order
+function getElementSignature(node: unknown, tagName: string): string {
+  const attrs = getAttributes(node);
+  const text = getTextContent(node);
+  const attrStr = Object.entries(attrs)
+    .filter(([k]) => !IGNORED_ATTRIBUTES.has(k))
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([k, v]) => `${k}=${v}`)
+    .join(',');
+  // Normalize text (ignore whitespace-only)
+  const normalizedText = text?.trim() || '';
+  return `${tagName}|${attrStr}|${normalizedText}`;
 }
 
 function compareNodes(
@@ -124,14 +142,33 @@ function compareNodes(
   for (const [tagName, origElements] of origMap.entries()) {
     const rtElements = rtMap.get(tagName) || [];
 
+    // Build signature map for order-independent matching
+    const rtSignatures = new Map<string, { el: unknown; used: boolean; idx: number }>();
+    rtElements.forEach((el, idx) => {
+      const sig = getElementSignature(el, tagName);
+      // If duplicate signature, append index to make unique
+      const key = rtSignatures.has(sig) ? `${sig}#${idx}` : sig;
+      rtSignatures.set(key, { el, used: false, idx });
+    });
+
     for (let i = 0; i < origElements.length; i++) {
       const origEl = origElements[i];
-      const rtEl = rtElements[i];
+      const origSig = getElementSignature(origEl, tagName);
       const elementPath = `${path}/${tagName}[${i}]`;
 
       stats.totalNodes++;
 
-      if (!rtEl) {
+      // Find matching element by signature (order-independent)
+      let matchedEntry: { el: unknown; used: boolean; idx: number } | undefined;
+      for (const [sig, entry] of rtSignatures.entries()) {
+        if (!entry.used && (sig === origSig || sig.startsWith(origSig + '#'))) {
+          matchedEntry = entry;
+          entry.used = true;
+          break;
+        }
+      }
+
+      if (!matchedEntry) {
         stats.differences.push({
           path: elementPath,
           type: 'missing',
@@ -145,34 +182,50 @@ function compareNodes(
       stats.matchedNodes++;
 
       // Compare attributes
-      compareAttributes(origEl, rtEl, elementPath, stats);
+      compareAttributes(origEl, matchedEntry.el, elementPath, stats);
 
       // Compare children
       const origChildren = getChildren(origEl, tagName);
-      const rtChildren = getChildren(rtEl, tagName);
+      const rtChildren = getChildren(matchedEntry.el, tagName);
 
       if (origChildren.length > 0 || rtChildren.length > 0) {
         compareNodes(origChildren, rtChildren, elementPath, stats);
       }
     }
+
+    // Count unmatched roundtrip elements as added (penalty)
+    for (const [, entry] of rtSignatures.entries()) {
+      if (!entry.used) {
+        stats.addedNodes++;
+        stats.differences.push({
+          path: `${path}/${tagName}[+${entry.idx}]`,
+          type: 'added',
+          actual: summarizeElement(entry.el),
+        });
+      }
+    }
   }
 
-  // Check for added elements in roundtrip
+  // Check for completely new tag names in roundtrip (not in original at all)
   for (const [tagName, rtElements] of rtMap.entries()) {
-    const origElements = origMap.get(tagName) || [];
-    for (let i = origElements.length; i < rtElements.length; i++) {
-      const elementPath = `${path}/${tagName}[${i}]`;
-      stats.differences.push({
-        path: elementPath,
-        type: 'added',
-        actual: summarizeElement(rtElements[i]),
-      });
+    if (!origMap.has(tagName)) {
+      for (let i = 0; i < rtElements.length; i++) {
+        stats.addedNodes++;
+        stats.differences.push({
+          path: `${path}/${tagName}[+${i}]`,
+          type: 'added',
+          actual: summarizeElement(rtElements[i]),
+        });
+      }
     }
   }
 }
 
 // Elements to ignore in comparison (not meaningful for roundtrip)
 const IGNORED_ELEMENTS = new Set(['?xml', '!DOCTYPE', '#text']);
+
+// Attributes to ignore (serializer always outputs these with fixed values)
+const IGNORED_ATTRIBUTES = new Set(['version']);
 
 function buildElementMap(nodes: unknown[]): Map<string, unknown[]> {
   const map = new Map<string, unknown[]>();
@@ -214,6 +267,9 @@ function compareAttributes(
 
   // Check original attributes
   for (const [name, value] of Object.entries(origAttrs)) {
+    // Skip ignored attributes
+    if (IGNORED_ATTRIBUTES.has(name)) continue;
+
     stats.totalAttributes++;
     const rtValue = rtAttrs[name];
 
@@ -393,15 +449,17 @@ function analyzeFile(filePath: string): FileScore | { error: string } {
     const attributeScore = stats.totalAttributes > 0 ? stats.matchedAttributes / stats.totalAttributes : 1;
     const textScore = stats.totalTextValues > 0 ? stats.matchedTextValues / stats.totalTextValues : 1;
 
-    // Weighted overall score
+    // Weighted overall score with penalty for added nodes
     const totalItems = stats.totalNodes + stats.totalAttributes + stats.totalTextValues;
     const matchedItems = stats.matchedNodes + stats.matchedAttributes + stats.matchedTextValues;
-    const overallScore = totalItems > 0 ? matchedItems / totalItems : 1;
+    const penalty = stats.addedNodes;  // Penalty for extra elements
+    const overallScore = totalItems > 0 ? Math.max(0, (matchedItems - penalty) / totalItems) : 1;
 
     return {
       file: filePath,
       totalNodes: stats.totalNodes,
       matchedNodes: stats.matchedNodes,
+      addedNodes: stats.addedNodes,
       totalAttributes: stats.totalAttributes,
       matchedAttributes: stats.matchedAttributes,
       totalTextValues: stats.totalTextValues,
@@ -428,6 +486,7 @@ function generateReport(fixturesPath: string): CoverageReport {
 
   let totalNodes = 0;
   let matchedNodes = 0;
+  let addedNodes = 0;
   let totalAttributes = 0;
   let matchedAttributes = 0;
   let totalTextValues = 0;
@@ -448,6 +507,7 @@ function generateReport(fixturesPath: string): CoverageReport {
     // Aggregate stats
     totalNodes += result.totalNodes;
     matchedNodes += result.matchedNodes;
+    addedNodes += result.addedNodes;
     totalAttributes += result.totalAttributes;
     matchedAttributes += result.matchedAttributes;
     totalTextValues += result.totalTextValues;
@@ -496,6 +556,7 @@ function generateReport(fixturesPath: string): CoverageReport {
       averageOverallScore,
       totalNodes,
       matchedNodes,
+      addedNodes,
       totalAttributes,
       matchedAttributes,
       totalTextValues,
@@ -540,6 +601,7 @@ function printReport(report: CoverageReport): void {
   console.log(`      (${summary.matchedAttributes.toLocaleString()} / ${summary.totalAttributes.toLocaleString()} attributes)`);
   console.log(`    Text value coverage:    ${formatPercent(summary.averageTextScore)}`);
   console.log(`      (${summary.matchedTextValues.toLocaleString()} / ${summary.totalTextValues.toLocaleString()} values)`);
+  console.log(`    Added nodes (penalty):  ${summary.addedNodes.toLocaleString()}`);
   console.log('');
 
   // Common missing elements
