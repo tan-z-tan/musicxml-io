@@ -171,6 +171,9 @@ function compareNodes(
   }
 }
 
+// Elements to ignore in comparison (not meaningful for roundtrip)
+const IGNORED_ELEMENTS = new Set(['?xml', '!DOCTYPE', '#text']);
+
 function buildElementMap(nodes: unknown[]): Map<string, unknown[]> {
   const map = new Map<string, unknown[]>();
 
@@ -179,16 +182,13 @@ function buildElementMap(nodes: unknown[]): Map<string, unknown[]> {
 
     for (const key of Object.keys(node as object)) {
       if (key === ':@') continue; // Skip attributes object
-      if (key === '#text') {
-        // Handle text nodes
-        let existing = map.get('#text') || [];
-        existing.push(node);
-        map.set('#text', existing);
-      } else {
-        let existing = map.get(key) || [];
-        existing.push(node);
-        map.set(key, existing);
-      }
+
+      // Skip ignored elements (XML declaration, DOCTYPE, whitespace text nodes)
+      if (IGNORED_ELEMENTS.has(key)) continue;
+
+      let existing = map.get(key) || [];
+      existing.push(node);
+      map.set(key, existing);
     }
   }
 
@@ -235,13 +235,13 @@ function compareAttributes(
     }
   }
 
-  // Check text content
+  // Check text content (skip whitespace-only text)
   const origText = getTextContent(origNode);
   const rtText = getTextContent(rtNode);
 
-  if (origText !== null) {
+  if (origText !== null && origText.trim() !== '') {
     stats.totalTextValues++;
-    if (rtText === null) {
+    if (rtText === null || rtText.trim() === '') {
       stats.differences.push({
         path: `${path}/#text`,
         type: 'missing',
@@ -310,12 +310,19 @@ function countNestedNodes(node: unknown, stats: CompareStats): void {
       continue;
     }
 
+    // Skip ignored elements
+    if (IGNORED_ELEMENTS.has(key)) continue;
+
     const children = (node as Record<string, unknown>)[key];
     if (Array.isArray(children)) {
       for (const child of children) {
         if (typeof child === 'object' && child !== null) {
+          // Skip text nodes (handled separately with non-empty check)
           if ('#text' in child) {
-            stats.totalTextValues++;
+            const textValue = String((child as Record<string, unknown>)['#text']);
+            if (textValue.trim() !== '') {
+              stats.totalTextValues++;
+            }
           } else {
             stats.totalNodes++;
             countNestedNodes(child, stats);
