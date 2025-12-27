@@ -187,6 +187,7 @@ function createPartTrack(
 
     const measureStartTick = currentTick;
     let position = 0;
+    let maxPosition = 0; // Track maximum position for multi-voice measures
 
     for (const entry of measure.entries) {
       if (entry.type === 'note') {
@@ -215,22 +216,38 @@ function createPartTrack(
         // Chord notes share the same position
         if (!note.chord) {
           position += note.duration;
+          if (position > maxPosition) {
+            maxPosition = position;
+          }
         }
       } else if (entry.type === 'backup') {
         position -= entry.duration;
       } else if (entry.type === 'forward') {
         position += entry.duration;
+        if (position > maxPosition) {
+          maxPosition = position;
+        }
       }
     }
 
     // Move to the end of the measure
-    // Estimate measure duration from time signature
-    const timeAttrs = findTimeSignature(part, measure.number);
-    if (timeAttrs) {
-      const measureDuration = (timeAttrs.beats / timeAttrs.beatType) * 4 * divisions;
-      currentTick = measureStartTick + Math.round((measureDuration * ticksPerQuarterNote) / divisions);
+    // For implicit (pickup) measures, use actual content duration
+    // For regular measures, use time signature-based duration
+    if (measure.implicit) {
+      // Implicit measures (pickup/anacrusis) should use actual content length
+      currentTick = measureStartTick + Math.round((maxPosition * ticksPerQuarterNote) / divisions);
     } else {
-      currentTick = measureStartTick + Math.round((position * ticksPerQuarterNote) / divisions);
+      const timeAttrs = findTimeSignature(part, measure.number);
+      if (timeAttrs) {
+        const measureDuration = (timeAttrs.beats / timeAttrs.beatType) * 4 * divisions;
+        const calculatedTicks = Math.round((measureDuration * ticksPerQuarterNote) / divisions);
+        const actualTicks = Math.round((maxPosition * ticksPerQuarterNote) / divisions);
+        // Use the smaller of calculated and actual for incomplete measures
+        // (e.g., last measure before repeat that combines with pickup)
+        currentTick = measureStartTick + Math.min(calculatedTicks, actualTicks > 0 ? actualTicks : calculatedTicks);
+      } else {
+        currentTick = measureStartTick + Math.round((maxPosition * ticksPerQuarterNote) / divisions);
+      }
     }
   }
 
