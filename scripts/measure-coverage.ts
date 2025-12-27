@@ -3,125 +3,340 @@
 /**
  * Roundtrip Coverage Measurement Script
  *
- * Measures how well the parser/serializer preserves MusicXML elements
- * by comparing original XML with roundtrip output.
+ * Properly compares original XML with roundtrip output by:
+ * 1. Parsing both XMLs into structured objects
+ * 2. Recursively comparing elements, attributes, and text values
+ * 3. Reporting detailed differences
  */
 
 import { readFileSync, readdirSync, statSync, existsSync, writeFileSync } from 'fs';
 import { join, relative } from 'path';
-import { parse } from '../src/parser';
-import { serialize } from '../src/serializer';
+import { XMLParser } from 'fast-xml-parser';
+import { parse } from '../src/importers/musicxml';
+import { serialize } from '../src/exporters/musicxml';
 
 // ============================================================
 // Types
 // ============================================================
 
-interface ElementCount {
-  [element: string]: number;
+interface Difference {
+  path: string;
+  type: 'missing' | 'added' | 'value_mismatch' | 'attribute_missing' | 'attribute_mismatch';
+  expected?: unknown;
+  actual?: unknown;
 }
 
 interface FileScore {
   file: string;
-  originalElements: ElementCount;
-  roundtripElements: ElementCount;
-  preserved: ElementCount;
-  lost: ElementCount;
-  added: ElementCount;
-  score: number;
-  elementScore: number; // unique elements preserved
+  totalNodes: number;
+  matchedNodes: number;
+  totalAttributes: number;
+  matchedAttributes: number;
+  totalTextValues: number;
+  matchedTextValues: number;
+  nodeScore: number;
+  attributeScore: number;
+  textScore: number;
+  overallScore: number;
+  differences: Difference[];
 }
 
 interface CoverageReport {
   timestamp: string;
   summary: {
     totalFiles: number;
-    averageScore: number;
-    averageElementScore: number;
-    totalOriginalElements: number;
-    totalPreservedElements: number;
-    overallScore: number;
+    parseErrors: number;
+    averageNodeScore: number;
+    averageAttributeScore: number;
+    averageTextScore: number;
+    averageOverallScore: number;
+    totalNodes: number;
+    matchedNodes: number;
+    totalAttributes: number;
+    matchedAttributes: number;
+    totalTextValues: number;
+    matchedTextValues: number;
   };
   files: FileScore[];
-  lostElementsRanking: { element: string; count: number; files: number }[];
-  preservedElements: string[];
+  commonMissingElements: { element: string; count: number }[];
+  commonMissingAttributes: { path: string; count: number }[];
   parseErrors: { file: string; error: string }[];
 }
 
 // ============================================================
-// XML Element Extraction
+// XML Parsing
 // ============================================================
 
-function extractElements(xml: string): ElementCount {
-  const elements: ElementCount = {};
+const xmlParser = new XMLParser({
+  ignoreAttributes: false,
+  attributeNamePrefix: '@_',
+  textNodeName: '#text',
+  preserveOrder: true,
+  trimValues: false,  // Preserve whitespace for accurate comparison
+  parseTagValue: false,
+  parseAttributeValue: false,
+});
 
-  // Match opening tags (including self-closing)
-  const tagRegex = /<([a-zA-Z][a-zA-Z0-9-]*)/g;
-  let match;
-
-  while ((match = tagRegex.exec(xml)) !== null) {
-    const tag = match[1];
-    // Skip XML declaration and DOCTYPE
-    if (tag === 'xml' || tag === 'DOCTYPE') continue;
-    elements[tag] = (elements[tag] || 0) + 1;
-  }
-
-  return elements;
-}
-
-function getUniqueElements(counts: ElementCount): Set<string> {
-  return new Set(Object.keys(counts));
+function parseXml(xml: string): unknown[] {
+  return xmlParser.parse(xml);
 }
 
 // ============================================================
-// Score Calculation
+// Deep Comparison
 // ============================================================
 
-function calculateFileScore(original: ElementCount, roundtrip: ElementCount): {
-  preserved: ElementCount;
-  lost: ElementCount;
-  added: ElementCount;
-  score: number;
-  elementScore: number;
-} {
-  const preserved: ElementCount = {};
-  const lost: ElementCount = {};
-  const added: ElementCount = {};
+interface CompareStats {
+  totalNodes: number;
+  matchedNodes: number;
+  totalAttributes: number;
+  matchedAttributes: number;
+  totalTextValues: number;
+  matchedTextValues: number;
+  differences: Difference[];
+}
 
-  const originalElements = getUniqueElements(original);
-  const roundtripElements = getUniqueElements(roundtrip);
+function compareXml(original: unknown[], roundtrip: unknown[]): CompareStats {
+  const stats: CompareStats = {
+    totalNodes: 0,
+    matchedNodes: 0,
+    totalAttributes: 0,
+    matchedAttributes: 0,
+    totalTextValues: 0,
+    matchedTextValues: 0,
+    differences: [],
+  };
 
-  // Calculate preserved and lost
-  for (const [element, count] of Object.entries(original)) {
-    const rtCount = roundtrip[element] || 0;
-    if (rtCount > 0) {
-      preserved[element] = Math.min(count, rtCount);
-      if (rtCount < count) {
-        lost[element] = count - rtCount;
+  compareNodes(original, roundtrip, '', stats);
+  return stats;
+}
+
+function compareNodes(
+  original: unknown[],
+  roundtrip: unknown[],
+  path: string,
+  stats: CompareStats
+): void {
+  // Build maps of elements by tag name for comparison
+  const origMap = buildElementMap(original);
+  const rtMap = buildElementMap(roundtrip);
+
+  // Check all original elements
+  for (const [tagName, origElements] of origMap.entries()) {
+    const rtElements = rtMap.get(tagName) || [];
+
+    for (let i = 0; i < origElements.length; i++) {
+      const origEl = origElements[i];
+      const rtEl = rtElements[i];
+      const elementPath = `${path}/${tagName}[${i}]`;
+
+      stats.totalNodes++;
+
+      if (!rtEl) {
+        stats.differences.push({
+          path: elementPath,
+          type: 'missing',
+          expected: summarizeElement(origEl),
+        });
+        // Count all nested nodes as missing too
+        countNestedNodes(origEl, stats);
+        continue;
       }
+
+      stats.matchedNodes++;
+
+      // Compare attributes
+      compareAttributes(origEl, rtEl, elementPath, stats);
+
+      // Compare children
+      const origChildren = getChildren(origEl, tagName);
+      const rtChildren = getChildren(rtEl, tagName);
+
+      if (origChildren.length > 0 || rtChildren.length > 0) {
+        compareNodes(origChildren, rtChildren, elementPath, stats);
+      }
+    }
+  }
+
+  // Check for added elements in roundtrip
+  for (const [tagName, rtElements] of rtMap.entries()) {
+    const origElements = origMap.get(tagName) || [];
+    for (let i = origElements.length; i < rtElements.length; i++) {
+      const elementPath = `${path}/${tagName}[${i}]`;
+      stats.differences.push({
+        path: elementPath,
+        type: 'added',
+        actual: summarizeElement(rtElements[i]),
+      });
+    }
+  }
+}
+
+function buildElementMap(nodes: unknown[]): Map<string, unknown[]> {
+  const map = new Map<string, unknown[]>();
+
+  for (const node of nodes) {
+    if (typeof node !== 'object' || node === null) continue;
+
+    for (const key of Object.keys(node as object)) {
+      if (key === ':@') continue; // Skip attributes object
+      if (key === '#text') {
+        // Handle text nodes
+        let existing = map.get('#text') || [];
+        existing.push(node);
+        map.set('#text', existing);
+      } else {
+        let existing = map.get(key) || [];
+        existing.push(node);
+        map.set(key, existing);
+      }
+    }
+  }
+
+  return map;
+}
+
+function getChildren(node: unknown, tagName: string): unknown[] {
+  if (typeof node !== 'object' || node === null) return [];
+  const obj = node as Record<string, unknown>;
+  const children = obj[tagName];
+  if (Array.isArray(children)) return children;
+  return [];
+}
+
+function compareAttributes(
+  origNode: unknown,
+  rtNode: unknown,
+  path: string,
+  stats: CompareStats
+): void {
+  const origAttrs = getAttributes(origNode);
+  const rtAttrs = getAttributes(rtNode);
+
+  // Check original attributes
+  for (const [name, value] of Object.entries(origAttrs)) {
+    stats.totalAttributes++;
+    const rtValue = rtAttrs[name];
+
+    if (rtValue === undefined) {
+      stats.differences.push({
+        path: `${path}/@${name}`,
+        type: 'attribute_missing',
+        expected: value,
+      });
+    } else if (String(rtValue) !== String(value)) {
+      stats.differences.push({
+        path: `${path}/@${name}`,
+        type: 'attribute_mismatch',
+        expected: value,
+        actual: rtValue,
+      });
     } else {
-      lost[element] = count;
+      stats.matchedAttributes++;
     }
   }
 
-  // Calculate added (elements in roundtrip but not in original)
-  for (const [element, count] of Object.entries(roundtrip)) {
-    if (!original[element]) {
-      added[element] = count;
-    } else if (roundtrip[element] > original[element]) {
-      added[element] = roundtrip[element] - original[element];
+  // Check text content
+  const origText = getTextContent(origNode);
+  const rtText = getTextContent(rtNode);
+
+  if (origText !== null) {
+    stats.totalTextValues++;
+    if (rtText === null) {
+      stats.differences.push({
+        path: `${path}/#text`,
+        type: 'missing',
+        expected: origText,
+      });
+    } else if (normalizeText(origText) !== normalizeText(rtText)) {
+      stats.differences.push({
+        path: `${path}/#text`,
+        type: 'value_mismatch',
+        expected: origText,
+        actual: rtText,
+      });
+    } else {
+      stats.matchedTextValues++;
     }
   }
+}
 
-  // Score based on element instances
-  const totalOriginal = Object.values(original).reduce((a, b) => a + b, 0);
-  const totalPreserved = Object.values(preserved).reduce((a, b) => a + b, 0);
-  const score = totalOriginal > 0 ? totalPreserved / totalOriginal : 0;
+function getAttributes(node: unknown): Record<string, string> {
+  if (typeof node !== 'object' || node === null) return {};
+  const obj = node as Record<string, unknown>;
+  const attrs = obj[':@'];
+  if (typeof attrs !== 'object' || attrs === null) return {};
 
-  // Score based on unique element types
-  const preservedTypes = [...originalElements].filter(e => roundtripElements.has(e)).length;
-  const elementScore = originalElements.size > 0 ? preservedTypes / originalElements.size : 0;
+  const result: Record<string, string> = {};
+  for (const [key, value] of Object.entries(attrs as object)) {
+    if (key.startsWith('@_')) {
+      result[key.slice(2)] = String(value);
+    }
+  }
+  return result;
+}
 
-  return { preserved, lost, added, score, elementScore };
+function getTextContent(node: unknown): string | null {
+  if (typeof node !== 'object' || node === null) return null;
+
+  // Look for #text in the node's children
+  for (const key of Object.keys(node as object)) {
+    if (key === ':@') continue;
+    const children = (node as Record<string, unknown>)[key];
+    if (Array.isArray(children)) {
+      for (const child of children) {
+        if (typeof child === 'object' && child !== null && '#text' in child) {
+          return String((child as Record<string, unknown>)['#text']);
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function normalizeText(text: string): string {
+  return text.trim().replace(/\s+/g, ' ');
+}
+
+function countNestedNodes(node: unknown, stats: CompareStats): void {
+  if (typeof node !== 'object' || node === null) return;
+
+  for (const key of Object.keys(node as object)) {
+    if (key === ':@') {
+      // Count attributes
+      const attrs = (node as Record<string, unknown>)[':@'];
+      if (typeof attrs === 'object' && attrs !== null) {
+        stats.totalAttributes += Object.keys(attrs as object).length;
+      }
+      continue;
+    }
+
+    const children = (node as Record<string, unknown>)[key];
+    if (Array.isArray(children)) {
+      for (const child of children) {
+        if (typeof child === 'object' && child !== null) {
+          if ('#text' in child) {
+            stats.totalTextValues++;
+          } else {
+            stats.totalNodes++;
+            countNestedNodes(child, stats);
+          }
+        }
+      }
+    }
+  }
+}
+
+function summarizeElement(node: unknown): string {
+  if (typeof node !== 'object' || node === null) return String(node);
+
+  const keys = Object.keys(node as object).filter(k => k !== ':@');
+  if (keys.length === 0) return '(empty)';
+
+  const tagName = keys[0];
+  const attrs = getAttributes(node);
+  const attrStr = Object.entries(attrs).map(([k, v]) => `${k}="${v}"`).join(' ');
+
+  return attrStr ? `<${tagName} ${attrStr}>` : `<${tagName}>`;
 }
 
 // ============================================================
@@ -154,26 +369,41 @@ function findXmlFiles(dir: string): string[] {
 
 function analyzeFile(filePath: string): FileScore | { error: string } {
   try {
-    const original = readFileSync(filePath, 'utf-8');
-    const originalElements = extractElements(original);
+    const originalXml = readFileSync(filePath, 'utf-8');
 
-    // Roundtrip: parse -> serialize
-    const score = parse(original);
-    const roundtrip = serialize(score);
-    const roundtripElements = extractElements(roundtrip);
+    // Roundtrip: parse to internal representation, then serialize back
+    const score = parse(originalXml);
+    const roundtripXml = serialize(score);
 
-    const { preserved, lost, added, score: fileScore, elementScore } =
-      calculateFileScore(originalElements, roundtripElements);
+    // Parse both XMLs for comparison
+    const originalParsed = parseXml(originalXml);
+    const roundtripParsed = parseXml(roundtripXml);
+
+    // Compare
+    const stats = compareXml(originalParsed, roundtripParsed);
+
+    const nodeScore = stats.totalNodes > 0 ? stats.matchedNodes / stats.totalNodes : 1;
+    const attributeScore = stats.totalAttributes > 0 ? stats.matchedAttributes / stats.totalAttributes : 1;
+    const textScore = stats.totalTextValues > 0 ? stats.matchedTextValues / stats.totalTextValues : 1;
+
+    // Weighted overall score
+    const totalItems = stats.totalNodes + stats.totalAttributes + stats.totalTextValues;
+    const matchedItems = stats.matchedNodes + stats.matchedAttributes + stats.matchedTextValues;
+    const overallScore = totalItems > 0 ? matchedItems / totalItems : 1;
 
     return {
       file: filePath,
-      originalElements,
-      roundtripElements,
-      preserved,
-      lost,
-      added,
-      score: fileScore,
-      elementScore,
+      totalNodes: stats.totalNodes,
+      matchedNodes: stats.matchedNodes,
+      totalAttributes: stats.totalAttributes,
+      matchedAttributes: stats.matchedAttributes,
+      totalTextValues: stats.totalTextValues,
+      matchedTextValues: stats.matchedTextValues,
+      nodeScore,
+      attributeScore,
+      textScore,
+      overallScore,
+      differences: stats.differences.slice(0, 50), // Limit to first 50 differences
     };
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
@@ -185,12 +415,16 @@ function generateReport(fixturesPath: string): CoverageReport {
   const fileScores: FileScore[] = [];
   const parseErrors: { file: string; error: string }[] = [];
 
-  // Aggregate lost elements across all files
-  const lostElementsMap: Map<string, { count: number; files: Set<string> }> = new Map();
-  const allPreservedElements: Set<string> = new Set();
+  // Track common issues
+  const missingElements: Map<string, number> = new Map();
+  const missingAttributes: Map<string, number> = new Map();
 
-  let totalOriginal = 0;
-  let totalPreserved = 0;
+  let totalNodes = 0;
+  let matchedNodes = 0;
+  let totalAttributes = 0;
+  let matchedAttributes = 0;
+  let totalTextValues = 0;
+  let matchedTextValues = 0;
 
   for (const file of files) {
     const result = analyzeFile(file);
@@ -205,56 +439,64 @@ function generateReport(fixturesPath: string): CoverageReport {
     fileScores.push(result);
 
     // Aggregate stats
-    totalOriginal += Object.values(result.originalElements).reduce((a, b) => a + b, 0);
-    totalPreserved += Object.values(result.preserved).reduce((a, b) => a + b, 0);
+    totalNodes += result.totalNodes;
+    matchedNodes += result.matchedNodes;
+    totalAttributes += result.totalAttributes;
+    matchedAttributes += result.matchedAttributes;
+    totalTextValues += result.totalTextValues;
+    matchedTextValues += result.matchedTextValues;
 
-    // Track lost elements
-    for (const [element, count] of Object.entries(result.lost)) {
-      const existing = lostElementsMap.get(element) || { count: 0, files: new Set() };
-      existing.count += count;
-      existing.files.add(relativePath);
-      lostElementsMap.set(element, existing);
-    }
-
-    // Track preserved elements
-    for (const element of Object.keys(result.preserved)) {
-      allPreservedElements.add(element);
+    // Track common issues
+    for (const diff of result.differences) {
+      if (diff.type === 'missing') {
+        const element = diff.path.split('/').pop() || diff.path;
+        missingElements.set(element, (missingElements.get(element) || 0) + 1);
+      } else if (diff.type === 'attribute_missing') {
+        missingAttributes.set(diff.path, (missingAttributes.get(diff.path) || 0) + 1);
+      }
     }
   }
 
-  // Sort files by score
-  fileScores.sort((a, b) => a.score - b.score);
+  // Sort files by score (worst first)
+  fileScores.sort((a, b) => a.overallScore - b.overallScore);
 
-  // Create lost elements ranking
-  const lostElementsRanking = [...lostElementsMap.entries()]
-    .map(([element, data]) => ({
-      element,
-      count: data.count,
-      files: data.files.size,
-    }))
-    .sort((a, b) => b.files - a.files || b.count - a.count);
+  // Build common issues lists
+  const commonMissingElements = [...missingElements.entries()]
+    .map(([element, count]) => ({ element, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 30);
 
-  // Calculate summary
-  const averageScore = fileScores.length > 0
-    ? fileScores.reduce((a, b) => a + b.score, 0) / fileScores.length
-    : 0;
-  const averageElementScore = fileScores.length > 0
-    ? fileScores.reduce((a, b) => a + b.elementScore, 0) / fileScores.length
-    : 0;
+  const commonMissingAttributes = [...missingAttributes.entries()]
+    .map(([path, count]) => ({ path, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 30);
+
+  // Calculate averages
+  const n = fileScores.length || 1;
+  const averageNodeScore = fileScores.reduce((a, b) => a + b.nodeScore, 0) / n;
+  const averageAttributeScore = fileScores.reduce((a, b) => a + b.attributeScore, 0) / n;
+  const averageTextScore = fileScores.reduce((a, b) => a + b.textScore, 0) / n;
+  const averageOverallScore = fileScores.reduce((a, b) => a + b.overallScore, 0) / n;
 
   return {
     timestamp: new Date().toISOString(),
     summary: {
       totalFiles: fileScores.length,
-      averageScore,
-      averageElementScore,
-      totalOriginalElements: totalOriginal,
-      totalPreservedElements: totalPreserved,
-      overallScore: totalOriginal > 0 ? totalPreserved / totalOriginal : 0,
+      parseErrors: parseErrors.length,
+      averageNodeScore,
+      averageAttributeScore,
+      averageTextScore,
+      averageOverallScore,
+      totalNodes,
+      matchedNodes,
+      totalAttributes,
+      matchedAttributes,
+      totalTextValues,
+      matchedTextValues,
     },
     files: fileScores,
-    lostElementsRanking,
-    preservedElements: [...allPreservedElements].sort(),
+    commonMissingElements,
+    commonMissingAttributes,
     parseErrors,
   };
 }
@@ -268,88 +510,95 @@ function formatPercent(n: number): string {
 }
 
 function printReport(report: CoverageReport): void {
-  const { summary, files, lostElementsRanking, preservedElements, parseErrors } = report;
+  const { summary, files, commonMissingElements, commonMissingAttributes, parseErrors } = report;
 
-  console.log('\n' + '='.repeat(60));
-  console.log('  ROUNDTRIP COVERAGE REPORT');
-  console.log('='.repeat(60));
+  console.log('\n' + '='.repeat(70));
+  console.log('  ROUNDTRIP COVERAGE REPORT (Deep Comparison)');
+  console.log('='.repeat(70));
   console.log(`  Generated: ${report.timestamp}`);
   console.log('');
 
   // Summary
   console.log('  SUMMARY');
-  console.log('  ' + '-'.repeat(40));
-  console.log(`  Total files analyzed:    ${summary.totalFiles}`);
-  console.log(`  Parse errors:            ${parseErrors.length}`);
+  console.log('  ' + '-'.repeat(50));
+  console.log(`  Total files analyzed:     ${summary.totalFiles}`);
+  console.log(`  Parse errors:             ${parseErrors.length}`);
   console.log('');
-  console.log(`  Overall Score:           ${formatPercent(summary.overallScore)}`);
-  console.log(`  Average File Score:      ${formatPercent(summary.averageScore)}`);
-  console.log(`  Element Type Coverage:   ${formatPercent(summary.averageElementScore)}`);
+  console.log(`  OVERALL SCORE:            ${formatPercent(summary.averageOverallScore)}`);
   console.log('');
-  console.log(`  Total elements (orig):   ${summary.totalOriginalElements.toLocaleString()}`);
-  console.log(`  Preserved elements:      ${summary.totalPreservedElements.toLocaleString()}`);
-  console.log('');
-
-  // Preserved elements
-  console.log('  PRESERVED ELEMENT TYPES (' + preservedElements.length + ')');
-  console.log('  ' + '-'.repeat(40));
-  const chunked = [];
-  for (let i = 0; i < preservedElements.length; i += 6) {
-    chunked.push(preservedElements.slice(i, i + 6).join(', '));
-  }
-  for (const chunk of chunked) {
-    console.log('  ' + chunk);
-  }
+  console.log('  Breakdown:');
+  console.log(`    Node coverage:          ${formatPercent(summary.averageNodeScore)}`);
+  console.log(`      (${summary.matchedNodes.toLocaleString()} / ${summary.totalNodes.toLocaleString()} nodes)`);
+  console.log(`    Attribute coverage:     ${formatPercent(summary.averageAttributeScore)}`);
+  console.log(`      (${summary.matchedAttributes.toLocaleString()} / ${summary.totalAttributes.toLocaleString()} attributes)`);
+  console.log(`    Text value coverage:    ${formatPercent(summary.averageTextScore)}`);
+  console.log(`      (${summary.matchedTextValues.toLocaleString()} / ${summary.totalTextValues.toLocaleString()} values)`);
   console.log('');
 
-  // Lost elements ranking (top 20)
-  console.log('  LOST ELEMENTS (top 20 by affected files)');
-  console.log('  ' + '-'.repeat(40));
-  console.log('  Element                  Files    Count');
-  for (const item of lostElementsRanking.slice(0, 20)) {
-    const name = item.element.padEnd(22);
-    const filesStr = String(item.files).padStart(5);
-    const countStr = String(item.count).padStart(8);
-    console.log(`  ${name} ${filesStr} ${countStr}`);
+  // Common missing elements
+  if (commonMissingElements.length > 0) {
+    console.log('  COMMONLY MISSING ELEMENTS (top 20)');
+    console.log('  ' + '-'.repeat(50));
+    for (const item of commonMissingElements.slice(0, 20)) {
+      console.log(`    ${item.element.padEnd(40)} ${item.count}`);
+    }
+    console.log('');
   }
-  console.log('');
 
-  // Worst files (bottom 10)
-  console.log('  LOWEST SCORING FILES');
-  console.log('  ' + '-'.repeat(40));
-  for (const file of files.slice(0, 10)) {
-    const score = formatPercent(file.score).padStart(6);
-    const lostCount = Object.keys(file.lost).length;
-    const lostPreview = Object.keys(file.lost).slice(0, 3).join(', ');
+  // Common missing attributes
+  if (commonMissingAttributes.length > 0) {
+    console.log('  COMMONLY MISSING ATTRIBUTES (top 15)');
+    console.log('  ' + '-'.repeat(50));
+    for (const item of commonMissingAttributes.slice(0, 15)) {
+      const shortPath = item.path.length > 50 ? '...' + item.path.slice(-47) : item.path;
+      console.log(`    ${shortPath.padEnd(50)} ${item.count}`);
+    }
+    console.log('');
+  }
+
+  // Worst files
+  console.log('  LOWEST SCORING FILES (bottom 15)');
+  console.log('  ' + '-'.repeat(50));
+  for (const file of files.slice(0, 15)) {
+    const score = formatPercent(file.overallScore).padStart(6);
     console.log(`  ${score}  ${file.file}`);
-    if (lostCount > 0) {
-      console.log(`         Lost: ${lostPreview}${lostCount > 3 ? '...' : ''}`);
+
+    // Show first few differences
+    const diffs = file.differences.slice(0, 3);
+    for (const diff of diffs) {
+      const shortPath = diff.path.length > 40 ? '...' + diff.path.slice(-37) : diff.path;
+      console.log(`           ${diff.type}: ${shortPath}`);
+    }
+    if (file.differences.length > 3) {
+      console.log(`           ... and ${file.differences.length - 3} more differences`);
     }
   }
   console.log('');
 
-  // Best files (top 5)
-  console.log('  HIGHEST SCORING FILES');
-  console.log('  ' + '-'.repeat(40));
-  const best = [...files].sort((a, b) => b.score - a.score).slice(0, 5);
+  // Best files
+  console.log('  HIGHEST SCORING FILES (top 10)');
+  console.log('  ' + '-'.repeat(50));
+  const best = [...files].sort((a, b) => b.overallScore - a.overallScore).slice(0, 10);
   for (const file of best) {
-    const score = formatPercent(file.score).padStart(6);
+    const score = formatPercent(file.overallScore).padStart(6);
+    const details = `(${file.matchedNodes}/${file.totalNodes} nodes, ${file.matchedAttributes}/${file.totalAttributes} attrs)`;
     console.log(`  ${score}  ${file.file}`);
+    console.log(`           ${details}`);
   }
   console.log('');
 
   // Parse errors
   if (parseErrors.length > 0) {
     console.log('  PARSE ERRORS');
-    console.log('  ' + '-'.repeat(40));
-    for (const err of parseErrors) {
+    console.log('  ' + '-'.repeat(50));
+    for (const err of parseErrors.slice(0, 10)) {
       console.log(`  ${err.file}`);
-      console.log(`    ${err.error}`);
+      console.log(`    ${err.error.slice(0, 80)}`);
     }
     console.log('');
   }
 
-  console.log('='.repeat(60));
+  console.log('='.repeat(70));
 }
 
 // ============================================================
@@ -366,3 +615,9 @@ printReport(report);
 const jsonPath = join(__dirname, '../coverage-report.json');
 writeFileSync(jsonPath, JSON.stringify(report, null, 2));
 console.log(`\nJSON report saved to: ${jsonPath}`);
+
+// Exit with non-zero if coverage is below threshold
+const threshold = 0.5; // 50% minimum
+if (report.summary.averageOverallScore < threshold) {
+  console.log(`\nWARNING: Coverage ${formatPercent(report.summary.averageOverallScore)} is below threshold ${formatPercent(threshold)}`);
+}
