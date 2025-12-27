@@ -54,6 +54,7 @@ import type {
   FiguredBassEntry,
   Figure,
   TupletNotation,
+  TiedNotation,
   SoundEntry,
   Swing,
   TechnicalNotation,
@@ -556,6 +557,9 @@ function parseCredits(elements: OrderedElement[]): Credit[] | undefined {
           if (wordAttrs['justify']) cw.justify = wordAttrs['justify'];
           if (wordAttrs['halign']) cw.halign = wordAttrs['halign'];
           if (wordAttrs['valign']) cw.valign = wordAttrs['valign'];
+          if (wordAttrs['letter-spacing']) cw.letterSpacing = wordAttrs['letter-spacing'];
+          if (wordAttrs['xml:lang']) cw.xmlLang = wordAttrs['xml:lang'];
+          if (wordAttrs['xml:space']) cw.xmlSpace = wordAttrs['xml:space'];
           words.push(cw);
         }
       }
@@ -1485,12 +1489,14 @@ function parseNotations(elements: OrderedElement[], notationsIndex: number = 0):
   for (const el of elements) {
     if (el['tied']) {
       const attrs = getAttributes(el);
-      notations.push({
+      const tied: TiedNotation = {
         type: 'tied',
         tiedType: (attrs['type'] as 'start' | 'stop' | 'continue' | 'let-ring') || 'start',
         number: attrs['number'] ? parseInt(attrs['number'], 10) : undefined,
+        orientation: attrs['orientation'] as 'over' | 'under' | undefined,
         notationsIndex,
-      });
+      };
+      notations.push(tied);
     } else if (el['slur']) {
       const attrs = getAttributes(el);
       const slur: Notation = {
@@ -1999,7 +2005,9 @@ function parseDirectionType(elements: OrderedElement[]): DirectionType | null {
         for (const dv of dynamicsValues) {
           if (dyn[dv] !== undefined) {
             const result: DirectionType = { kind: 'dynamics', value: dv };
+            if (dynAttrs['default-x']) result.defaultX = parseFloat(dynAttrs['default-x']);
             if (dynAttrs['default-y']) result.defaultY = parseFloat(dynAttrs['default-y']);
+            if (dynAttrs['relative-x']) result.relativeX = parseFloat(dynAttrs['relative-x']);
             if (dynAttrs['halign']) result.halign = dynAttrs['halign'];
             return result;
           }
@@ -2073,6 +2081,7 @@ function parseDirectionType(elements: OrderedElement[]): DirectionType | null {
           if (wordAttrs['font-size']) result.fontSize = wordAttrs['font-size'];
           if (wordAttrs['font-style']) result.fontStyle = wordAttrs['font-style'];
           if (wordAttrs['font-weight']) result.fontWeight = wordAttrs['font-weight'];
+          if (wordAttrs['xml:lang']) result.xmlLang = wordAttrs['xml:lang'];
           return result;
         }
       }
@@ -2192,7 +2201,13 @@ function parseDirectionType(elements: OrderedElement[]): DirectionType | null {
       const pedalAttrs = getAttributes(el);
       const pedalType = pedalAttrs['type'];
       if (pedalType === 'start' || pedalType === 'stop' || pedalType === 'change' || pedalType === 'continue') {
-        return { kind: 'pedal', type: pedalType };
+        const result: DirectionType = { kind: 'pedal', type: pedalType };
+        if (pedalAttrs['line'] === 'yes') result.line = true;
+        else if (pedalAttrs['line'] === 'no') result.line = false;
+        if (pedalAttrs['default-y']) result.defaultY = parseFloat(pedalAttrs['default-y']);
+        if (pedalAttrs['relative-x']) result.relativeX = parseFloat(pedalAttrs['relative-x']);
+        if (pedalAttrs['halign']) result.halign = pedalAttrs['halign'];
+        return result;
       }
     }
 
@@ -2335,6 +2350,8 @@ function parseStaffDetails(elements: OrderedElement[], attrs: Record<string, str
   const sd: StaffDetails = {};
 
   if (attrs['number']) sd.number = parseInt(attrs['number'], 10);
+  if (attrs['print-object'] === 'no') sd.printObject = false;
+  else if (attrs['print-object'] === 'yes') sd.printObject = true;
 
   const staffType = getElementText(elements, 'staff-type');
   if (staffType && ['ossia', 'cue', 'editorial', 'regular', 'alternate'].includes(staffType)) {
@@ -2347,8 +2364,23 @@ function parseStaffDetails(elements: OrderedElement[], attrs: Record<string, str
   const capo = getElementText(elements, 'capo');
   if (capo) sd.capo = parseInt(capo, 10);
 
-  const staffSize = getElementText(elements, 'staff-size');
-  if (staffSize) sd.staffSize = parseFloat(staffSize);
+  // Parse staff-size with scaling attribute
+  for (const el of elements) {
+    if (el['staff-size'] !== undefined) {
+      const sizeContent = el['staff-size'] as OrderedElement[];
+      const sizeAttrs = getAttributes(el);
+      for (const item of sizeContent) {
+        if (item['#text'] !== undefined) {
+          sd.staffSize = parseFloat(String(item['#text']));
+          break;
+        }
+      }
+      if (sizeAttrs['scaling']) {
+        sd.staffSizeScaling = parseFloat(sizeAttrs['scaling']);
+      }
+      break;
+    }
+  }
 
   // Check for show-frets attribute
   if (attrs['show-frets'] === 'numbers' || attrs['show-frets'] === 'letters') {
