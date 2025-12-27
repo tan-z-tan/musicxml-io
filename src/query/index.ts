@@ -10,11 +10,12 @@ import type {
 /**
  * Get a specific measure from the score
  */
-export function getMeasure(score: Score, options: { part: number; measure: number }): Measure | undefined {
+export function getMeasure(score: Score, options: { part: number; measure: string | number }): Measure | undefined {
   const part = score.parts[options.part];
   if (!part) return undefined;
+  const targetMeasure = String(options.measure);
 
-  return part.measures.find((m) => m.number === options.measure);
+  return part.measures.find((m) => m.number === targetMeasure);
 }
 
 /**
@@ -39,13 +40,16 @@ export function getMeasureCount(score: Score): number {
  * Get the divisions value at a specific measure
  * Searches backwards from the specified measure to find the most recent divisions
  */
-export function getDivisions(score: Score, options: { part: number; measure: number }): number {
+export function getDivisions(score: Score, options: { part: number; measure: string | number }): number {
   const part = score.parts[options.part];
   if (!part) return 1;
+  const targetMeasure = parseInt(String(options.measure), 10);
+  if (isNaN(targetMeasure)) return 1;
 
   for (let i = 0; i < part.measures.length; i++) {
     const m = part.measures[i];
-    if (m.number > options.measure) break;
+    const mNum = parseInt(m.number, 10);
+    if (!isNaN(mNum) && mNum > targetMeasure) break;
 
     if (m.attributes?.divisions !== undefined) {
       // Continue searching for a more recent value
@@ -55,7 +59,8 @@ export function getDivisions(score: Score, options: { part: number; measure: num
   // Search from the beginning up to the specified measure
   let divisions = 1;
   for (const m of part.measures) {
-    if (m.number > options.measure) break;
+    const mNum = parseInt(m.number, 10);
+    if (!isNaN(mNum) && mNum > targetMeasure) break;
     if (m.attributes?.divisions !== undefined) {
       divisions = m.attributes.divisions;
     }
@@ -68,14 +73,16 @@ export function getDivisions(score: Score, options: { part: number; measure: num
  * Get the current attributes at a specific measure
  * Merges all attribute changes from measure 1 to the specified measure
  */
-export function getAttributesAtMeasure(score: Score, options: { part: number; measure: number }): MeasureAttributes {
+export function getAttributesAtMeasure(score: Score, options: { part: number; measure: string | number }): MeasureAttributes {
   const part = score.parts[options.part];
   if (!part) return {};
+  const targetMeasure = parseInt(String(options.measure), 10);
 
   const result: MeasureAttributes = {};
 
   for (const m of part.measures) {
-    if (m.number > options.measure) break;
+    const mNum = parseInt(m.number, 10);
+    if (!isNaN(targetMeasure) && !isNaN(mNum) && mNum > targetMeasure) break;
 
     if (m.attributes) {
       if (m.attributes.divisions !== undefined) result.divisions = m.attributes.divisions;
@@ -195,7 +202,8 @@ export function getDuration(score: Score): number {
     // Use time signature to calculate expected duration if available
     const attrs = getAttributesAtMeasure(score, { part: 0, measure: measure.number });
     if (attrs.time) {
-      const expectedDuration = (attrs.time.beats / attrs.time.beatType) * 4 * divisions;
+      const beats = parseInt(attrs.time.beats, 10) || 4;
+      const expectedDuration = (beats / attrs.time.beatType) * 4 * divisions;
       measureDuration = Math.max(measureDuration, expectedDuration);
     }
 

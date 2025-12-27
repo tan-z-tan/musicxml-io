@@ -122,13 +122,23 @@ export interface PartInfo {
   type: 'score-part';
   id: string;
   name?: string;
-  partNameDisplay?: string;
+  namePrintObject?: boolean;
+  partNameDisplay?: DisplayText[];
   abbreviation?: string;
-  partAbbreviationDisplay?: string;
+  abbreviationPrintObject?: boolean;
+  partAbbreviationDisplay?: DisplayText[];
   scoreInstruments?: ScoreInstrument[];
   midiDevices?: MidiDevice[];
   midiInstruments?: MidiInstrument[];
   groups?: string[];
+}
+
+export interface DisplayText {
+  text: string;
+  fontFamily?: string;
+  fontSize?: string;
+  fontStyle?: string;
+  fontWeight?: string;
 }
 
 export interface ScoreInstrument {
@@ -162,8 +172,9 @@ export interface PartGroup {
   groupType: 'start' | 'stop';
   number?: number;
   groupName?: string;
-  groupNameDisplay?: string;
+  groupNameDisplay?: DisplayText[];
   groupAbbreviation?: string;
+  groupAbbreviationDisplay?: DisplayText[];
   groupSymbol?: 'none' | 'brace' | 'line' | 'bracket' | 'square';
   groupBarline?: 'yes' | 'no' | 'Mensurstrich';
 }
@@ -177,7 +188,7 @@ export interface Part {
 }
 
 export interface Measure {
-  number: number;
+  number: string; // MusicXML spec: token type (string), e.g., "1", "X1", "1a"
   width?: number;
   implicit?: boolean;
   attributes?: MeasureAttributes;
@@ -195,16 +206,26 @@ export interface Print {
   pageLayout?: PageLayout;
   staffLayouts?: { number?: number; staffDistance?: number }[];
   measureLayout?: { measureDistance?: number };
-  measureNumbering?: string;
+  measureNumbering?: MeasureNumbering;
+  partNameDisplay?: DisplayText[];
+  partAbbreviationDisplay?: DisplayText[];
+}
+
+export interface MeasureNumbering {
+  value: string;
+  system?: 'only-top' | 'only-bottom' | 'all-system-parts' | 'none';
 }
 
 export interface MeasureAttributes {
   divisions?: number;
   time?: TimeSignature;
+  times?: TimeSignature[]; // For multi-staff time signatures
   key?: KeySignature;
+  keys?: KeySignature[]; // For multi-staff key signatures
   clef?: Clef[];
   staves?: number;
   transpose?: Transpose;
+  transposes?: Transpose[]; // For multi-staff transpose
   staffDetails?: StaffDetails[];
   measureStyle?: MeasureStyle[];
 }
@@ -235,19 +256,32 @@ export interface MeasureStyle {
 }
 
 export interface TimeSignature {
-  beats: number;
+  beats: string; // Can be a single number or for display purposes
   beatType: number;
-  symbol?: 'common' | 'cut';
+  // For compound time signatures (e.g., 3/8+2/8+3/4)
+  beatsList?: number[];
+  beatTypeList?: number[];
+  symbol?: 'common' | 'cut' | 'single-number' | 'note' | 'dotted-note' | 'normal';
+  printObject?: boolean;
+  senzaMisura?: boolean; // For unmeasured time
 }
 
 export interface KeySignature {
   fifths: number;
   mode?: 'major' | 'minor' | 'dorian' | 'phrygian' | 'lydian' | 'mixolydian' | 'aeolian' | 'ionian' | 'locrian';
   cancel?: number;
+  cancelLocation?: 'left' | 'right' | 'before-barline';
+  number?: number; // Staff number for multi-staff keys
   // Non-traditional key signatures
   keySteps?: string[];
   keyAlters?: number[];
-  keyOctaves?: { number: number; octave: number }[];
+  keyOctaves?: KeyOctave[];
+}
+
+export interface KeyOctave {
+  number: number;
+  octave: number;
+  cancel?: boolean;
 }
 
 export interface Clef {
@@ -279,7 +313,12 @@ export interface Barline {
 // ============================================================
 // MeasureEntry (MusicXML順序を保持するフラット構造)
 // ============================================================
-export type MeasureEntry = NoteEntry | BackupEntry | ForwardEntry | DirectionEntry | HarmonyEntry | FiguredBassEntry | SoundEntry;
+export type MeasureEntry = NoteEntry | BackupEntry | ForwardEntry | DirectionEntry | HarmonyEntry | FiguredBassEntry | SoundEntry | AttributesEntry;
+
+export interface AttributesEntry {
+  type: 'attributes';
+  attributes: MeasureAttributes;
+}
 
 export interface NoteEntry {
   type: 'note';
@@ -290,6 +329,8 @@ export interface NoteEntry {
   voice: number;
   staff?: number;
   chord?: boolean;
+  cue?: boolean;
+  instrument?: string; // instrument reference id
 
   // Layout attributes
   defaultX?: number;
@@ -342,6 +383,18 @@ export interface ForwardEntry {
   staff?: number;
 }
 
+export interface DirectionSound {
+  tempo?: number;
+  dynamics?: number;
+  midiInstrument?: {
+    id: string;
+    midiProgram?: number;
+    midiChannel?: number;
+    volume?: number;
+    pan?: number;
+  };
+}
+
 export interface DirectionEntry {
   type: 'direction';
   directionTypes: DirectionType[];
@@ -350,10 +403,14 @@ export interface DirectionEntry {
   staff?: number;
   voice?: number;
   offset?: number;
-  sound?: {
-    tempo?: number;
-    dynamics?: number;
-  };
+  sound?: DirectionSound;
+}
+
+export interface Swing {
+  straight?: boolean;
+  first?: number;
+  second?: number;
+  swingType?: string;
 }
 
 export interface SoundEntry {
@@ -367,6 +424,7 @@ export interface SoundEntry {
   tocoda?: string;
   fine?: boolean;
   forwardRepeat?: boolean;
+  swing?: Swing;
 }
 
 export interface HarmonyEntry {
@@ -380,6 +438,7 @@ export interface HarmonyEntry {
   staff?: number;
   placement?: 'above' | 'below';
   offset?: number;
+  printFrame?: boolean;
 }
 
 export interface HarmonyDegree {
@@ -412,7 +471,7 @@ export interface Figure {
   figureNumber?: string;
   prefix?: string;
   suffix?: string;
-  extend?: boolean;
+  extend?: boolean | { type?: 'start' | 'stop' | 'continue' };
 }
 
 // ============================================================
@@ -502,6 +561,10 @@ export type Notation =
 
 export interface BaseNotation {
   placement?: 'above' | 'below';
+  // For roundtrip: track which <notations> element this came from
+  notationsIndex?: number;
+  // For roundtrip: track which <articulations> element within <notations>
+  articulationsIndex?: number;
 }
 
 export interface ArticulationNotation extends BaseNotation {
@@ -538,6 +601,7 @@ export interface TechnicalNotation extends BaseNotation {
   string?: number;
   fret?: number;
   fingering?: string;
+  text?: string; // For hammer-on, pull-off, tap, etc.
   bendAlter?: number;
   preBend?: boolean;
   release?: boolean;
@@ -578,6 +642,7 @@ export interface TupletNotation extends BaseNotation {
   bracket?: boolean;
   showNumber?: 'actual' | 'both' | 'none';
   showType?: 'actual' | 'both' | 'none';
+  lineShape?: 'straight' | 'curved';
   tupletActual?: { tupletNumber?: number; tupletType?: NoteType; tupletDots?: number };
   tupletNormal?: { tupletNumber?: number; tupletType?: NoteType; tupletDots?: number };
 }
@@ -624,10 +689,10 @@ export interface OtherNotation extends BaseNotation {
 // Direction (強弱、テンポ、etc)
 // ============================================================
 export type DirectionType =
-  | { kind: 'dynamics'; value: DynamicsValue }
-  | { kind: 'wedge'; type: 'crescendo' | 'diminuendo' | 'stop'; spread?: number }
+  | { kind: 'dynamics'; value: DynamicsValue; defaultY?: number; halign?: string }
+  | { kind: 'wedge'; type: 'crescendo' | 'diminuendo' | 'stop'; spread?: number; defaultY?: number }
   | { kind: 'metronome'; beatUnit: NoteType; perMinute: number | string; beatUnitDot?: boolean; beatUnit2?: NoteType; beatUnitDot2?: boolean }
-  | { kind: 'words'; text: string; defaultX?: number; defaultY?: number; fontFamily?: string; fontSize?: string; fontStyle?: string; fontWeight?: string }
+  | { kind: 'words'; text: string; defaultX?: number; defaultY?: number; relativeX?: number; fontFamily?: string; fontSize?: string; fontStyle?: string; fontWeight?: string }
   | { kind: 'rehearsal'; text: string; enclosure?: string }
   | { kind: 'segno' }
   | { kind: 'coda' }
@@ -636,22 +701,42 @@ export type DirectionType =
   | { kind: 'bracket'; type: 'start' | 'stop' | 'continue'; number?: number; lineEnd?: 'up' | 'down' | 'both' | 'arrow' | 'none'; lineType?: 'solid' | 'dashed' | 'dotted' | 'wavy' }
   | { kind: 'dashes'; type: 'start' | 'stop' | 'continue'; number?: number }
   | { kind: 'accordion-registration'; high?: boolean; middle?: number; low?: boolean }
+  | { kind: 'swing'; straight?: boolean; first?: number; second?: number; swingType?: NoteType }
+  | { kind: 'eyeglasses' }
+  | { kind: 'damp' }
+  | { kind: 'damp-all' }
+  | { kind: 'scordatura' }
+  | { kind: 'image'; source?: string; type?: string }
   | { kind: 'other-direction'; text: string };
 
 export type DynamicsValue =
-  | 'ppppp' | 'pppp' | 'ppp' | 'pp' | 'p'
+  | 'pppppp' | 'ppppp' | 'pppp' | 'ppp' | 'pp' | 'p'
   | 'mp' | 'mf'
-  | 'f' | 'ff' | 'fff' | 'ffff' | 'fffff'
-  | 'sf' | 'sfz' | 'sfp' | 'fp' | 'rf' | 'rfz' | 'fz';
+  | 'f' | 'ff' | 'fff' | 'ffff' | 'fffff' | 'ffffff'
+  | 'sf' | 'sfz' | 'sffz' | 'sfp' | 'sfpp' | 'fp' | 'rf' | 'rfz' | 'fz' | 'n' | 'pf';
 
 // ============================================================
 // Lyrics
 // ============================================================
+export interface LyricTextElement {
+  text: string;
+  syllabic?: 'single' | 'begin' | 'middle' | 'end';
+}
+
 export interface Lyric {
   number?: number;
+  name?: string;
   syllabic?: 'single' | 'begin' | 'middle' | 'end';
   text: string;
-  extend?: boolean;
+  textElements?: LyricTextElement[]; // For multiple text/elision pairs
+  elision?: boolean; // Simple flag for single elision
+  extend?: boolean | { type?: 'start' | 'stop' | 'continue' };
+  endLine?: boolean;
+  endParagraph?: boolean;
+  defaultY?: number;
+  relativeX?: number;
+  justify?: string;
+  placement?: 'above' | 'below';
 }
 
 // ============================================================

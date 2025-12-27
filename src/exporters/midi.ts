@@ -30,13 +30,16 @@ export function exportMidi(score: Score, options: MidiExportOptions = {}): Uint8
   tracks.push(conductorTrack);
 
   // Create a track for each part
+  // Filter partList to only include score-parts (exclude part-groups)
+  const scoreParts = score.partList.filter(entry => entry.type === 'score-part');
+
   for (let partIndex = 0; partIndex < score.parts.length; partIndex++) {
     const part = score.parts[partIndex];
-    const partEntry = score.partList[partIndex];
+    const partEntry = scoreParts[partIndex];
     // Only score-part entries have MIDI instruments
     let channel = partIndex % 16;
     let program = 1;
-    if (partEntry && partEntry.type === 'score-part' && partEntry.midiInstruments?.[0]) {
+    if (partEntry && partEntry.midiInstruments?.[0]) {
       const midiInst = partEntry.midiInstruments[0];
       channel = midiInst.channel ?? channel;
       program = midiInst.program ?? program;
@@ -97,7 +100,7 @@ function createConductorTrack(
     const firstMeasure = score.parts[0].measures[0];
     const time = firstMeasure.attributes?.time;
     if (time) {
-      const numerator = time.beats;
+      const numerator = parseInt(time.beats, 10) || 4;
       const denominator = Math.log2(time.beatType);
       events.push(
         ...writeVariableLength(0), // Delta time
@@ -264,7 +267,8 @@ function createPartTrack(
         const actualTicks = Math.round((maxPosition * ticksPerQuarterNote) / divisions);
         // Use the smaller of calculated and actual for incomplete measures
         // (e.g., last measure before repeat that combines with pickup)
-        currentTick = measureStartTick + Math.min(calculatedTicks, actualTicks > 0 ? actualTicks : calculatedTicks);
+        const ticksToAdd = Math.min(calculatedTicks, actualTicks > 0 ? actualTicks : calculatedTicks);
+        currentTick = measureStartTick + ticksToAdd;
       } else {
         currentTick = measureStartTick + Math.round((maxPosition * ticksPerQuarterNote) / divisions);
       }
@@ -312,14 +316,19 @@ function createPartTrack(
  */
 function findTimeSignature(
   part: Part,
-  measureNumber: number
+  measureNumber: string | number
 ): { beats: number; beatType: number } | undefined {
+  const targetMeasure = parseInt(String(measureNumber), 10);
   let time: { beats: number; beatType: number } | undefined;
 
   for (const measure of part.measures) {
-    if (measure.number > measureNumber) break;
+    const mNum = parseInt(measure.number, 10);
+    if (!isNaN(targetMeasure) && !isNaN(mNum) && mNum > targetMeasure) break;
     if (measure.attributes?.time) {
-      time = measure.attributes.time;
+      time = {
+        beats: parseInt(measure.attributes.time.beats, 10) || 4,
+        beatType: measure.attributes.time.beatType
+      };
     }
   }
 
