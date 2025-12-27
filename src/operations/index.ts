@@ -195,13 +195,14 @@ export function deleteNote(score: Score, options: {
 export function changeKey(
   score: Score,
   key: KeySignature,
-  options: { fromMeasure: number }
+  options: { fromMeasure: string | number }
 ): Score {
   const result = cloneScore(score);
+  const targetMeasure = String(options.fromMeasure);
 
   for (const part of result.parts) {
     for (const measure of part.measures) {
-      if (measure.number === options.fromMeasure) {
+      if (measure.number === targetMeasure) {
         if (!measure.attributes) {
           measure.attributes = {};
         }
@@ -219,13 +220,14 @@ export function changeKey(
 export function changeTime(
   score: Score,
   time: TimeSignature,
-  options: { fromMeasure: number }
+  options: { fromMeasure: string | number }
 ): Score {
   const result = cloneScore(score);
+  const targetMeasure = String(options.fromMeasure);
 
   for (const part of result.parts) {
     for (const measure of part.measures) {
-      if (measure.number === options.fromMeasure) {
+      if (measure.number === targetMeasure) {
         if (!measure.attributes) {
           measure.attributes = {};
         }
@@ -243,17 +245,20 @@ export function changeTime(
 export function insertMeasure(
   score: Score,
   options: {
-    afterMeasure: number;
+    afterMeasure: string | number;
     copyAttributes?: boolean;
   }
 ): Score {
   const result = cloneScore(score);
+  const targetMeasure = String(options.afterMeasure);
 
   for (const part of result.parts) {
-    const insertIndex = part.measures.findIndex((m) => m.number === options.afterMeasure);
+    const insertIndex = part.measures.findIndex((m) => m.number === targetMeasure);
     if (insertIndex === -1) continue;
 
-    const newMeasureNumber = options.afterMeasure + 1;
+    // Parse target measure number and increment for new measure
+    const numericPart = parseInt(targetMeasure, 10);
+    const newMeasureNumber = String(isNaN(numericPart) ? insertIndex + 2 : numericPart + 1);
 
     // Create new empty measure
     const newMeasure: Measure = {
@@ -274,7 +279,10 @@ export function insertMeasure(
 
     // Update measure numbers for subsequent measures
     for (let i = insertIndex + 2; i < part.measures.length; i++) {
-      part.measures[i].number++;
+      const currentNum = parseInt(part.measures[i].number, 10);
+      if (!isNaN(currentNum)) {
+        part.measures[i].number = String(currentNum + 1);
+      }
     }
   }
 
@@ -284,11 +292,12 @@ export function insertMeasure(
 /**
  * Delete a measure
  */
-export function deleteMeasure(score: Score, measureNumber: number): Score {
+export function deleteMeasure(score: Score, measureNumber: string | number): Score {
   const result = cloneScore(score);
+  const targetMeasure = String(measureNumber);
 
   for (const part of result.parts) {
-    const deleteIndex = part.measures.findIndex((m) => m.number === measureNumber);
+    const deleteIndex = part.measures.findIndex((m) => m.number === targetMeasure);
     if (deleteIndex === -1) continue;
 
     // Remove the measure
@@ -296,7 +305,10 @@ export function deleteMeasure(score: Score, measureNumber: number): Score {
 
     // Update measure numbers for subsequent measures
     for (let i = deleteIndex; i < part.measures.length; i++) {
-      part.measures[i].number--;
+      const currentNum = parseInt(part.measures[i].number, 10);
+      if (!isNaN(currentNum)) {
+        part.measures[i].number = String(currentNum - 1);
+      }
     }
   }
 

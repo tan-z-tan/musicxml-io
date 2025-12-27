@@ -97,7 +97,7 @@ function createConductorTrack(
     const firstMeasure = score.parts[0].measures[0];
     const time = firstMeasure.attributes?.time;
     if (time) {
-      const numerator = time.beats;
+      const numerator = parseInt(time.beats, 10) || 4;
       const denominator = Math.log2(time.beatType);
       events.push(
         ...writeVariableLength(0), // Delta time
@@ -291,14 +291,19 @@ function createPartTrack(
  */
 function findTimeSignature(
   part: Part,
-  measureNumber: number
+  measureNumber: string | number
 ): { beats: number; beatType: number } | undefined {
+  const targetMeasure = parseInt(String(measureNumber), 10);
   let time: { beats: number; beatType: number } | undefined;
 
   for (const measure of part.measures) {
-    if (measure.number > measureNumber) break;
+    const mNum = parseInt(measure.number, 10);
+    if (!isNaN(targetMeasure) && !isNaN(mNum) && mNum > targetMeasure) break;
     if (measure.attributes?.time) {
-      time = measure.attributes.time;
+      time = {
+        beats: parseInt(measure.attributes.time.beats, 10) || 4,
+        beatType: measure.attributes.time.beatType
+      };
     }
   }
 
