@@ -2,6 +2,19 @@
   "name": "musicxml-io",
   "version": "0.1.0",
   "description": "A TypeScript library for parsing, manipulating, and serializing MusicXML with high round-trip fidelity",
+  "author": "tan-z-tan",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tan-z-tan/musicxml-io.git"
+  },
+  "homepage": "https://github.com/tan-z-tan/musicxml-io#readme",
+  "bugs": {
+    "url": "https://github.com/tan-z-tan/musicxml-io/issues"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
@@ -33,6 +46,7 @@
     "test:watch": "vitest",
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build && npm run test",
     "coverage:roundtrip": "tsx scripts/measure-coverage.ts",
     "diff:roundtrip": "tsx scripts/diff-roundtrip.ts"
   },
@@ -42,10 +56,13 @@
     "notation",
     "parser",
     "serializer",
-    "typescript"
+    "typescript",
+    "xml",
+    "sheet-music",
+    "score",
+    "midi",
+    "mxl"
   ],
-  "author": "",
-  "license": "MIT",
   "devDependencies": {
     "@types/node": "^20.10.0",
     "tsup": "^8.0.1",
