@@ -143,6 +143,7 @@ export interface DisplayText {
   fontStyle?: string;
   fontWeight?: string;
   xmlSpace?: string;
+  isAccidental?: boolean; // true for accidental-text elements
 }
 
 export interface ScoreInstrument {
@@ -295,7 +296,7 @@ export interface KeyOctave {
 
 export interface Clef {
   sign: 'G' | 'F' | 'C' | 'percussion' | 'TAB';
-  line: number;
+  line?: number;
   staff?: number;
   clefOctaveChange?: number;
   printObject?: boolean;
@@ -643,7 +644,7 @@ export interface OrnamentNotation extends BaseNotation {
 export type OrnamentType =
   | 'trill-mark' | 'mordent' | 'inverted-mordent' | 'turn' | 'inverted-turn'
   | 'delayed-turn' | 'delayed-inverted-turn' | 'vertical-turn' | 'shake'
-  | 'wavy-line' | 'schleifer' | 'tremolo' | 'haydn';
+  | 'wavy-line' | 'schleifer' | 'tremolo' | 'haydn' | 'empty';
 
 export interface TechnicalNotation extends BaseNotation {
   type: 'technical';
@@ -657,7 +658,7 @@ export interface TechnicalNotation extends BaseNotation {
   bendAlter?: number;
   preBend?: boolean;
   release?: boolean;
-  withBar?: number;
+  withBar?: number | true; // true for empty <with-bar/>
   // For harmonic
   harmonicNatural?: boolean;
   harmonicArtificial?: boolean;
@@ -666,6 +667,7 @@ export interface TechnicalNotation extends BaseNotation {
   soundingPitch?: boolean;
   // For hammer-on, pull-off
   startStop?: 'start' | 'stop';
+  number?: number;
   // For heel, toe
   substitution?: boolean;
   // Positioning
@@ -771,7 +773,7 @@ export type DirectionType =
   | { kind: 'octave-shift'; type: 'up' | 'down' | 'stop'; size?: number }
   | { kind: 'bracket'; type: 'start' | 'stop' | 'continue'; number?: number; lineEnd?: 'up' | 'down' | 'both' | 'arrow' | 'none'; lineType?: 'solid' | 'dashed' | 'dotted' | 'wavy'; defaultY?: number; relativeX?: number }
   | { kind: 'dashes'; type: 'start' | 'stop' | 'continue'; number?: number; dashLength?: number; defaultY?: number; spaceLength?: number }
-  | { kind: 'accordion-registration'; high?: boolean; middle?: number; low?: boolean }
+  | { kind: 'accordion-registration'; high?: boolean; middle?: number | true; low?: boolean }
   | { kind: 'swing'; straight?: boolean; first?: number; second?: number; swingType?: NoteType }
   | { kind: 'eyeglasses' }
   | { kind: 'damp' }

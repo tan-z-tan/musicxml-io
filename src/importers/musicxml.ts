@@ -489,15 +489,25 @@ function parseCredits(elements: OrderedElement[]): Credit[] | undefined {
 }
 
 function parseDisplayTexts(elements: OrderedElement[]): DisplayText[] {
-  return collectElements(elements, 'display-text', (c, a) => {
-    const dt: DisplayText = { text: extractText(c) };
-    if (a['font-family']) dt.fontFamily = a['font-family'];
-    if (a['font-size']) dt.fontSize = a['font-size'];
-    if (a['font-style']) dt.fontStyle = a['font-style'];
-    if (a['font-weight']) dt.fontWeight = a['font-weight'];
-    if (a['xml:space']) dt.xmlSpace = a['xml:space'];
-    return dt;
-  });
+  const result: DisplayText[] = [];
+  for (const el of elements) {
+    if (el['display-text'] !== undefined) {
+      const c = el['display-text'] as OrderedElement[];
+      const a = getAttributes(el);
+      const dt: DisplayText = { text: extractText(c) };
+      if (a['font-family']) dt.fontFamily = a['font-family'];
+      if (a['font-size']) dt.fontSize = a['font-size'];
+      if (a['font-style']) dt.fontStyle = a['font-style'];
+      if (a['font-weight']) dt.fontWeight = a['font-weight'];
+      if (a['xml:space']) dt.xmlSpace = a['xml:space'];
+      result.push(dt);
+    } else if (el['accidental-text'] !== undefined) {
+      const c = el['accidental-text'] as OrderedElement[];
+      const dt: DisplayText = { text: extractText(c), isAccidental: true };
+      result.push(dt);
+    }
+  }
+  return result;
 }
 
 function parsePartList(elements: OrderedElement[]): PartListEntry[] {
@@ -950,9 +960,12 @@ function parseKeySignature(elements: OrderedElement[]): KeySignature {
 
 function parseClef(elements: OrderedElement[], attrs: Record<string, string>): Clef {
   const sign = getElementText(elements, 'sign') as Clef['sign'] || 'G';
-  const line = parseInt(getElementText(elements, 'line') || '2', 10);
+  const lineText = getElementText(elements, 'line');
 
-  const clef: Clef = { sign, line };
+  const clef: Clef = { sign };
+  if (lineText) {
+    clef.line = parseInt(lineText, 10);
+  }
 
   if (attrs['number']) {
     clef.staff = parseInt(attrs['number'], 10);
@@ -1347,6 +1360,8 @@ function parseNotations(elements: OrderedElement[], notationsIndex: number = 0):
         return isValidAccidental(value) ? { value, placement: a['placement'] as 'above' | 'below' | undefined } : null;
       }).filter((m): m is { value: string; placement?: 'above' | 'below' } => m !== null);
 
+      const ornamentCountBefore = notations.filter(n => n.type === 'ornament').length;
+
       for (const orn of ornContent) {
         // Simple ornaments
         for (const ornType of simpleOrnamentTypes) {
@@ -1358,7 +1373,10 @@ function parseNotations(elements: OrderedElement[], notationsIndex: number = 0):
               placement: ornAttrs['placement'] as 'above' | 'below' | undefined,
               notationsIndex,
             };
-            // Handle default-y positioning
+            // Handle positioning
+            if (ornAttrs['default-x']) {
+              ornNotation.defaultX = parseFloat(ornAttrs['default-x']);
+            }
             if (ornAttrs['default-y']) {
               ornNotation.defaultY = parseFloat(ornAttrs['default-y']);
             }
@@ -1380,6 +1398,9 @@ function parseNotations(elements: OrderedElement[], notationsIndex: number = 0):
             placement: wlAttrs['placement'] as 'above' | 'below' | undefined,
             notationsIndex,
           };
+          if (wlAttrs['default-x']) {
+            wlNotation.defaultX = parseFloat(wlAttrs['default-x']);
+          }
           if (wlAttrs['default-y']) {
             wlNotation.defaultY = parseFloat(wlAttrs['default-y']);
           }
@@ -1401,6 +1422,16 @@ function parseNotations(elements: OrderedElement[], notationsIndex: number = 0):
           if (tremAttrs['default-y']) tremNotation.defaultY = parseFloat(tremAttrs['default-y']);
           notations.push(tremNotation);
         }
+      }
+
+      // If ornaments element existed but no ornaments were parsed, add empty marker
+      const ornamentCountAfter = notations.filter(n => n.type === 'ornament').length;
+      if (ornamentCountAfter === ornamentCountBefore) {
+        notations.push({
+          type: 'ornament',
+          ornament: 'empty',
+          notationsIndex,
+        } as OrnamentNotation);
       }
     } else if (el['technical']) {
       const techContent = el['technical'] as OrderedElement[];
@@ -1429,8 +1460,10 @@ function parseNotations(elements: OrderedElement[], notationsIndex: number = 0):
           if (bendAlter) techNotation.bendAlter = parseFloat(bendAlter);
           if (hasElement(bendContent, 'pre-bend')) techNotation.preBend = true;
           if (hasElement(bendContent, 'release')) techNotation.release = true;
-          const withBar = getElementText(bendContent, 'with-bar');
-          if (withBar) techNotation.withBar = parseFloat(withBar);
+          if (hasElement(bendContent, 'with-bar')) {
+            const withBarText = getElementText(bendContent, 'with-bar');
+            techNotation.withBar = withBarText ? parseFloat(withBarText) : true;
+          }
           notations.push(techNotation);
         }
         // Handle other technical elements
@@ -1466,11 +1499,14 @@ function parseNotations(elements: OrderedElement[], notationsIndex: number = 0):
               if (hasElement(techElContent, 'touching-pitch')) notation.touchingPitch = true;
               if (hasElement(techElContent, 'sounding-pitch')) notation.soundingPitch = true;
             }
-            // Handle hammer-on/pull-off type attribute
+            // Handle hammer-on/pull-off type and number attributes
             if (techType === 'hammer-on' || techType === 'pull-off') {
               const typeAttr = techAttrs['type'];
               if (typeAttr === 'start' || typeAttr === 'stop') {
                 notation.startStop = typeAttr;
+              }
+              if (techAttrs['number']) {
+                notation.number = parseInt(techAttrs['number'], 10);
               }
             }
             // Handle fingering substitution/alternate
@@ -1931,13 +1967,18 @@ function parseDirectionType(elements: OrderedElement[]): DirectionType | null {
       for (const acc of accContent) {
         if (acc['accordion-high'] !== undefined) {
           result.high = true;
-        } else if (acc['accordion-middle']) {
+        } else if (acc['accordion-middle'] !== undefined) {
           const midContent = acc['accordion-middle'] as OrderedElement[];
+          let foundValue = false;
           for (const item of midContent) {
             if (item['#text'] !== undefined) {
               result.middle = parseInt(String(item['#text']), 10);
+              foundValue = true;
               break;
             }
+          }
+          if (!foundValue) {
+            result.middle = true; // Empty <accordion-middle/>
           }
         } else if (acc['accordion-low'] !== undefined) {
           result.low = true;

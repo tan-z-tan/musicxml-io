@@ -433,13 +433,17 @@ function serializePartList(partList: PartListEntry[], indent: string): string[] 
 function serializeDisplayTexts(texts: DisplayText[], indent: string): string[] {
   const lines: string[] = [];
   for (const dt of texts) {
-    let attrs = '';
-    if (dt.fontFamily) attrs += ` font-family="${escapeXml(dt.fontFamily)}"`;
-    if (dt.fontSize) attrs += ` font-size="${escapeXml(dt.fontSize)}"`;
-    if (dt.fontStyle) attrs += ` font-style="${escapeXml(dt.fontStyle)}"`;
-    if (dt.fontWeight) attrs += ` font-weight="${escapeXml(dt.fontWeight)}"`;
-    if (dt.xmlSpace) attrs += ` xml:space="${escapeXml(dt.xmlSpace)}"`;
-    lines.push(`${indent}<display-text${attrs}>${escapeXml(dt.text)}</display-text>`);
+    if (dt.isAccidental) {
+      lines.push(`${indent}<accidental-text>${escapeXml(dt.text)}</accidental-text>`);
+    } else {
+      let attrs = '';
+      if (dt.fontFamily) attrs += ` font-family="${escapeXml(dt.fontFamily)}"`;
+      if (dt.fontSize) attrs += ` font-size="${escapeXml(dt.fontSize)}"`;
+      if (dt.fontStyle) attrs += ` font-style="${escapeXml(dt.fontStyle)}"`;
+      if (dt.fontWeight) attrs += ` font-weight="${escapeXml(dt.fontWeight)}"`;
+      if (dt.xmlSpace) attrs += ` xml:space="${escapeXml(dt.xmlSpace)}"`;
+      lines.push(`${indent}<display-text${attrs}>${escapeXml(dt.text)}</display-text>`);
+    }
   }
   return lines;
 }
@@ -846,7 +850,9 @@ function serializeClef(clef: Clef, indent: string): string[] {
   if (clef.afterBarline) attrs += ' after-barline="yes"';
   lines.push(`${indent}<clef${attrs}>`);
   lines.push(`${indent}  <sign>${clef.sign}</sign>`);
-  lines.push(`${indent}  <line>${clef.line}</line>`);
+  if (clef.line !== undefined) {
+    lines.push(`${indent}  <line>${clef.line}</line>`);
+  }
   if (clef.clefOctaveChange !== undefined) {
     lines.push(`${indent}  <clef-octave-change>${clef.clefOctaveChange}</clef-octave-change>`);
   }
@@ -1278,47 +1284,55 @@ function serializeNotationsGroup(notations: Notation[], indent: string): string[
 
   // Serialize grouped ornaments
   if (ornaments.length > 0) {
-    lines.push(`${indent}  <ornaments>`);
-    // Collect all accidental-marks from ornaments for serialization after ornaments
-    const allAccidentalMarks: { value: string; placement?: 'above' | 'below' }[] = [];
-    for (const orn of ornaments) {
-      if (orn.type === 'ornament') {
-        const placementAttr = orn.placement ? ` placement="${orn.placement}"` : '';
-        if (orn.ornament === 'wavy-line') {
-          let wlAttrs = '';
-          if (orn.wavyLineType) wlAttrs += ` type="${orn.wavyLineType}"`;
-          if (orn.number !== undefined) wlAttrs += ` number="${orn.number}"`;
-          wlAttrs += placementAttr;
-          if (orn.defaultY !== undefined) wlAttrs += ` default-y="${orn.defaultY}"`;
-          lines.push(`${indent}    <wavy-line${wlAttrs}/>`);
-        } else if (orn.ornament === 'tremolo') {
-          let tremAttrs = '';
-          if (orn.tremoloType) tremAttrs += ` type="${orn.tremoloType}"`;
-          tremAttrs += placementAttr;
-          if (orn.defaultX !== undefined) tremAttrs += ` default-x="${orn.defaultX}"`;
-          if (orn.defaultY !== undefined) tremAttrs += ` default-y="${orn.defaultY}"`;
-          if (orn.tremoloMarks !== undefined) {
-            lines.push(`${indent}    <tremolo${tremAttrs}>${orn.tremoloMarks}</tremolo>`);
+    // Check if this is an empty ornaments marker
+    const hasOnlyEmpty = ornaments.length === 1 && ornaments[0].type === 'ornament' && ornaments[0].ornament === 'empty';
+    if (hasOnlyEmpty) {
+      lines.push(`${indent}  <ornaments/>`);
+    } else {
+      lines.push(`${indent}  <ornaments>`);
+      // Collect all accidental-marks from ornaments for serialization after ornaments
+      const allAccidentalMarks: { value: string; placement?: 'above' | 'below' }[] = [];
+      for (const orn of ornaments) {
+        if (orn.type === 'ornament' && orn.ornament !== 'empty') {
+          const placementAttr = orn.placement ? ` placement="${orn.placement}"` : '';
+          if (orn.ornament === 'wavy-line') {
+            let wlAttrs = '';
+            if (orn.wavyLineType) wlAttrs += ` type="${orn.wavyLineType}"`;
+            if (orn.number !== undefined) wlAttrs += ` number="${orn.number}"`;
+            wlAttrs += placementAttr;
+            if (orn.defaultX !== undefined) wlAttrs += ` default-x="${orn.defaultX}"`;
+            if (orn.defaultY !== undefined) wlAttrs += ` default-y="${orn.defaultY}"`;
+            lines.push(`${indent}    <wavy-line${wlAttrs}/>`);
+          } else if (orn.ornament === 'tremolo') {
+            let tremAttrs = '';
+            if (orn.tremoloType) tremAttrs += ` type="${orn.tremoloType}"`;
+            tremAttrs += placementAttr;
+            if (orn.defaultX !== undefined) tremAttrs += ` default-x="${orn.defaultX}"`;
+            if (orn.defaultY !== undefined) tremAttrs += ` default-y="${orn.defaultY}"`;
+            if (orn.tremoloMarks !== undefined) {
+              lines.push(`${indent}    <tremolo${tremAttrs}>${orn.tremoloMarks}</tremolo>`);
+            } else {
+              lines.push(`${indent}    <tremolo${tremAttrs}/>`);
+            }
           } else {
-            lines.push(`${indent}    <tremolo${tremAttrs}/>`);
+            let ornAttrs = placementAttr;
+            if (orn.defaultX !== undefined) ornAttrs += ` default-x="${orn.defaultX}"`;
+            if (orn.defaultY !== undefined) ornAttrs += ` default-y="${orn.defaultY}"`;
+            lines.push(`${indent}    <${orn.ornament}${ornAttrs}/>`);
           }
-        } else {
-          let ornAttrs = placementAttr;
-          if (orn.defaultY !== undefined) ornAttrs += ` default-y="${orn.defaultY}"`;
-          lines.push(`${indent}    <${orn.ornament}${ornAttrs}/>`);
-        }
-        // Collect accidental marks
-        if (orn.accidentalMarks) {
-          allAccidentalMarks.push(...orn.accidentalMarks);
+          // Collect accidental marks
+          if (orn.accidentalMarks) {
+            allAccidentalMarks.push(...orn.accidentalMarks);
+          }
         }
       }
+      // Serialize accidental-marks after other ornaments
+      for (const am of allAccidentalMarks) {
+        const amPlacement = am.placement ? ` placement="${am.placement}"` : '';
+        lines.push(`${indent}    <accidental-mark${amPlacement}>${am.value}</accidental-mark>`);
+      }
+      lines.push(`${indent}  </ornaments>`);
     }
-    // Serialize accidental-marks after other ornaments
-    for (const am of allAccidentalMarks) {
-      const amPlacement = am.placement ? ` placement="${am.placement}"` : '';
-      lines.push(`${indent}    <accidental-mark${amPlacement}>${am.value}</accidental-mark>`);
-    }
-    lines.push(`${indent}  </ornaments>`);
   }
 
   // Serialize grouped technical
@@ -1342,7 +1356,11 @@ function serializeNotationsGroup(notations: Notation[], indent: string): string[
             lines.push(`${indent}      <release/>`);
           }
           if (techNotation.withBar !== undefined) {
-            lines.push(`${indent}      <with-bar>${techNotation.withBar}</with-bar>`);
+            if (techNotation.withBar === true) {
+              lines.push(`${indent}      <with-bar/>`);
+            } else {
+              lines.push(`${indent}      <with-bar>${techNotation.withBar}</with-bar>`);
+            }
           }
           lines.push(`${indent}    </bend>`);
         } else if (tech.technical === 'harmonic') {
@@ -1361,8 +1379,10 @@ function serializeNotationsGroup(notations: Notation[], indent: string): string[
             lines.push(`${indent}    <harmonic${placementAttr}/>`);
           }
         } else if (tech.technical === 'hammer-on' || tech.technical === 'pull-off') {
-          let attrs = placementAttr;
+          let attrs = '';
+          if (techNotation.number !== undefined) attrs += ` number="${techNotation.number}"`;
           if (techNotation.startStop) attrs += ` type="${techNotation.startStop}"`;
+          attrs += placementAttr;
           if (techNotation.text !== undefined) {
             lines.push(`${indent}    <${tech.technical}${attrs}>${escapeXml(techNotation.text)}</${tech.technical}>`);
           } else {
@@ -1658,7 +1678,11 @@ function serializeDirectionType(dirType: DirectionType, indent: string): string[
         lines.push(`${indent}    <accordion-high/>`);
       }
       if (dirType.middle !== undefined) {
-        lines.push(`${indent}    <accordion-middle>${dirType.middle}</accordion-middle>`);
+        if (dirType.middle === true) {
+          lines.push(`${indent}    <accordion-middle/>`);
+        } else {
+          lines.push(`${indent}    <accordion-middle>${dirType.middle}</accordion-middle>`);
+        }
       }
       if (dirType.low) {
         lines.push(`${indent}    <accordion-low/>`);
