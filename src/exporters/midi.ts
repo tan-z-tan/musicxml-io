@@ -122,7 +122,8 @@ function createConductorTrack(
         if (entry.type === 'direction') {
           for (const dirType of entry.directionTypes) {
             if (dirType.kind === 'metronome') {
-              const bpm = dirType.perMinute;
+              const bpm = typeof dirType.perMinute === 'number' ? dirType.perMinute : parseInt(String(dirType.perMinute), 10);
+              if (isNaN(bpm)) continue;
               const usPerQuarter = Math.round(60000000 / bpm);
               const tickDelta = (measurePosition * ticksPerQuarterNote) / divisions;
 

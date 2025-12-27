@@ -42,6 +42,16 @@ import type {
   SystemLayout,
   PageLayout,
   PageMargins,
+  StaffDetails,
+  StaffTuning,
+  MeasureStyle,
+  HarmonyEntry,
+  HarmonyDegree,
+  HarmonyFrame,
+  FrameNote,
+  FiguredBassEntry,
+  Figure,
+  TupletNotation,
 } from '../types';
 
 // Parser with preserveOrder to maintain element order
@@ -588,10 +598,39 @@ function parsePartList(elements: OrderedElement[]): PartListEntry[] {
           if (abbr) inst.abbreviation = abbr;
           const sound = getElementText(instContent, 'instrument-sound');
           if (sound) inst.sound = sound;
+          // Check for solo/ensemble
+          for (const ic of instContent) {
+            if (ic['solo'] !== undefined) {
+              inst.solo = true;
+            } else if (ic['ensemble']) {
+              const ensContent = ic['ensemble'] as OrderedElement[];
+              for (const item of ensContent) {
+                if (item['#text'] !== undefined) {
+                  inst.ensemble = parseInt(String(item['#text']), 10);
+                  break;
+                }
+              }
+            }
+          }
           instruments.push(inst);
         }
       }
       if (instruments.length > 0) partInfo.scoreInstruments = instruments;
+
+      // Group elements (after MIDI instruments in score-part)
+      const groups: string[] = [];
+      for (const child of content) {
+        if (child['group']) {
+          const groupContent = child['group'] as OrderedElement[];
+          for (const item of groupContent) {
+            if (item['#text'] !== undefined) {
+              groups.push(String(item['#text']));
+              break;
+            }
+          }
+        }
+      }
+      if (groups.length > 0) partInfo.groups = groups;
 
       // MIDI instruments
       const midiInstruments: MidiInstrument[] = [];
@@ -712,6 +751,10 @@ function parseMeasure(elements: OrderedElement[], attrs: Record<string, string>)
       barlines.push(parseBarline(el['barline'] as OrderedElement[], getAttributes(el)));
     } else if (el['print']) {
       measure.print = parsePrint(el['print'] as OrderedElement[], getAttributes(el));
+    } else if (el['harmony']) {
+      measure.entries.push(parseHarmony(el['harmony'] as OrderedElement[], getAttributes(el)));
+    } else if (el['figured-bass']) {
+      measure.entries.push(parseFiguredBass(el['figured-bass'] as OrderedElement[], getAttributes(el)));
     }
   }
 
@@ -797,6 +840,28 @@ function parseAttributes(elements: OrderedElement[]): MeasureAttributes {
     attrs.transpose = parseTranspose(transpose);
   }
 
+  // Staff details
+  const staffDetailsList: StaffDetails[] = [];
+  for (const el of elements) {
+    if (el['staff-details']) {
+      const sdAttrs = getAttributes(el);
+      const content = el['staff-details'] as OrderedElement[];
+      staffDetailsList.push(parseStaffDetails(content, sdAttrs));
+    }
+  }
+  if (staffDetailsList.length > 0) attrs.staffDetails = staffDetailsList;
+
+  // Measure style
+  const measureStyleList: MeasureStyle[] = [];
+  for (const el of elements) {
+    if (el['measure-style']) {
+      const msAttrs = getAttributes(el);
+      const content = el['measure-style'] as OrderedElement[];
+      measureStyleList.push(parseMeasureStyle(content, msAttrs));
+    }
+  }
+  if (measureStyleList.length > 0) attrs.measureStyle = measureStyleList;
+
   return attrs;
 }
 
@@ -835,6 +900,47 @@ function parseKeySignature(elements: OrderedElement[]): KeySignature {
     key.mode = mode;
   }
 
+  // Non-traditional key signatures
+  const keySteps: string[] = [];
+  const keyAlters: number[] = [];
+  const keyOctaves: { number: number; octave: number }[] = [];
+
+  for (const el of elements) {
+    if (el['key-step']) {
+      const content = el['key-step'] as OrderedElement[];
+      for (const item of content) {
+        if (item['#text'] !== undefined) {
+          keySteps.push(String(item['#text']));
+          break;
+        }
+      }
+    } else if (el['key-alter']) {
+      const content = el['key-alter'] as OrderedElement[];
+      for (const item of content) {
+        if (item['#text'] !== undefined) {
+          keyAlters.push(parseFloat(String(item['#text'])));
+          break;
+        }
+      }
+    } else if (el['key-octave']) {
+      const attrs = getAttributes(el);
+      const content = el['key-octave'] as OrderedElement[];
+      for (const item of content) {
+        if (item['#text'] !== undefined) {
+          keyOctaves.push({
+            number: parseInt(attrs['number'] || '1', 10),
+            octave: parseInt(String(item['#text']), 10),
+          });
+          break;
+        }
+      }
+    }
+  }
+
+  if (keySteps.length > 0) key.keySteps = keySteps;
+  if (keyAlters.length > 0) key.keyAlters = keyAlters;
+  if (keyOctaves.length > 0) key.keyOctaves = keyOctaves;
+
   return key;
 }
 
@@ -846,6 +952,11 @@ function parseClef(elements: OrderedElement[], attrs: Record<string, string>): C
 
   if (attrs['number']) {
     clef.staff = parseInt(attrs['number'], 10);
+  }
+
+  const octaveChange = getElementText(elements, 'clef-octave-change');
+  if (octaveChange) {
+    clef.clefOctaveChange = parseInt(octaveChange, 10);
   }
 
   return clef;
@@ -987,15 +1098,21 @@ function parseNote(elements: OrderedElement[], attrs: Record<string, string>): N
     }
   }
 
-  // Tie
+  // Tie (collect all tie elements)
+  const tieElements: { type: 'start' | 'stop' | 'continue' }[] = [];
   for (const el of elements) {
     if (el['tie']) {
       const tieAttrs = getAttributes(el);
       const tieType = tieAttrs['type'];
       if (tieType === 'start' || tieType === 'stop' || tieType === 'continue') {
-        note.tie = { type: tieType };
-        break;
+        tieElements.push({ type: tieType });
       }
+    }
+  }
+  if (tieElements.length > 0) {
+    note.tie = tieElements[0];
+    if (tieElements.length > 1) {
+      note.ties = tieElements;
     }
   }
 
@@ -1050,6 +1167,13 @@ function parseNote(elements: OrderedElement[], attrs: Record<string, string>): N
     if (normalType && isValidNoteType(normalType)) {
       note.timeModification.normalType = normalType;
     }
+
+    // Count normal-dot elements
+    let dotCount = 0;
+    for (const tm of timeMod) {
+      if (tm['normal-dot'] !== undefined) dotCount++;
+    }
+    if (dotCount > 0) note.timeModification.normalDots = dotCount;
   }
 
   return note;
@@ -1105,21 +1229,64 @@ function parseNotations(elements: OrderedElement[]): Notation[] {
       });
     } else if (el['slur']) {
       const attrs = getAttributes(el);
-      notations.push({
+      const slur: Notation = {
         type: 'slur',
         slurType: (attrs['type'] as 'start' | 'stop' | 'continue') || 'start',
         number: attrs['number'] ? parseInt(attrs['number'], 10) : undefined,
-      });
+        lineType: attrs['line-type'] as 'solid' | 'dashed' | 'dotted' | 'wavy' | undefined,
+        defaultX: attrs['default-x'] ? parseFloat(attrs['default-x']) : undefined,
+        defaultY: attrs['default-y'] ? parseFloat(attrs['default-y']) : undefined,
+        bezierX: attrs['bezier-x'] ? parseFloat(attrs['bezier-x']) : undefined,
+        bezierY: attrs['bezier-y'] ? parseFloat(attrs['bezier-y']) : undefined,
+        bezierX2: attrs['bezier-x2'] ? parseFloat(attrs['bezier-x2']) : undefined,
+        bezierY2: attrs['bezier-y2'] ? parseFloat(attrs['bezier-y2']) : undefined,
+        placement: attrs['placement'] as 'above' | 'below' | undefined,
+      };
+      notations.push(slur);
     } else if (el['tuplet']) {
       const attrs = getAttributes(el);
-      notations.push({
+      const tupletContent = el['tuplet'] as OrderedElement[];
+      const tuplet: TupletNotation = {
         type: 'tuplet',
         tupletType: attrs['type'] === 'stop' ? 'stop' : 'start',
         number: attrs['number'] ? parseInt(attrs['number'], 10) : undefined,
         bracket: attrs['bracket'] === 'yes' ? true : attrs['bracket'] === 'no' ? false : undefined,
         showNumber: attrs['show-number'] as 'actual' | 'both' | 'none' | undefined,
         showType: attrs['show-type'] as 'actual' | 'both' | 'none' | undefined,
-      });
+      };
+
+      // Parse tuplet-actual and tuplet-normal
+      for (const tc of tupletContent) {
+        if (tc['tuplet-actual']) {
+          const actualContent = tc['tuplet-actual'] as OrderedElement[];
+          const actual: NonNullable<TupletNotation['tupletActual']> = {};
+          const num = getElementText(actualContent, 'tuplet-number');
+          if (num) actual.tupletNumber = parseInt(num, 10);
+          const type = getElementText(actualContent, 'tuplet-type');
+          if (type && isValidNoteType(type)) actual.tupletType = type;
+          let dotCount = 0;
+          for (const ac of actualContent) {
+            if (ac['tuplet-dot'] !== undefined) dotCount++;
+          }
+          if (dotCount > 0) actual.tupletDots = dotCount;
+          if (Object.keys(actual).length > 0) tuplet.tupletActual = actual;
+        } else if (tc['tuplet-normal']) {
+          const normalContent = tc['tuplet-normal'] as OrderedElement[];
+          const normal: NonNullable<TupletNotation['tupletNormal']> = {};
+          const num = getElementText(normalContent, 'tuplet-number');
+          if (num) normal.tupletNumber = parseInt(num, 10);
+          const type = getElementText(normalContent, 'tuplet-type');
+          if (type && isValidNoteType(type)) normal.tupletType = type;
+          let dotCount = 0;
+          for (const nc of normalContent) {
+            if (nc['tuplet-dot'] !== undefined) dotCount++;
+          }
+          if (dotCount > 0) normal.tupletDots = dotCount;
+          if (Object.keys(normal).length > 0) tuplet.tupletNormal = normal;
+        }
+      }
+
+      notations.push(tuplet);
     } else if (el['articulations']) {
       const artContent = el['articulations'] as OrderedElement[];
       const articulationTypes = [
@@ -1142,13 +1309,14 @@ function parseNotations(elements: OrderedElement[]): Notation[] {
       }
     } else if (el['ornaments']) {
       const ornContent = el['ornaments'] as OrderedElement[];
-      const ornamentTypes = [
+      const simpleOrnamentTypes = [
         'trill-mark', 'mordent', 'inverted-mordent', 'turn', 'inverted-turn',
         'delayed-turn', 'delayed-inverted-turn', 'vertical-turn', 'shake',
-        'wavy-line', 'schleifer', 'tremolo', 'haydn',
+        'schleifer', 'haydn',
       ];
       for (const orn of ornContent) {
-        for (const ornType of ornamentTypes) {
+        // Simple ornaments
+        for (const ornType of simpleOrnamentTypes) {
           if (orn[ornType] !== undefined) {
             const ornAttrs = getAttributes(orn);
             notations.push({
@@ -1157,6 +1325,36 @@ function parseNotations(elements: OrderedElement[]): Notation[] {
               placement: ornAttrs['placement'] as 'above' | 'below' | undefined,
             });
           }
+        }
+        // Wavy-line
+        if (orn['wavy-line'] !== undefined) {
+          const wlAttrs = getAttributes(orn);
+          notations.push({
+            type: 'ornament',
+            ornament: 'wavy-line',
+            wavyLineType: wlAttrs['type'] as 'start' | 'stop' | 'continue' | undefined,
+            number: wlAttrs['number'] ? parseInt(wlAttrs['number'], 10) : undefined,
+            placement: wlAttrs['placement'] as 'above' | 'below' | undefined,
+          });
+        }
+        // Tremolo
+        if (orn['tremolo'] !== undefined) {
+          const tremAttrs = getAttributes(orn);
+          const tremContent = orn['tremolo'] as OrderedElement[];
+          let marks: number | undefined;
+          for (const item of tremContent) {
+            if (item['#text'] !== undefined) {
+              marks = parseInt(String(item['#text']), 10);
+              break;
+            }
+          }
+          notations.push({
+            type: 'ornament',
+            ornament: 'tremolo',
+            tremoloMarks: marks,
+            tremoloType: tremAttrs['type'] as 'start' | 'stop' | 'single' | 'unmeasured' | undefined,
+            placement: tremAttrs['placement'] as 'above' | 'below' | undefined,
+          });
         }
       }
     } else if (el['technical']) {
@@ -1321,6 +1519,9 @@ function parseDirection(elements: OrderedElement[], attrs: Record<string, string
   const voice = getElementText(elements, 'voice');
   if (voice) direction.voice = parseInt(voice, 10);
 
+  const offset = getElementText(elements, 'offset');
+  if (offset) direction.offset = parseInt(offset, 10);
+
   // Direction types
   for (const el of elements) {
     if (el['direction-type']) {
@@ -1379,19 +1580,38 @@ function parseDirectionType(elements: OrderedElement[]): DirectionType | null {
     // Metronome
     if (el['metronome']) {
       const metContent = el['metronome'] as OrderedElement[];
-      const beatUnit = getElementText(metContent, 'beat-unit');
       const perMinute = getElementText(metContent, 'per-minute');
-      if (beatUnit && isValidNoteType(beatUnit) && perMinute) {
+
+      // Parse beat-units (could be one or two for tied/ratio)
+      const beatUnits: string[] = [];
+      const beatUnitDots: boolean[] = [];
+      let dotForPrev = false;
+
+      for (const met of metContent) {
+        if (met['beat-unit']) {
+          const buContent = met['beat-unit'] as OrderedElement[];
+          for (const item of buContent) {
+            if (item['#text'] !== undefined) {
+              beatUnits.push(String(item['#text']));
+              dotForPrev = true;
+              break;
+            }
+          }
+        } else if (met['beat-unit-dot'] !== undefined && dotForPrev) {
+          beatUnitDots[beatUnits.length - 1] = true;
+        }
+      }
+
+      if (beatUnits.length > 0 && isValidNoteType(beatUnits[0])) {
         const result: DirectionType = {
           kind: 'metronome',
-          beatUnit,
-          perMinute: parseInt(perMinute, 10),
+          beatUnit: beatUnits[0] as any,
+          perMinute: perMinute ? (isNaN(parseInt(perMinute, 10)) ? perMinute : parseInt(perMinute, 10)) : 120,
         };
-        for (const met of metContent) {
-          if (met['beat-unit-dot'] !== undefined) {
-            result.beatUnitDot = true;
-            break;
-          }
+        if (beatUnitDots[0]) result.beatUnitDot = true;
+        if (beatUnits.length > 1 && isValidNoteType(beatUnits[1])) {
+          result.beatUnit2 = beatUnits[1] as any;
+          if (beatUnitDots[1]) result.beatUnitDot2 = true;
         }
         return result;
       }
@@ -1399,20 +1619,87 @@ function parseDirectionType(elements: OrderedElement[]): DirectionType | null {
 
     // Words
     if (el['words']) {
+      const wordAttrs = getAttributes(el);
       const wordsContent = el['words'] as OrderedElement[];
       for (const w of wordsContent) {
         if (w['#text'] !== undefined) {
-          return { kind: 'words', text: String(w['#text']) };
+          const result: DirectionType = { kind: 'words', text: String(w['#text']) };
+          if (wordAttrs['default-x']) result.defaultX = parseFloat(wordAttrs['default-x']);
+          if (wordAttrs['default-y']) result.defaultY = parseFloat(wordAttrs['default-y']);
+          if (wordAttrs['font-family']) result.fontFamily = wordAttrs['font-family'];
+          if (wordAttrs['font-size']) result.fontSize = wordAttrs['font-size'];
+          if (wordAttrs['font-style']) result.fontStyle = wordAttrs['font-style'];
+          if (wordAttrs['font-weight']) result.fontWeight = wordAttrs['font-weight'];
+          return result;
         }
       }
     }
 
     // Rehearsal
     if (el['rehearsal']) {
+      const rehAttrs = getAttributes(el);
       const rehContent = el['rehearsal'] as OrderedElement[];
       for (const r of rehContent) {
         if (r['#text'] !== undefined) {
-          return { kind: 'rehearsal', text: String(r['#text']) };
+          const result: DirectionType = { kind: 'rehearsal', text: String(r['#text']) };
+          if (rehAttrs['enclosure']) result.enclosure = rehAttrs['enclosure'];
+          return result;
+        }
+      }
+    }
+
+    // Bracket
+    if (el['bracket']) {
+      const bracketAttrs = getAttributes(el);
+      const bracketType = bracketAttrs['type'];
+      if (bracketType === 'start' || bracketType === 'stop' || bracketType === 'continue') {
+        const result: DirectionType = { kind: 'bracket', type: bracketType };
+        if (bracketAttrs['number']) result.number = parseInt(bracketAttrs['number'], 10);
+        if (bracketAttrs['line-end']) result.lineEnd = bracketAttrs['line-end'] as 'up' | 'down' | 'both' | 'arrow' | 'none';
+        if (bracketAttrs['line-type']) result.lineType = bracketAttrs['line-type'] as 'solid' | 'dashed' | 'dotted' | 'wavy';
+        return result;
+      }
+    }
+
+    // Dashes
+    if (el['dashes']) {
+      const dashAttrs = getAttributes(el);
+      const dashType = dashAttrs['type'];
+      if (dashType === 'start' || dashType === 'stop' || dashType === 'continue') {
+        const result: DirectionType = { kind: 'dashes', type: dashType };
+        if (dashAttrs['number']) result.number = parseInt(dashAttrs['number'], 10);
+        return result;
+      }
+    }
+
+    // Accordion registration
+    if (el['accordion-registration']) {
+      const accContent = el['accordion-registration'] as OrderedElement[];
+      const result: DirectionType = { kind: 'accordion-registration' };
+      for (const acc of accContent) {
+        if (acc['accordion-high'] !== undefined) {
+          result.high = true;
+        } else if (acc['accordion-middle']) {
+          const midContent = acc['accordion-middle'] as OrderedElement[];
+          for (const item of midContent) {
+            if (item['#text'] !== undefined) {
+              result.middle = parseInt(String(item['#text']), 10);
+              break;
+            }
+          }
+        } else if (acc['accordion-low'] !== undefined) {
+          result.low = true;
+        }
+      }
+      return result;
+    }
+
+    // Other direction
+    if (el['other-direction']) {
+      const otherContent = el['other-direction'] as OrderedElement[];
+      for (const o of otherContent) {
+        if (o['#text'] !== undefined) {
+          return { kind: 'other-direction', text: String(o['#text']) };
         }
       }
     }
@@ -1527,4 +1814,246 @@ function isValidBarStyle(value: string): value is NonNullable<Barline['barStyle'
     'light-light', 'light-heavy', 'heavy-light', 'heavy-heavy', 'none',
   ];
   return validStyles.includes(value);
+}
+
+// ============================================================
+// New Parse Functions for Extended Support
+// ============================================================
+
+function parseStaffDetails(elements: OrderedElement[], attrs: Record<string, string>): StaffDetails {
+  const sd: StaffDetails = {};
+
+  if (attrs['number']) sd.number = parseInt(attrs['number'], 10);
+
+  const staffType = getElementText(elements, 'staff-type');
+  if (staffType && ['ossia', 'cue', 'editorial', 'regular', 'alternate'].includes(staffType)) {
+    sd.staffType = staffType as StaffDetails['staffType'];
+  }
+
+  const staffLines = getElementText(elements, 'staff-lines');
+  if (staffLines) sd.staffLines = parseInt(staffLines, 10);
+
+  const capo = getElementText(elements, 'capo');
+  if (capo) sd.capo = parseInt(capo, 10);
+
+  const staffSize = getElementText(elements, 'staff-size');
+  if (staffSize) sd.staffSize = parseFloat(staffSize);
+
+  // Check for show-frets attribute
+  if (attrs['show-frets'] === 'numbers' || attrs['show-frets'] === 'letters') {
+    sd.showFrets = attrs['show-frets'];
+  }
+
+  // Staff tuning
+  const tunings: StaffTuning[] = [];
+  for (const el of elements) {
+    if (el['staff-tuning']) {
+      const tuningAttrs = getAttributes(el);
+      const tuningContent = el['staff-tuning'] as OrderedElement[];
+      const tuning: StaffTuning = {
+        line: parseInt(tuningAttrs['line'] || '1', 10),
+        tuningStep: getElementText(tuningContent, 'tuning-step') || 'E',
+        tuningOctave: parseInt(getElementText(tuningContent, 'tuning-octave') || '4', 10),
+      };
+      const tuningAlter = getElementText(tuningContent, 'tuning-alter');
+      if (tuningAlter) tuning.tuningAlter = parseFloat(tuningAlter);
+      tunings.push(tuning);
+    }
+  }
+  if (tunings.length > 0) sd.staffTuning = tunings;
+
+  return sd;
+}
+
+function parseMeasureStyle(elements: OrderedElement[], attrs: Record<string, string>): MeasureStyle {
+  const ms: MeasureStyle = {};
+
+  if (attrs['number']) ms.number = parseInt(attrs['number'], 10);
+
+  const multipleRest = getElementText(elements, 'multiple-rest');
+  if (multipleRest) ms.multipleRest = parseInt(multipleRest, 10);
+
+  for (const el of elements) {
+    if (el['measure-repeat']) {
+      const mrAttrs = getAttributes(el);
+      ms.measureRepeat = { type: mrAttrs['type'] === 'stop' ? 'stop' : 'start' };
+      if (mrAttrs['slashes']) ms.measureRepeat.slashes = parseInt(mrAttrs['slashes'], 10);
+    } else if (el['beat-repeat']) {
+      const brAttrs = getAttributes(el);
+      ms.beatRepeat = { type: brAttrs['type'] === 'stop' ? 'stop' : 'start' };
+      if (brAttrs['slashes']) ms.beatRepeat.slashes = parseInt(brAttrs['slashes'], 10);
+    } else if (el['slash']) {
+      const slAttrs = getAttributes(el);
+      ms.slash = { type: slAttrs['type'] === 'stop' ? 'stop' : 'start' };
+      if (slAttrs['use-dots'] === 'yes') ms.slash.useDots = true;
+      if (slAttrs['use-stems'] === 'yes') ms.slash.useStems = true;
+    }
+  }
+
+  return ms;
+}
+
+function parseHarmony(elements: OrderedElement[], attrs: Record<string, string>): HarmonyEntry {
+  const harmony: HarmonyEntry = {
+    type: 'harmony',
+    root: { rootStep: 'C' },
+    kind: 'major',
+  };
+
+  if (attrs['placement'] === 'above' || attrs['placement'] === 'below') {
+    harmony.placement = attrs['placement'];
+  }
+
+  // Parse root
+  const root = getElementContent(elements, 'root');
+  if (root) {
+    const rootStep = getElementText(root, 'root-step');
+    if (rootStep) harmony.root.rootStep = rootStep;
+    const rootAlter = getElementText(root, 'root-alter');
+    if (rootAlter) harmony.root.rootAlter = parseFloat(rootAlter);
+  }
+
+  // Parse kind
+  for (const el of elements) {
+    if (el['kind']) {
+      const kindAttrs = getAttributes(el);
+      const kindContent = el['kind'] as OrderedElement[];
+      for (const item of kindContent) {
+        if (item['#text'] !== undefined) {
+          harmony.kind = String(item['#text']);
+          break;
+        }
+      }
+      if (kindAttrs['text']) harmony.kindText = kindAttrs['text'];
+      break;
+    }
+  }
+
+  // Parse bass
+  const bass = getElementContent(elements, 'bass');
+  if (bass) {
+    const bassStep = getElementText(bass, 'bass-step');
+    if (bassStep) {
+      harmony.bass = { bassStep };
+      const bassAlter = getElementText(bass, 'bass-alter');
+      if (bassAlter) harmony.bass.bassAlter = parseFloat(bassAlter);
+    }
+  }
+
+  // Parse degrees
+  const degrees: HarmonyDegree[] = [];
+  for (const el of elements) {
+    if (el['degree']) {
+      const degContent = el['degree'] as OrderedElement[];
+      const degValue = getElementText(degContent, 'degree-value');
+      const degAlter = getElementText(degContent, 'degree-alter');
+      const degType = getElementText(degContent, 'degree-type');
+      if (degValue && degType && ['add', 'alter', 'subtract'].includes(degType)) {
+        const degree: HarmonyDegree = {
+          degreeValue: parseInt(degValue, 10),
+          degreeType: degType as 'add' | 'alter' | 'subtract',
+        };
+        if (degAlter) degree.degreeAlter = parseFloat(degAlter);
+        degrees.push(degree);
+      }
+    }
+  }
+  if (degrees.length > 0) harmony.degrees = degrees;
+
+  // Parse frame
+  const frame = getElementContent(elements, 'frame');
+  if (frame) {
+    const frameObj: HarmonyFrame = {};
+    const frameStrings = getElementText(frame, 'frame-strings');
+    if (frameStrings) frameObj.frameStrings = parseInt(frameStrings, 10);
+    const frameFrets = getElementText(frame, 'frame-frets');
+    if (frameFrets) frameObj.frameFrets = parseInt(frameFrets, 10);
+
+    const frameNotes: FrameNote[] = [];
+    for (const fel of frame) {
+      if (fel['frame-note']) {
+        const fnContent = fel['frame-note'] as OrderedElement[];
+        const stringNum = getElementText(fnContent, 'string');
+        const fretNum = getElementText(fnContent, 'fret');
+        if (stringNum && fretNum) {
+          const fn: FrameNote = {
+            string: parseInt(stringNum, 10),
+            fret: parseInt(fretNum, 10),
+          };
+          const fingering = getElementText(fnContent, 'fingering');
+          if (fingering) fn.fingering = fingering;
+          for (const fnEl of fnContent) {
+            if (fnEl['barre']) {
+              const barreAttrs = getAttributes(fnEl);
+              if (barreAttrs['type'] === 'start' || barreAttrs['type'] === 'stop') {
+                fn.barre = barreAttrs['type'];
+              }
+            }
+          }
+          frameNotes.push(fn);
+        }
+      }
+    }
+    if (frameNotes.length > 0) frameObj.frameNotes = frameNotes;
+
+    if (Object.keys(frameObj).length > 0) harmony.frame = frameObj;
+  }
+
+  // Parse offset
+  const offset = getElementText(elements, 'offset');
+  if (offset) harmony.offset = parseInt(offset, 10);
+
+  // Parse staff
+  const staff = getElementText(elements, 'staff');
+  if (staff) harmony.staff = parseInt(staff, 10);
+
+  return harmony;
+}
+
+function parseFiguredBass(elements: OrderedElement[], attrs: Record<string, string>): FiguredBassEntry {
+  const fb: FiguredBassEntry = {
+    type: 'figured-bass',
+    figures: [],
+  };
+
+  if (attrs['parentheses'] === 'yes') fb.parentheses = true;
+
+  const duration = getElementText(elements, 'duration');
+  if (duration) fb.duration = parseInt(duration, 10);
+
+  for (const el of elements) {
+    if (el['figure']) {
+      const figContent = el['figure'] as OrderedElement[];
+      const figure: Figure = {};
+
+      const figNumber = getElementText(figContent, 'figure-number');
+      if (figNumber) figure.figureNumber = figNumber;
+
+      for (const figEl of figContent) {
+        if (figEl['prefix']) {
+          const prefixContent = figEl['prefix'] as OrderedElement[];
+          for (const item of prefixContent) {
+            if (item['#text'] !== undefined) {
+              figure.prefix = String(item['#text']);
+              break;
+            }
+          }
+        } else if (figEl['suffix']) {
+          const suffixContent = figEl['suffix'] as OrderedElement[];
+          for (const item of suffixContent) {
+            if (item['#text'] !== undefined) {
+              figure.suffix = String(item['#text']);
+              break;
+            }
+          }
+        } else if (figEl['extend'] !== undefined) {
+          figure.extend = true;
+        }
+      }
+
+      fb.figures.push(figure);
+    }
+  }
+
+  return fb;
 }
