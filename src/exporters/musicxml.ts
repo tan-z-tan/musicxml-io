@@ -861,6 +861,7 @@ function serializeNote(note: NoteEntry, indent: string): string[] {
   if (note.relativeY !== undefined) noteAttrs += ` relative-y="${note.relativeY}"`;
   if (note.dynamics !== undefined) noteAttrs += ` dynamics="${note.dynamics}"`;
   if (note.printObject === false) noteAttrs += ' print-object="no"';
+  if (note.printSpacing !== undefined) noteAttrs += ` print-spacing="${note.printSpacing ? 'yes' : 'no'}"`;
   lines.push(`${indent}<note${noteAttrs}>`);
 
   // Grace note
@@ -1251,6 +1252,8 @@ function serializeNotationsGroup(notations: Notation[], indent: string): string[
           let tremAttrs = '';
           if (orn.tremoloType) tremAttrs += ` type="${orn.tremoloType}"`;
           tremAttrs += placementAttr;
+          if (orn.defaultX !== undefined) tremAttrs += ` default-x="${orn.defaultX}"`;
+          if (orn.defaultY !== undefined) tremAttrs += ` default-y="${orn.defaultY}"`;
           if (orn.tremoloMarks !== undefined) {
             lines.push(`${indent}    <tremolo${tremAttrs}>${orn.tremoloMarks}</tremolo>`);
           } else {
@@ -1515,6 +1518,7 @@ function serializeDirectionType(dirType: DirectionType, indent: string): string[
       let wedgeAttrs = ` type="${dirType.type}"`;
       if (dirType.spread !== undefined) wedgeAttrs += ` spread="${dirType.spread}"`;
       if (dirType.defaultY !== undefined) wedgeAttrs += ` default-y="${dirType.defaultY}"`;
+      if (dirType.relativeX !== undefined) wedgeAttrs += ` relative-x="${dirType.relativeX}"`;
       lines.push(`${indent}  <wedge${wedgeAttrs}/>`);
       break;
     }
@@ -1584,6 +1588,9 @@ function serializeDirectionType(dirType: DirectionType, indent: string): string[
     case 'dashes': {
       let dashAttrs = ` type="${dirType.type}"`;
       if (dirType.number !== undefined) dashAttrs += ` number="${dirType.number}"`;
+      if (dirType.dashLength !== undefined) dashAttrs += ` dash-length="${dirType.dashLength}"`;
+      if (dirType.defaultY !== undefined) dashAttrs += ` default-y="${dirType.defaultY}"`;
+      if (dirType.spaceLength !== undefined) dashAttrs += ` space-length="${dirType.spaceLength}"`;
       lines.push(`${indent}  <dashes${dashAttrs}/>`);
       break;
     }

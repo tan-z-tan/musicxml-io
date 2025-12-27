@@ -1222,6 +1222,8 @@ function parseNote(elements: OrderedElement[], attrs: Record<string, string>): N
   if (attrs['relative-y']) note.relativeY = parseFloat(attrs['relative-y']);
   if (attrs['dynamics']) note.dynamics = parseFloat(attrs['dynamics']);
   if (attrs['print-object'] === 'no') note.printObject = false;
+  if (attrs['print-spacing'] === 'yes') note.printSpacing = true;
+  if (attrs['print-spacing'] === 'no') note.printSpacing = false;
 
   // Cue note
   for (const el of elements) {
@@ -1707,14 +1709,21 @@ function parseNotations(elements: OrderedElement[], notationsIndex: number = 0):
               break;
             }
           }
-          notations.push({
+          const tremNotation: OrnamentNotation = {
             type: 'ornament',
             ornament: 'tremolo',
             tremoloMarks: marks,
             tremoloType: tremAttrs['type'] as 'start' | 'stop' | 'single' | 'unmeasured' | undefined,
             placement: tremAttrs['placement'] as 'above' | 'below' | undefined,
             notationsIndex,
-          });
+          };
+          if (tremAttrs['default-x']) {
+            tremNotation.defaultX = parseFloat(tremAttrs['default-x']);
+          }
+          if (tremAttrs['default-y']) {
+            tremNotation.defaultY = parseFloat(tremAttrs['default-y']);
+          }
+          notations.push(tremNotation);
         }
       }
     } else if (el['technical']) {
@@ -2164,6 +2173,7 @@ function parseDirectionType(elements: OrderedElement[]): DirectionType | null {
         const result: DirectionType = { kind: 'wedge', type: wedgeType };
         if (wedgeAttrs['spread']) result.spread = parseFloat(wedgeAttrs['spread']);
         if (wedgeAttrs['default-y']) result.defaultY = parseFloat(wedgeAttrs['default-y']);
+        if (wedgeAttrs['relative-x']) result.relativeX = parseFloat(wedgeAttrs['relative-x']);
         return result;
       }
     }
@@ -2276,6 +2286,9 @@ function parseDirectionType(elements: OrderedElement[]): DirectionType | null {
       if (dashType === 'start' || dashType === 'stop' || dashType === 'continue') {
         const result: DirectionType = { kind: 'dashes', type: dashType };
         if (dashAttrs['number']) result.number = parseInt(dashAttrs['number'], 10);
+        if (dashAttrs['dash-length']) result.dashLength = parseFloat(dashAttrs['dash-length']);
+        if (dashAttrs['default-y']) result.defaultY = parseFloat(dashAttrs['default-y']);
+        if (dashAttrs['space-length']) result.spaceLength = parseFloat(dashAttrs['space-length']);
         return result;
       }
     }

@@ -341,6 +341,7 @@ export interface NoteEntry {
   instrument?: string; // instrument reference id
   dynamics?: number; // MIDI dynamics for playback
   printObject?: boolean;
+  printSpacing?: boolean;
 
   // Layout attributes
   defaultX?: number;
@@ -624,6 +625,7 @@ export interface OrnamentNotation extends BaseNotation {
   tremoloMarks?: number;
   tremoloType?: 'start' | 'stop' | 'single' | 'unmeasured';
   // Positioning
+  defaultX?: number;
   defaultY?: number;
 }
 
@@ -744,7 +746,7 @@ export interface OtherNotation extends BaseNotation {
 // ============================================================
 export type DirectionType =
   | { kind: 'dynamics'; value: DynamicsValue; defaultX?: number; defaultY?: number; relativeX?: number; halign?: string }
-  | { kind: 'wedge'; type: 'crescendo' | 'diminuendo' | 'stop'; spread?: number; defaultY?: number }
+  | { kind: 'wedge'; type: 'crescendo' | 'diminuendo' | 'stop'; spread?: number; defaultY?: number; relativeX?: number }
   | { kind: 'metronome'; beatUnit: NoteType; perMinute?: number | string; beatUnitDot?: boolean; beatUnit2?: NoteType; beatUnitDot2?: boolean; parentheses?: boolean; defaultY?: number; fontFamily?: string; fontSize?: string }
   | { kind: 'words'; text: string; defaultX?: number; defaultY?: number; relativeX?: number; fontFamily?: string; fontSize?: string; fontStyle?: string; fontWeight?: string; xmlLang?: string; justify?: string; color?: string; xmlSpace?: string; halign?: string }
   | { kind: 'rehearsal'; text: string; enclosure?: string; defaultX?: number; defaultY?: number; fontSize?: string; fontWeight?: string }
@@ -753,7 +755,7 @@ export type DirectionType =
   | { kind: 'pedal'; type: 'start' | 'stop' | 'change' | 'continue'; line?: boolean; defaultY?: number; relativeX?: number; halign?: string }
   | { kind: 'octave-shift'; type: 'up' | 'down' | 'stop'; size?: number }
   | { kind: 'bracket'; type: 'start' | 'stop' | 'continue'; number?: number; lineEnd?: 'up' | 'down' | 'both' | 'arrow' | 'none'; lineType?: 'solid' | 'dashed' | 'dotted' | 'wavy' }
-  | { kind: 'dashes'; type: 'start' | 'stop' | 'continue'; number?: number }
+  | { kind: 'dashes'; type: 'start' | 'stop' | 'continue'; number?: number; dashLength?: number; defaultY?: number; spaceLength?: number }
   | { kind: 'accordion-registration'; high?: boolean; middle?: number; low?: boolean }
   | { kind: 'swing'; straight?: boolean; first?: number; second?: number; swingType?: NoteType }
   | { kind: 'eyeglasses' }
