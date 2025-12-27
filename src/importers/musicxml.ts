@@ -569,8 +569,11 @@ function parsePartList(elements: OrderedElement[]): PartListEntry[] {
           if (sound) inst.sound = sound;
           // Check for solo/ensemble
           if (hasElement(instContent, 'solo')) inst.solo = true;
-          const ens = getElementText(instContent, 'ensemble');
-          if (ens) inst.ensemble = parseInt(ens, 10);
+          if (hasElement(instContent, 'ensemble')) {
+            const ensText = getElementText(instContent, 'ensemble');
+            // ensemble can be empty (no value) or have a number
+            inst.ensemble = ensText ? parseInt(ensText, 10) : 0;
+          }
           instruments.push(inst);
         }
       }
@@ -793,6 +796,9 @@ function parseAttributes(elements: OrderedElement[]): MeasureAttributes {
   const staves = getElementTextAsInt(elements, 'staves');
   if (staves !== undefined) attrs.staves = staves;
 
+  const instruments = getElementTextAsInt(elements, 'instruments');
+  if (instruments !== undefined) attrs.instruments = instruments;
+
   // Time signature
   const time = getElementContent(elements, 'time');
   if (time) {
@@ -915,7 +921,7 @@ function parseKeySignature(elements: OrderedElement[]): KeySignature {
     fifths: parseInt(fifths || '0', 10),
   };
 
-  const validModes = ['major', 'minor', 'dorian', 'phrygian', 'lydian', 'mixolydian', 'aeolian', 'ionian', 'locrian'];
+  const validModes = ['major', 'minor', 'dorian', 'phrygian', 'lydian', 'mixolydian', 'aeolian', 'ionian', 'locrian', 'none'];
   if (mode && validModes.includes(mode)) {
     key.mode = mode as KeySignature['mode'];
   }
@@ -955,6 +961,13 @@ function parseClef(elements: OrderedElement[], attrs: Record<string, string>): C
   const octaveChange = getElementTextAsInt(elements, 'clef-octave-change');
   if (octaveChange !== undefined) {
     clef.clefOctaveChange = octaveChange;
+  }
+
+  if (attrs['print-object'] === 'no') {
+    clef.printObject = false;
+  }
+  if (attrs['after-barline'] === 'yes') {
+    clef.afterBarline = true;
   }
 
   return clef;
@@ -1224,6 +1237,7 @@ function parseNotations(elements: OrderedElement[], notationsIndex: number = 0):
         slurType: (attrs['type'] as 'start' | 'stop' | 'continue') || 'start',
         number: attrs['number'] ? parseInt(attrs['number'], 10) : undefined,
         lineType: attrs['line-type'] as 'solid' | 'dashed' | 'dotted' | 'wavy' | undefined,
+        orientation: attrs['orientation'] as 'over' | 'under' | undefined,
         defaultX: attrs['default-x'] ? parseFloat(attrs['default-x']) : undefined,
         defaultY: attrs['default-y'] ? parseFloat(attrs['default-y']) : undefined,
         bezierX: attrs['bezier-x'] ? parseFloat(attrs['bezier-x']) : undefined,
@@ -1729,6 +1743,9 @@ function parseDirection(elements: OrderedElement[], attrs: Record<string, string
       direction.sound = {};
       if (soundAttrs['tempo']) direction.sound.tempo = parseFloat(soundAttrs['tempo']);
       if (soundAttrs['dynamics']) direction.sound.dynamics = parseFloat(soundAttrs['dynamics']);
+      if (soundAttrs['damper-pedal']) direction.sound.damperPedal = soundAttrs['damper-pedal'] as 'yes' | 'no';
+      if (soundAttrs['soft-pedal']) direction.sound.softPedal = soundAttrs['soft-pedal'] as 'yes' | 'no';
+      if (soundAttrs['sostenuto-pedal']) direction.sound.sostenutoPedal = soundAttrs['sostenuto-pedal'] as 'yes' | 'no';
 
       // Parse midi-instrument
       for (const soundEl of soundContent) {
@@ -1887,6 +1904,8 @@ function parseDirectionType(elements: OrderedElement[]): DirectionType | null {
         if (bracketAttrs['number']) result.number = parseInt(bracketAttrs['number'], 10);
         if (bracketAttrs['line-end']) result.lineEnd = bracketAttrs['line-end'] as 'up' | 'down' | 'both' | 'arrow' | 'none';
         if (bracketAttrs['line-type']) result.lineType = bracketAttrs['line-type'] as 'solid' | 'dashed' | 'dotted' | 'wavy';
+        if (bracketAttrs['default-y']) result.defaultY = parseFloat(bracketAttrs['default-y']);
+        if (bracketAttrs['relative-x']) result.relativeX = parseFloat(bracketAttrs['relative-x']);
         return result;
       }
     }
@@ -2153,7 +2172,7 @@ const VALID_NOTEHEADS = new Set<string>([
 
 const VALID_BAR_STYLES = new Set<string>([
   'regular', 'dotted', 'dashed', 'heavy',
-  'light-light', 'light-heavy', 'heavy-light', 'heavy-heavy', 'none',
+  'light-light', 'light-heavy', 'heavy-light', 'heavy-heavy', 'tick', 'short', 'none',
 ]);
 
 function isValidNoteType(value: string): value is NoteType {
@@ -2479,6 +2498,9 @@ function parseSound(elements: OrderedElement[], attrs: Record<string, string>): 
   if (attrs['tocoda']) sound.tocoda = attrs['tocoda'];
   if (attrs['fine'] === 'yes') sound.fine = true;
   if (attrs['forward-repeat'] === 'yes') sound.forwardRepeat = true;
+  if (attrs['damper-pedal']) sound.damperPedal = attrs['damper-pedal'] as 'yes' | 'no';
+  if (attrs['soft-pedal']) sound.softPedal = attrs['soft-pedal'] as 'yes' | 'no';
+  if (attrs['sostenuto-pedal']) sound.sostenutoPedal = attrs['sostenuto-pedal'] as 'yes' | 'no';
 
   // Parse swing element
   for (const el of elements) {

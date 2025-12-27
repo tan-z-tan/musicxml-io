@@ -229,6 +229,7 @@ export interface MeasureAttributes {
   keys?: KeySignature[]; // For multi-staff key signatures
   clef?: Clef[];
   staves?: number;
+  instruments?: number;
   transpose?: Transpose;
   transposes?: Transpose[]; // For multi-staff transpose
   staffDetails?: StaffDetails[];
@@ -275,7 +276,7 @@ export interface TimeSignature {
 
 export interface KeySignature {
   fifths: number;
-  mode?: 'major' | 'minor' | 'dorian' | 'phrygian' | 'lydian' | 'mixolydian' | 'aeolian' | 'ionian' | 'locrian';
+  mode?: 'major' | 'minor' | 'dorian' | 'phrygian' | 'lydian' | 'mixolydian' | 'aeolian' | 'ionian' | 'locrian' | 'none';
   cancel?: number;
   cancelLocation?: 'left' | 'right' | 'before-barline';
   number?: number; // Staff number for multi-staff keys
@@ -297,6 +298,8 @@ export interface Clef {
   line: number;
   staff?: number;
   clefOctaveChange?: number;
+  printObject?: boolean;
+  afterBarline?: boolean;
 }
 
 export interface Transpose {
@@ -307,7 +310,7 @@ export interface Transpose {
 
 export interface Barline {
   location: 'left' | 'right' | 'middle';
-  barStyle?: 'regular' | 'dotted' | 'dashed' | 'heavy' | 'light-light' | 'light-heavy' | 'heavy-light' | 'heavy-heavy' | 'none';
+  barStyle?: 'regular' | 'dotted' | 'dashed' | 'heavy' | 'light-light' | 'light-heavy' | 'heavy-light' | 'heavy-heavy' | 'tick' | 'short' | 'none';
   repeat?: {
     direction: 'forward' | 'backward';
     times?: number;
@@ -405,6 +408,9 @@ export interface DirectionSound {
     volume?: number;
     pan?: number;
   };
+  damperPedal?: 'yes' | 'no';
+  softPedal?: 'yes' | 'no';
+  sostenutoPedal?: 'yes' | 'no';
 }
 
 export interface DirectionEntry {
@@ -439,6 +445,9 @@ export interface SoundEntry {
   fine?: boolean;
   forwardRepeat?: boolean;
   swing?: Swing;
+  damperPedal?: boolean | 'yes' | 'no';
+  softPedal?: boolean | 'yes' | 'no';
+  sostenutoPedal?: boolean | 'yes' | 'no';
 }
 
 export interface HarmonyEntry {
@@ -677,6 +686,7 @@ export interface SlurNotation extends BaseNotation {
   slurType: 'start' | 'stop' | 'continue';
   number?: number;
   lineType?: 'solid' | 'dashed' | 'dotted' | 'wavy';
+  orientation?: 'over' | 'under';
   defaultX?: number;
   defaultY?: number;
   bezierX?: number;
@@ -759,7 +769,7 @@ export type DirectionType =
   | { kind: 'coda' }
   | { kind: 'pedal'; type: 'start' | 'stop' | 'change' | 'continue'; line?: boolean; defaultY?: number; relativeX?: number; halign?: string }
   | { kind: 'octave-shift'; type: 'up' | 'down' | 'stop'; size?: number }
-  | { kind: 'bracket'; type: 'start' | 'stop' | 'continue'; number?: number; lineEnd?: 'up' | 'down' | 'both' | 'arrow' | 'none'; lineType?: 'solid' | 'dashed' | 'dotted' | 'wavy' }
+  | { kind: 'bracket'; type: 'start' | 'stop' | 'continue'; number?: number; lineEnd?: 'up' | 'down' | 'both' | 'arrow' | 'none'; lineType?: 'solid' | 'dashed' | 'dotted' | 'wavy'; defaultY?: number; relativeX?: number }
   | { kind: 'dashes'; type: 'start' | 'stop' | 'continue'; number?: number; dashLength?: number; defaultY?: number; spaceLength?: number }
   | { kind: 'accordion-registration'; high?: boolean; middle?: number; low?: boolean }
   | { kind: 'swing'; straight?: boolean; first?: number; second?: number; swingType?: NoteType }
