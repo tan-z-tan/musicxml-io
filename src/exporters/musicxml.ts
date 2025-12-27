@@ -1962,6 +1962,11 @@ function serializeHarmony(harmony: HarmonyEntry, indent: string): string[] {
   if (harmony.kindText) kindAttrs += ` text="${escapeXml(harmony.kindText)}"`;
   lines.push(`${indent}  <kind${kindAttrs}>${escapeXml(harmony.kind)}</kind>`);
 
+  // Inversion
+  if (harmony.inversion !== undefined) {
+    lines.push(`${indent}  <inversion>${harmony.inversion}</inversion>`);
+  }
+
   // Bass
   if (harmony.bass) {
     lines.push(`${indent}  <bass>`);

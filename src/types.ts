@@ -456,6 +456,7 @@ export interface HarmonyEntry {
   root: { rootStep: string; rootAlter?: number };
   kind: string;
   kindText?: string;
+  inversion?: number;
   bass?: { bassStep: string; bassAlter?: number };
   degrees?: HarmonyDegree[];
   frame?: HarmonyFrame;

@@ -73,7 +73,7 @@ const xmlParser = new XMLParser({
   textNodeName: '#text',
   parseAttributeValue: false,
   parseTagValue: false,
-  trimValues: true,
+  trimValues: false, // Preserve whitespace-only content (e.g., <words> </words>)
   preserveOrder: true,
 });
 
@@ -2370,6 +2370,10 @@ function parseHarmony(elements: OrderedElement[], attrs: Record<string, string>)
       break;
     }
   }
+
+  // Parse inversion
+  const inversion = getElementTextAsInt(elements, 'inversion');
+  if (inversion !== undefined) harmony.inversion = inversion;
 
   // Parse bass
   const bass = getElementContent(elements, 'bass');
