@@ -692,22 +692,7 @@ function addNote(score: Score, options: AddNoteOptions): Score {
 const normalizedPos = getNormalizedPosition(note, measure, { baseDivisions: 480 });
 ```
 
-### 3. 未対応要素の保持
-
-**問題**: パースしない要素があった場合、シリアライズで失われる
-
-**対策**:
-- 未対応要素を `unknown` プロパティとしてそのまま保持
-- シリアライズ時に復元
-
-```typescript
-interface Measure {
-  // ...
-  _unknown?: unknown[];  // パースしなかった要素をそのまま保持
-}
-```
-
-### 4. 空白・コメントの保持
+### 3. 空白・コメントの保持
 
 **問題**: XML の空白やコメントが失われる
 

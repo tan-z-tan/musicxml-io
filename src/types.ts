@@ -49,7 +49,6 @@ export interface Measure {
   attributes?: MeasureAttributes;
   entries: MeasureEntry[];
   barline?: Barline;
-  _unknown?: unknown[];
 }
 
 export interface MeasureAttributes {
