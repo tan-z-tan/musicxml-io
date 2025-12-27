@@ -1,14 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { parse } from '../src/parser';
-import { serialize } from '../src/serializer';
+import { parse } from '../src';
+import { serialize } from '../src';
 import {
   parseCompressed,
   serializeCompressed,
   isCompressed,
   parseAuto,
-} from '../src/compressed';
+} from '../src';
 
 const fixturesPath = join(__dirname, 'fixtures');
 const lilypondPath = join(fixturesPath, 'lilypond', 'xmlFiles');
@@ -66,13 +66,13 @@ describe('Compressed MusicXML (.mxl)', () => {
       const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
       const score = parse(xml);
       score.metadata.workTitle = 'Test Compression';
-      score.metadata.creator = { composer: 'Test Composer' };
+      score.metadata.creators = [{ type: 'composer', value: 'Test Composer' }];
 
       const mxlData = serializeCompressed(score);
       const parsedBack = parseCompressed(mxlData);
 
       expect(parsedBack.metadata.workTitle).toBe('Test Compression');
-      expect(parsedBack.metadata.creator?.composer).toBe('Test Composer');
+      expect(parsedBack.metadata.creators?.find(c => c.type === 'composer')?.value).toBe('Test Composer');
     });
   });
 

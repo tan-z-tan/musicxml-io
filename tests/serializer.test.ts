@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { serialize } from '../src/serializer';
+import { serialize } from '../src';
 import type { Score } from '../src/types';
 
 describe('Serializer', () => {
@@ -10,6 +10,7 @@ describe('Serializer', () => {
       },
       partList: [
         {
+          type: 'score-part',
           id: 'P1',
           name: 'Piano',
         },
@@ -68,7 +69,7 @@ describe('Serializer', () => {
   it('should serialize a chord', () => {
     const score: Score = {
       metadata: {},
-      partList: [{ id: 'P1', name: 'Piano' }],
+      partList: [{ type: 'score-part', id: 'P1', name: 'Piano' }],
       parts: [
         {
           id: 'P1',
@@ -114,7 +115,7 @@ describe('Serializer', () => {
   it('should serialize backup and forward', () => {
     const score: Score = {
       metadata: {},
-      partList: [{ id: 'P1', name: 'Test' }],
+      partList: [{ type: 'score-part', id: 'P1', name: 'Test' }],
       parts: [
         {
           id: 'P1',
@@ -142,7 +143,7 @@ describe('Serializer', () => {
   it('should serialize with version 3.1', () => {
     const score: Score = {
       metadata: {},
-      partList: [{ id: 'P1', name: 'Test' }],
+      partList: [{ type: 'score-part', id: 'P1', name: 'Test' }],
       parts: [{ id: 'P1', measures: [] }],
     };
 
@@ -157,7 +158,7 @@ describe('Serializer', () => {
       metadata: {
         workTitle: 'Test & "Quotes" <Tags>',
       },
-      partList: [{ id: 'P1', name: 'Test' }],
+      partList: [{ type: 'score-part', id: 'P1', name: 'Test' }],
       parts: [{ id: 'P1', measures: [] }],
     };
 
@@ -169,7 +170,7 @@ describe('Serializer', () => {
   it('should serialize directions', () => {
     const score: Score = {
       metadata: {},
-      partList: [{ id: 'P1', name: 'Test' }],
+      partList: [{ type: 'score-part', id: 'P1', name: 'Test' }],
       parts: [
         {
           id: 'P1',
@@ -209,7 +210,7 @@ describe('Serializer', () => {
   it('should serialize notations', () => {
     const score: Score = {
       metadata: {},
-      partList: [{ id: 'P1', name: 'Test' }],
+      partList: [{ type: 'score-part', id: 'P1', name: 'Test' }],
       parts: [
         {
           id: 'P1',
@@ -223,8 +224,8 @@ describe('Serializer', () => {
                   duration: 4,
                   voice: 1,
                   notations: [
-                    { type: 'staccato' },
-                    { type: 'slur', startStop: 'start', number: 1 },
+                    { type: 'articulation', articulation: 'staccato' },
+                    { type: 'slur', slurType: 'start', number: 1 },
                   ],
                 },
               ],

@@ -32,9 +32,15 @@ export function exportMidi(score: Score, options: MidiExportOptions = {}): Uint8
   // Create a track for each part
   for (let partIndex = 0; partIndex < score.parts.length; partIndex++) {
     const part = score.parts[partIndex];
-    const partInfo = score.partList[partIndex];
-    const channel = partInfo?.midiInstrument?.channel ?? partIndex % 16;
-    const program = partInfo?.midiInstrument?.program ?? 1;
+    const partEntry = score.partList[partIndex];
+    // Only score-part entries have MIDI instruments
+    let channel = partIndex % 16;
+    let program = 1;
+    if (partEntry && partEntry.type === 'score-part' && partEntry.midiInstruments?.[0]) {
+      const midiInst = partEntry.midiInstruments[0];
+      channel = midiInst.channel ?? channel;
+      program = midiInst.program ?? program;
+    }
 
     const trackData = createPartTrack(
       part,
