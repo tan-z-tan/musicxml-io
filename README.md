@@ -2,6 +2,10 @@
 
 A TypeScript library for parsing, manipulating, and serializing MusicXML with a cleaner data model.
 
+## Validation
+
+The library includes a `validate()` function to check Score consistency (divisions, measure duration, ties, beams, slurs, part structure, staff structure, etc.). Use `serialize(score, { validate: true })` to validate before export.
+
 ## Roundtrip Coverage Testing
 
 We measure implementation completeness by comparing original MusicXML files with their roundtrip output (parse → internal representation → serialize).

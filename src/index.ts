@@ -102,3 +102,40 @@ export type { AddNoteOptions } from './operations';
 
 // File operations
 export { parseFile, serializeToFile, decodeBuffer } from './file';
+
+// Validator
+export {
+  validate,
+  isValid,
+  assertValid,
+  validateDivisions,
+  validateMeasureDuration,
+  validateBackupForward,
+  validateTies,
+  validateBeams,
+  validateSlurs,
+  validateTuplets,
+  validatePartReferences,
+  validatePartStructure,
+  validateStaffStructure,
+  validateVoiceStaff,
+  validateTiesAcrossMeasures,
+  validateSlursAcrossMeasures,
+  formatLocation,
+  ValidationException,
+  // Local validation for operations
+  validateMeasureLocal,
+  getMeasureContext,
+  assertMeasureValid,
+} from './validator';
+export type {
+  ValidationError,
+  ValidationResult,
+  ValidationLocation,
+  ValidationErrorCode,
+  ValidationLevel,
+  ValidateOptions,
+  // Local validation types
+  MeasureValidationContext,
+  LocalValidateOptions,
+} from './validator';
