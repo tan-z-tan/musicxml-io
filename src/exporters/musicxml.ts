@@ -487,7 +487,12 @@ function serializeScorePart(part: PartInfo, indent: string): string[] {
         lines.push(`${indent}    <solo/>`);
       }
       if (inst.ensemble !== undefined) {
-        lines.push(`${indent}    <ensemble>${inst.ensemble}</ensemble>`);
+        // ensemble can be empty (0) or have a number
+        if (inst.ensemble === 0) {
+          lines.push(`${indent}    <ensemble/>`);
+        } else {
+          lines.push(`${indent}    <ensemble>${inst.ensemble}</ensemble>`);
+        }
       }
       lines.push(`${indent}  </score-instrument>`);
     }
@@ -720,6 +725,10 @@ function serializeAttributes(attrs: MeasureAttributes, indent: string): string[]
     lines.push(`${indent}  <staves>${attrs.staves}</staves>`);
   }
 
+  if (attrs.instruments !== undefined) {
+    lines.push(`${indent}  <instruments>${attrs.instruments}</instruments>`);
+  }
+
   if (attrs.clef) {
     for (const clef of attrs.clef) {
       lines.push(...serializeClef(clef, indent + '  '));
@@ -832,8 +841,10 @@ function serializeTime(time: TimeSignature, indent: string): string[] {
 function serializeClef(clef: Clef, indent: string): string[] {
   const lines: string[] = [];
 
-  const numberAttr = clef.staff ? ` number="${clef.staff}"` : '';
-  lines.push(`${indent}<clef${numberAttr}>`);
+  let attrs = clef.staff ? ` number="${clef.staff}"` : '';
+  if (clef.printObject === false) attrs += ' print-object="no"';
+  if (clef.afterBarline) attrs += ' after-barline="yes"';
+  lines.push(`${indent}<clef${attrs}>`);
   lines.push(`${indent}  <sign>${clef.sign}</sign>`);
   lines.push(`${indent}  <line>${clef.line}</line>`);
   if (clef.clefOctaveChange !== undefined) {
@@ -1146,6 +1157,7 @@ function serializeNotationsGroup(notations: Notation[], indent: string): string[
       if (notation.number !== undefined) attrs += ` number="${notation.number}"`;
       attrs += ` type="${notation.slurType}"`;
       if (notation.lineType) attrs += ` line-type="${notation.lineType}"`;
+      if (notation.orientation) attrs += ` orientation="${notation.orientation}"`;
       if (notation.defaultX !== undefined) attrs += ` default-x="${notation.defaultX}"`;
       if (notation.defaultY !== undefined) attrs += ` default-y="${notation.defaultY}"`;
       if (notation.bezierX !== undefined) attrs += ` bezier-x="${notation.bezierX}"`;
@@ -1500,6 +1512,15 @@ function serializeDirection(direction: DirectionEntry, indent: string): string[]
     if (direction.sound.dynamics !== undefined) {
       attrs.push(`dynamics="${direction.sound.dynamics}"`);
     }
+    if (direction.sound.damperPedal) {
+      attrs.push(`damper-pedal="${direction.sound.damperPedal}"`);
+    }
+    if (direction.sound.softPedal) {
+      attrs.push(`soft-pedal="${direction.sound.softPedal}"`);
+    }
+    if (direction.sound.sostenutoPedal) {
+      attrs.push(`sostenuto-pedal="${direction.sound.sostenutoPedal}"`);
+    }
     const attrStr = attrs.length > 0 ? ` ${attrs.join(' ')}` : '';
 
     if (direction.sound.midiInstrument) {
@@ -1615,6 +1636,8 @@ function serializeDirectionType(dirType: DirectionType, indent: string): string[
       if (dirType.number !== undefined) bracketAttrs += ` number="${dirType.number}"`;
       if (dirType.lineEnd) bracketAttrs += ` line-end="${dirType.lineEnd}"`;
       if (dirType.lineType) bracketAttrs += ` line-type="${dirType.lineType}"`;
+      if (dirType.defaultY !== undefined) bracketAttrs += ` default-y="${dirType.defaultY}"`;
+      if (dirType.relativeX !== undefined) bracketAttrs += ` relative-x="${dirType.relativeX}"`;
       lines.push(`${indent}  <bracket${bracketAttrs}/>`);
       break;
     }
@@ -2035,6 +2058,9 @@ function serializeSound(sound: SoundEntry, indent: string): string[] {
   if (sound.tocoda) attrs.push(`tocoda="${escapeXml(sound.tocoda)}"`);
   if (sound.fine) attrs.push('fine="yes"');
   if (sound.forwardRepeat) attrs.push('forward-repeat="yes"');
+  if (sound.damperPedal) attrs.push(`damper-pedal="${sound.damperPedal === true ? 'yes' : sound.damperPedal}"`);
+  if (sound.softPedal) attrs.push(`soft-pedal="${sound.softPedal === true ? 'yes' : sound.softPedal}"`);
+  if (sound.sostenutoPedal) attrs.push(`sostenuto-pedal="${sound.sostenutoPedal === true ? 'yes' : sound.sostenutoPedal}"`);
 
   const attrStr = attrs.length > 0 ? ` ${attrs.join(' ')}` : '';
 
