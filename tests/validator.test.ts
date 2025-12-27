@@ -22,7 +22,11 @@ import {
   validateSlursAcrossMeasures,
   formatLocation,
   ValidationException,
+  validateMeasureLocal,
+  getMeasureContext,
+  assertMeasureValid,
 } from '../src/validator';
+import { serialize } from '../src/exporters/musicxml';
 
 const fixturesPath = join(__dirname, 'fixtures');
 
@@ -951,6 +955,193 @@ describe('Validator', () => {
           // File might not exist, skip
         }
       }
+    });
+  });
+
+  describe('Local Validation', () => {
+    describe('getMeasureContext', () => {
+      it('should get context from first measure', () => {
+        const score = createMinimalScore();
+        const context = getMeasureContext(score, 0, 0);
+
+        expect(context.divisions).toBe(1);
+        expect(context.time).toEqual({ beats: '4', beatType: 4 });
+        expect(context.staves).toBe(1);
+        expect(context.partIndex).toBe(0);
+        expect(context.partId).toBe('P1');
+        expect(context.measureIndex).toBe(0);
+      });
+
+      it('should accumulate attributes from previous measures', () => {
+        const score = createMinimalScore();
+        score.parts[0].measures.push({
+          number: '2',
+          attributes: { divisions: 24, staves: 2 },
+          entries: [],
+        });
+        score.parts[0].measures.push({
+          number: '3',
+          entries: [],
+        });
+
+        const context = getMeasureContext(score, 0, 2);
+        expect(context.divisions).toBe(24);
+        expect(context.staves).toBe(2);
+        expect(context.time).toEqual({ beats: '4', beatType: 4 }); // From measure 1
+      });
+
+      it('should throw for invalid part index', () => {
+        const score = createMinimalScore();
+        expect(() => getMeasureContext(score, 5, 0)).toThrow('Part index 5 out of bounds');
+      });
+    });
+
+    describe('validateMeasureLocal', () => {
+      it('should validate a valid measure', () => {
+        const measure: Measure = {
+          number: '1',
+          entries: [
+            createNote({ duration: 4, voice: 1 }),
+          ],
+        };
+
+        const context = {
+          divisions: 1,
+          time: { beats: '4', beatType: 4 },
+          staves: 1,
+          partIndex: 0,
+          partId: 'P1',
+          measureIndex: 0,
+        };
+
+        const errors = validateMeasureLocal(measure, context);
+        expect(errors.filter(e => e.level === 'error')).toHaveLength(0);
+      });
+
+      it('should catch duration overflow', () => {
+        const measure: Measure = {
+          number: '1',
+          entries: [
+            createNote({ duration: 8, voice: 1 }), // Too long for 4/4
+          ],
+        };
+
+        const context = {
+          divisions: 1,
+          time: { beats: '4', beatType: 4 },
+          staves: 1,
+          partIndex: 0,
+          partId: 'P1',
+          measureIndex: 0,
+        };
+
+        const errors = validateMeasureLocal(measure, context);
+        expect(errors.some(e => e.code === 'MEASURE_DURATION_OVERFLOW')).toBe(true);
+      });
+
+      it('should respect options to disable checks', () => {
+        const measure: Measure = {
+          number: '1',
+          entries: [
+            createNote({ duration: 8, voice: 1 }), // Would overflow
+          ],
+        };
+
+        const context = {
+          divisions: 1,
+          time: { beats: '4', beatType: 4 },
+          staves: 1,
+          partIndex: 0,
+          partId: 'P1',
+          measureIndex: 0,
+        };
+
+        const errors = validateMeasureLocal(measure, context, {
+          checkMeasureDuration: false,
+        });
+        expect(errors.filter(e => e.code === 'MEASURE_DURATION_OVERFLOW')).toHaveLength(0);
+      });
+    });
+
+    describe('assertMeasureValid', () => {
+      it('should not throw for valid measure', () => {
+        const score = createMinimalScore();
+        score.parts[0].measures[0].entries.push(createNote({ duration: 4, voice: 1 }));
+
+        expect(() => assertMeasureValid(score, 0, 0)).not.toThrow();
+      });
+
+      it('should throw for invalid measure', () => {
+        const score = createMinimalScore();
+        score.parts[0].measures[0].entries.push(
+          createNote({ duration: 8, voice: 1 }), // Overflow
+        );
+
+        expect(() => assertMeasureValid(score, 0, 0)).toThrow(ValidationException);
+      });
+    });
+  });
+
+  describe('Serialize with Validation', () => {
+    it('should serialize without validation by default', () => {
+      const score = createMinimalScore();
+      const xml = serialize(score);
+      expect(xml).toContain('<?xml version="1.0"');
+    });
+
+    it('should validate and serialize valid score', () => {
+      const score = createMinimalScore();
+      let validationCalled = false;
+
+      const xml = serialize(score, {
+        validate: true,
+        onValidation: (result) => {
+          validationCalled = true;
+          expect(result.valid).toBe(true);
+        },
+      });
+
+      expect(validationCalled).toBe(true);
+      expect(xml).toContain('<?xml version="1.0"');
+    });
+
+    it('should throw on validation error when throwOnValidationError is true', () => {
+      const score = createMinimalScore();
+      score.parts.push({ id: 'P2', measures: [] }); // Invalid: not in partList
+
+      expect(() => serialize(score, {
+        validate: true,
+        throwOnValidationError: true,
+      })).toThrow(ValidationException);
+    });
+
+    it('should not throw on validation error when throwOnValidationError is false', () => {
+      const score = createMinimalScore();
+      score.parts.push({ id: 'P2', measures: [] }); // Invalid: not in partList
+
+      const xml = serialize(score, {
+        validate: true,
+        throwOnValidationError: false,
+      });
+
+      expect(xml).toContain('<?xml version="1.0"');
+    });
+
+    it('should call onValidation callback with result', () => {
+      const score = createMinimalScore();
+      score.parts.push({ id: 'P2', measures: [] }); // Invalid
+
+      let capturedResult: any = null;
+      serialize(score, {
+        validate: true,
+        onValidation: (result) => {
+          capturedResult = result;
+        },
+      });
+
+      expect(capturedResult).not.toBeNull();
+      expect(capturedResult.valid).toBe(false);
+      expect(capturedResult.errors.length).toBeGreaterThan(0);
     });
   });
 });

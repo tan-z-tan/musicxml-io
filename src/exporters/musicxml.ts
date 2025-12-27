@@ -37,15 +37,46 @@ import type {
   DisplayText,
   AttributesEntry,
 } from '../types';
+import {
+  validate,
+  ValidationException,
+  type ValidateOptions,
+  type ValidationResult,
+} from '../validator';
 
 export interface SerializeOptions {
   version?: '3.1' | '4.0';
   indent?: string;
+  /** Validate score before serializing (default: false) */
+  validate?: boolean;
+  /** Options for validation (if validate is true) */
+  validateOptions?: ValidateOptions;
+  /** Throw error if validation fails (default: false, will only warn) */
+  throwOnValidationError?: boolean;
+  /** Callback to receive validation result */
+  onValidation?: (result: ValidationResult) => void;
 }
 
 export function serialize(score: Score, options: SerializeOptions = {}): string {
   const version = options.version || '4.0';
   const indent = options.indent ?? '  ';
+
+  // Validation
+  if (options.validate) {
+    const result = validate(score, options.validateOptions);
+
+    // Call the callback if provided
+    if (options.onValidation) {
+      options.onValidation(result);
+    }
+
+    if (!result.valid && options.throwOnValidationError) {
+      const errorMessages = result.errors
+        .map(e => `[${e.code}] ${e.message}`)
+        .join('\n');
+      throw new ValidationException(result.errors, `Score validation failed:\n${errorMessages}`);
+    }
+  }
 
   const lines: string[] = [];
 

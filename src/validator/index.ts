@@ -1033,6 +1033,197 @@ export function validateStaffStructure(part: Part, partIndex: number): Validatio
 }
 
 // ============================================================
+// Local Validation (for operations)
+// ============================================================
+
+/**
+ * Context needed to validate a single measure
+ */
+export interface MeasureValidationContext {
+  /** Current divisions value (from previous attributes) */
+  divisions: number;
+  /** Current time signature */
+  time?: TimeSignature;
+  /** Current staves count */
+  staves: number;
+  /** Part index (for error location) */
+  partIndex: number;
+  /** Part ID (for error location) */
+  partId: string;
+  /** Measure index (for error location) */
+  measureIndex: number;
+}
+
+/**
+ * Options for local measure validation
+ */
+export interface LocalValidateOptions {
+  checkMeasureDuration?: boolean;
+  checkPosition?: boolean;
+  checkBeams?: boolean;
+  checkTuplets?: boolean;
+  checkVoiceStaff?: boolean;
+  durationTolerance?: number;
+}
+
+const DEFAULT_LOCAL_OPTIONS: Required<LocalValidateOptions> = {
+  checkMeasureDuration: true,
+  checkPosition: true,
+  checkBeams: true,
+  checkTuplets: true,
+  checkVoiceStaff: true,
+  durationTolerance: 0,
+};
+
+/**
+ * Validate a single measure with provided context.
+ * This is useful for validating after local operations like addNote, deleteNote.
+ *
+ * @example
+ * ```typescript
+ * const context = getMeasureContext(score, partIndex, measureIndex);
+ * const errors = validateMeasureLocal(measure, context);
+ * if (errors.length > 0) {
+ *   throw new Error('Operation created invalid state');
+ * }
+ * ```
+ */
+export function validateMeasureLocal(
+  measure: Measure,
+  context: MeasureValidationContext,
+  options: LocalValidateOptions = {}
+): ValidationError[] {
+  const opts = { ...DEFAULT_LOCAL_OPTIONS, ...options };
+  const errors: ValidationError[] = [];
+
+  const location: ValidationLocation = {
+    partIndex: context.partIndex,
+    partId: context.partId,
+    measureIndex: context.measureIndex,
+    measureNumber: measure.number,
+  };
+
+  if (opts.checkMeasureDuration && context.time) {
+    errors.push(...validateMeasureDuration(
+      measure,
+      context.divisions,
+      context.time,
+      location,
+      opts.durationTolerance
+    ));
+  }
+
+  if (opts.checkPosition) {
+    errors.push(...validateBackupForward(measure, location));
+  }
+
+  if (opts.checkBeams) {
+    errors.push(...validateBeams(measure, location));
+  }
+
+  if (opts.checkTuplets) {
+    errors.push(...validateTuplets(measure, location));
+  }
+
+  if (opts.checkVoiceStaff) {
+    errors.push(...validateVoiceStaff(measure, context.staves, location));
+  }
+
+  return errors;
+}
+
+/**
+ * Get the validation context for a measure by traversing previous attributes.
+ * This collects divisions, time, and staves from measure 0 to the target measure.
+ */
+export function getMeasureContext(
+  score: Score,
+  partIndex: number,
+  measureIndex: number
+): MeasureValidationContext {
+  const part = score.parts[partIndex];
+  if (!part) {
+    throw new Error(`Part index ${partIndex} out of bounds`);
+  }
+
+  let divisions = 1;
+  let time: TimeSignature | undefined;
+  let staves = 1;
+
+  // Traverse from start to the target measure to collect current state
+  for (let i = 0; i <= measureIndex && i < part.measures.length; i++) {
+    const measure = part.measures[i];
+    if (measure.attributes) {
+      if (measure.attributes.divisions !== undefined) {
+        divisions = measure.attributes.divisions;
+      }
+      if (measure.attributes.time !== undefined) {
+        time = measure.attributes.time;
+      }
+      if (measure.attributes.staves !== undefined) {
+        staves = measure.attributes.staves;
+      }
+    }
+
+    // Also check for mid-measure attribute changes
+    for (const entry of measure.entries) {
+      if (entry.type === 'attributes') {
+        if (entry.attributes.divisions !== undefined) {
+          divisions = entry.attributes.divisions;
+        }
+        if (entry.attributes.time !== undefined) {
+          time = entry.attributes.time;
+        }
+        if (entry.attributes.staves !== undefined) {
+          staves = entry.attributes.staves;
+        }
+      }
+    }
+  }
+
+  return {
+    divisions,
+    time,
+    staves,
+    partIndex,
+    partId: part.id,
+    measureIndex,
+  };
+}
+
+/**
+ * Validate a measure after an operation, throwing if invalid.
+ * Convenience wrapper around validateMeasureLocal.
+ */
+export function assertMeasureValid(
+  score: Score,
+  partIndex: number,
+  measureIndex: number,
+  options?: LocalValidateOptions
+): void {
+  const part = score.parts[partIndex];
+  if (!part) {
+    throw new Error(`Part index ${partIndex} out of bounds`);
+  }
+
+  const measure = part.measures[measureIndex];
+  if (!measure) {
+    throw new Error(`Measure index ${measureIndex} out of bounds`);
+  }
+
+  const context = getMeasureContext(score, partIndex, measureIndex);
+  const errors = validateMeasureLocal(measure, context, options);
+
+  const criticalErrors = errors.filter(e => e.level === 'error');
+  if (criticalErrors.length > 0) {
+    const errorMessages = criticalErrors
+      .map(e => `[${e.code}] ${e.message}`)
+      .join('\n');
+    throw new ValidationException(criticalErrors, errorMessages);
+  }
+}
+
+// ============================================================
 // Convenience Functions
 // ============================================================
 

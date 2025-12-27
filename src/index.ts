@@ -123,6 +123,10 @@ export {
   validateSlursAcrossMeasures,
   formatLocation,
   ValidationException,
+  // Local validation for operations
+  validateMeasureLocal,
+  getMeasureContext,
+  assertMeasureValid,
 } from './validator';
 export type {
   ValidationError,
@@ -131,4 +135,7 @@ export type {
   ValidationErrorCode,
   ValidationLevel,
   ValidateOptions,
+  // Local validation types
+  MeasureValidationContext,
+  LocalValidateOptions,
 } from './validator';
