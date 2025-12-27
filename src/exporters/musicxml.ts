@@ -369,6 +369,9 @@ function serializeCredit(credit: Credit, indent: string): string[] {
       if (cw.justify) attrs += ` justify="${escapeXml(cw.justify)}"`;
       if (cw.halign) attrs += ` halign="${escapeXml(cw.halign)}"`;
       if (cw.valign) attrs += ` valign="${escapeXml(cw.valign)}"`;
+      if (cw.letterSpacing) attrs += ` letter-spacing="${escapeXml(cw.letterSpacing)}"`;
+      if (cw.xmlLang) attrs += ` xml:lang="${escapeXml(cw.xmlLang)}"`;
+      if (cw.xmlSpace) attrs += ` xml:space="${escapeXml(cw.xmlSpace)}"`;
       lines.push(`${indent}${indent}<credit-words${attrs}>${escapeXml(cw.text)}</credit-words>`);
     }
   }
@@ -1086,6 +1089,7 @@ function serializeNotationsGroup(notations: Notation[], indent: string): string[
     if (notation.type === 'tied') {
       let attrs = ` type="${notation.tiedType}"`;
       if (notation.number !== undefined) attrs += ` number="${notation.number}"`;
+      if (notation.orientation) attrs += ` orientation="${notation.orientation}"`;
       lines.push(`${indent}  <tied${attrs}/>`);
     } else if (notation.type === 'slur') {
       let attrs = '';
@@ -1416,7 +1420,9 @@ function serializeDirectionType(dirType: DirectionType, indent: string): string[
   switch (dirType.kind) {
     case 'dynamics': {
       let dynAttrs = '';
+      if (dirType.defaultX !== undefined) dynAttrs += ` default-x="${dirType.defaultX}"`;
       if (dirType.defaultY !== undefined) dynAttrs += ` default-y="${dirType.defaultY}"`;
+      if (dirType.relativeX !== undefined) dynAttrs += ` relative-x="${dirType.relativeX}"`;
       if (dirType.halign) dynAttrs += ` halign="${dirType.halign}"`;
       lines.push(`${indent}  <dynamics${dynAttrs}>`);
       lines.push(`${indent}    <${dirType.value}/>`);
@@ -1457,6 +1463,7 @@ function serializeDirectionType(dirType: DirectionType, indent: string): string[
       if (dirType.fontSize) wordAttrs += ` font-size="${escapeXml(dirType.fontSize)}"`;
       if (dirType.fontStyle) wordAttrs += ` font-style="${escapeXml(dirType.fontStyle)}"`;
       if (dirType.fontWeight) wordAttrs += ` font-weight="${escapeXml(dirType.fontWeight)}"`;
+      if (dirType.xmlLang) wordAttrs += ` xml:lang="${escapeXml(dirType.xmlLang)}"`;
       lines.push(`${indent}  <words${wordAttrs}>${escapeXml(dirType.text)}</words>`);
       break;
     }
@@ -1533,9 +1540,15 @@ function serializeDirectionType(dirType: DirectionType, indent: string): string[
       lines.push(`${indent}  <image${imgAttrs}/>`);
       break;
 
-    case 'pedal':
-      lines.push(`${indent}  <pedal type="${dirType.type}"/>`);
+    case 'pedal': {
+      let pedalAttrs = ` type="${dirType.type}"`;
+      if (dirType.line !== undefined) pedalAttrs += ` line="${dirType.line ? 'yes' : 'no'}"`;
+      if (dirType.defaultY !== undefined) pedalAttrs += ` default-y="${dirType.defaultY}"`;
+      if (dirType.relativeX !== undefined) pedalAttrs += ` relative-x="${dirType.relativeX}"`;
+      if (dirType.halign) pedalAttrs += ` halign="${dirType.halign}"`;
+      lines.push(`${indent}  <pedal${pedalAttrs}/>`);
       break;
+    }
 
     case 'octave-shift': {
       const sizeAttr = dirType.size !== undefined ? ` size="${dirType.size}"` : '';
@@ -1609,6 +1622,7 @@ function serializeStaffDetails(sd: StaffDetails, indent: string): string[] {
   let attrs = '';
   if (sd.number !== undefined) attrs += ` number="${sd.number}"`;
   if (sd.showFrets) attrs += ` show-frets="${sd.showFrets}"`;
+  if (sd.printObject !== undefined) attrs += ` print-object="${sd.printObject ? 'yes' : 'no'}"`;
   lines.push(`${indent}<staff-details${attrs}>`);
 
   if (sd.staffType) {
@@ -1637,7 +1651,8 @@ function serializeStaffDetails(sd: StaffDetails, indent: string): string[] {
   }
 
   if (sd.staffSize !== undefined) {
-    lines.push(`${indent}  <staff-size>${sd.staffSize}</staff-size>`);
+    const scalingAttr = sd.staffSizeScaling !== undefined ? ` scaling="${sd.staffSizeScaling}"` : '';
+    lines.push(`${indent}  <staff-size${scalingAttr}>${sd.staffSize}</staff-size>`);
   }
 
   lines.push(`${indent}</staff-details>`);

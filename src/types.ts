@@ -113,6 +113,9 @@ export interface CreditWords {
   justify?: string;
   halign?: string;
   valign?: string;
+  letterSpacing?: string;
+  xmlLang?: string;
+  xmlSpace?: string;
 }
 
 // PartListEntry is either a PartInfo (score-part) or PartGroup
@@ -237,7 +240,9 @@ export interface StaffDetails {
   staffTuning?: StaffTuning[];
   capo?: number;
   staffSize?: number;
+  staffSizeScaling?: number;
   showFrets?: 'numbers' | 'letters';
+  printObject?: boolean;
 }
 
 export interface StaffTuning {
@@ -633,6 +638,7 @@ export interface TiedNotation extends BaseNotation {
   type: 'tied';
   tiedType: 'start' | 'stop' | 'continue' | 'let-ring';
   number?: number;
+  orientation?: 'over' | 'under';
 }
 
 export interface TupletNotation extends BaseNotation {
@@ -689,14 +695,14 @@ export interface OtherNotation extends BaseNotation {
 // Direction (強弱、テンポ、etc)
 // ============================================================
 export type DirectionType =
-  | { kind: 'dynamics'; value: DynamicsValue; defaultY?: number; halign?: string }
+  | { kind: 'dynamics'; value: DynamicsValue; defaultX?: number; defaultY?: number; relativeX?: number; halign?: string }
   | { kind: 'wedge'; type: 'crescendo' | 'diminuendo' | 'stop'; spread?: number; defaultY?: number }
   | { kind: 'metronome'; beatUnit: NoteType; perMinute: number | string; beatUnitDot?: boolean; beatUnit2?: NoteType; beatUnitDot2?: boolean }
-  | { kind: 'words'; text: string; defaultX?: number; defaultY?: number; relativeX?: number; fontFamily?: string; fontSize?: string; fontStyle?: string; fontWeight?: string }
+  | { kind: 'words'; text: string; defaultX?: number; defaultY?: number; relativeX?: number; fontFamily?: string; fontSize?: string; fontStyle?: string; fontWeight?: string; xmlLang?: string }
   | { kind: 'rehearsal'; text: string; enclosure?: string }
   | { kind: 'segno' }
   | { kind: 'coda' }
-  | { kind: 'pedal'; type: 'start' | 'stop' | 'change' | 'continue'; line?: boolean }
+  | { kind: 'pedal'; type: 'start' | 'stop' | 'change' | 'continue'; line?: boolean; defaultY?: number; relativeX?: number; halign?: string }
   | { kind: 'octave-shift'; type: 'up' | 'down' | 'stop'; size?: number }
   | { kind: 'bracket'; type: 'start' | 'stop' | 'continue'; number?: number; lineEnd?: 'up' | 'down' | 'both' | 'arrow' | 'none'; lineType?: 'solid' | 'dashed' | 'dotted' | 'wavy' }
   | { kind: 'dashes'; type: 'start' | 'stop' | 'continue'; number?: number }

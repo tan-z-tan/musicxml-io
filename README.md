@@ -16,14 +16,14 @@ npm run coverage:roundtrip
 npm run diff:roundtrip -- path/to/file.xml
 ```
 
-### Current Score: 83.8%
+### Current Score: 99.6%
 
 | Metric | Score |
 |--------|------:|
-| Overall | 83.8% |
-| Node coverage | 85.5% |
-| Attribute coverage | 73.4% |
-| Text value coverage | 87.3% |
+| Overall | 99.6% |
+| Node coverage | 99.9% |
+| Attribute coverage | 95.9% |
+| Text value coverage | 99.8% |
 
 ### How Scoring Works
 
@@ -48,12 +48,12 @@ The coverage script (`scripts/measure-coverage.ts`) performs deep XML comparison
 
 ### Top Missing Elements
 
-| Element | Files Affected |
-|---------|---------------:|
-| `notations` | 216 |
-| `identification` | 137 |
-| `notehead` | 68 |
-| `direction-type` | 50 |
-| `harmony` | 17 |
+| Element | Count |
+|---------|------:|
+| `sound` | 8 |
+| `notations` | 6 |
+| `pull-off` | 6 |
+| `ensemble` | 5 |
+| `mode` | 5 |
 
-These represent features not yet fully implemented in the parser/serializer.
+These represent edge cases not yet fully implemented in the parser/serializer.
