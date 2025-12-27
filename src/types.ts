@@ -142,6 +142,7 @@ export interface DisplayText {
   fontSize?: string;
   fontStyle?: string;
   fontWeight?: string;
+  xmlSpace?: string;
 }
 
 export interface ScoreInstrument {
@@ -179,6 +180,7 @@ export interface PartGroup {
   groupAbbreviation?: string;
   groupAbbreviationDisplay?: DisplayText[];
   groupSymbol?: 'none' | 'brace' | 'line' | 'bracket' | 'square';
+  groupSymbolDefaultX?: number;
   groupBarline?: 'yes' | 'no' | 'Mensurstrich';
 }
 
@@ -277,6 +279,7 @@ export interface KeySignature {
   cancel?: number;
   cancelLocation?: 'left' | 'right' | 'before-barline';
   number?: number; // Staff number for multi-staff keys
+  printObject?: boolean;
   // Non-traditional key signatures
   keySteps?: string[];
   keyAlters?: number[];
@@ -336,6 +339,9 @@ export interface NoteEntry {
   chord?: boolean;
   cue?: boolean;
   instrument?: string; // instrument reference id
+  dynamics?: number; // MIDI dynamics for playback
+  printObject?: boolean;
+  printSpacing?: boolean;
 
   // Layout attributes
   defaultX?: number;
@@ -345,6 +351,7 @@ export interface NoteEntry {
 
   // Note details
   noteType?: NoteType;
+  noteTypeSize?: string;
   dots?: number;
   accidental?: AccidentalInfo;
   stem?: StemInfo;
@@ -408,7 +415,9 @@ export interface DirectionEntry {
   staff?: number;
   voice?: number;
   offset?: number;
+  offsetSound?: boolean;
   sound?: DirectionSound;
+  system?: 'only-top' | 'also-top' | 'none';
 }
 
 export interface Swing {
@@ -444,6 +453,10 @@ export interface HarmonyEntry {
   placement?: 'above' | 'below';
   offset?: number;
   printFrame?: boolean;
+  // Positioning attributes
+  defaultY?: number;
+  fontSize?: string;
+  halign?: string;
 }
 
 export interface HarmonyDegree {
@@ -455,6 +468,9 @@ export interface HarmonyDegree {
 export interface HarmonyFrame {
   frameStrings?: number;
   frameFrets?: number;
+  firstFret?: number;
+  firstFretText?: string;
+  firstFretLocation?: 'left' | 'right';
   frameNotes?: FrameNote[];
 }
 
@@ -518,6 +534,12 @@ export interface AccidentalInfo {
   editorial?: boolean;
   parentheses?: boolean;
   bracket?: boolean;
+  // Positioning attributes
+  relativeX?: number;
+  relativeY?: number;
+  color?: string;
+  size?: string;
+  fontSize?: string;
 }
 
 export interface NoteheadInfo {
@@ -575,6 +597,11 @@ export interface BaseNotation {
 export interface ArticulationNotation extends BaseNotation {
   type: 'articulation';
   articulation: ArticulationType;
+  // For strong-accent: up/down
+  strongAccentType?: 'up' | 'down';
+  // Positioning
+  defaultX?: number;
+  defaultY?: number;
 }
 
 export type ArticulationType =
@@ -583,16 +610,25 @@ export type ArticulationType =
   | 'scoop' | 'plop' | 'doit' | 'falloff' | 'breath-mark'
   | 'caesura' | 'stress' | 'unstress' | 'soft-accent';
 
+export interface AccidentalMarkInfo {
+  value: Accidental;
+  placement?: 'above' | 'below';
+}
+
 export interface OrnamentNotation extends BaseNotation {
   type: 'ornament';
   ornament: OrnamentType;
   accidentalMark?: Accidental;
+  accidentalMarks?: AccidentalMarkInfo[];
   // For wavy-line
   wavyLineType?: 'start' | 'stop' | 'continue';
   number?: number;
   // For tremolo
   tremoloMarks?: number;
   tremoloType?: 'start' | 'stop' | 'single' | 'unmeasured';
+  // Positioning
+  defaultX?: number;
+  defaultY?: number;
 }
 
 export type OrnamentType =
@@ -606,11 +642,26 @@ export interface TechnicalNotation extends BaseNotation {
   string?: number;
   fret?: number;
   fingering?: string;
+  fingeringSubstitution?: boolean;
+  fingeringAlternate?: boolean;
   text?: string; // For hammer-on, pull-off, tap, etc.
   bendAlter?: number;
   preBend?: boolean;
   release?: boolean;
   withBar?: number;
+  // For harmonic
+  harmonicNatural?: boolean;
+  harmonicArtificial?: boolean;
+  basePitch?: boolean;
+  touchingPitch?: boolean;
+  soundingPitch?: boolean;
+  // For hammer-on, pull-off
+  startStop?: 'start' | 'stop';
+  // For heel, toe
+  substitution?: boolean;
+  // Positioning
+  defaultX?: number;
+  defaultY?: number;
 }
 
 export type TechnicalType =
@@ -656,12 +707,16 @@ export interface TupletNotation extends BaseNotation {
 export interface DynamicsNotation extends BaseNotation {
   type: 'dynamics';
   dynamics: DynamicsValue[];
+  otherDynamics?: string; // For <other-dynamics> element
 }
 
 export interface FermataNotation extends BaseNotation {
   type: 'fermata';
   shape?: 'normal' | 'angled' | 'square' | 'double-angled' | 'double-square' | 'double-dot' | 'half-curve' | 'curlew';
   fermataType?: 'upright' | 'inverted';
+  // Positioning
+  defaultX?: number;
+  defaultY?: number;
 }
 
 export interface ArpeggiateNotation extends BaseNotation {
@@ -696,24 +751,37 @@ export interface OtherNotation extends BaseNotation {
 // ============================================================
 export type DirectionType =
   | { kind: 'dynamics'; value: DynamicsValue; defaultX?: number; defaultY?: number; relativeX?: number; halign?: string }
-  | { kind: 'wedge'; type: 'crescendo' | 'diminuendo' | 'stop'; spread?: number; defaultY?: number }
-  | { kind: 'metronome'; beatUnit: NoteType; perMinute: number | string; beatUnitDot?: boolean; beatUnit2?: NoteType; beatUnitDot2?: boolean }
-  | { kind: 'words'; text: string; defaultX?: number; defaultY?: number; relativeX?: number; fontFamily?: string; fontSize?: string; fontStyle?: string; fontWeight?: string; xmlLang?: string }
-  | { kind: 'rehearsal'; text: string; enclosure?: string }
+  | { kind: 'wedge'; type: 'crescendo' | 'diminuendo' | 'stop'; spread?: number; defaultY?: number; relativeX?: number }
+  | { kind: 'metronome'; beatUnit: NoteType; perMinute?: number | string; beatUnitDot?: boolean; beatUnit2?: NoteType; beatUnitDot2?: boolean; parentheses?: boolean; defaultY?: number; fontFamily?: string; fontSize?: string }
+  | { kind: 'words'; text: string; defaultX?: number; defaultY?: number; relativeX?: number; fontFamily?: string; fontSize?: string; fontStyle?: string; fontWeight?: string; xmlLang?: string; justify?: string; color?: string; xmlSpace?: string; halign?: string }
+  | { kind: 'rehearsal'; text: string; enclosure?: string; defaultX?: number; defaultY?: number; fontSize?: string; fontWeight?: string }
   | { kind: 'segno' }
   | { kind: 'coda' }
   | { kind: 'pedal'; type: 'start' | 'stop' | 'change' | 'continue'; line?: boolean; defaultY?: number; relativeX?: number; halign?: string }
   | { kind: 'octave-shift'; type: 'up' | 'down' | 'stop'; size?: number }
   | { kind: 'bracket'; type: 'start' | 'stop' | 'continue'; number?: number; lineEnd?: 'up' | 'down' | 'both' | 'arrow' | 'none'; lineType?: 'solid' | 'dashed' | 'dotted' | 'wavy' }
-  | { kind: 'dashes'; type: 'start' | 'stop' | 'continue'; number?: number }
+  | { kind: 'dashes'; type: 'start' | 'stop' | 'continue'; number?: number; dashLength?: number; defaultY?: number; spaceLength?: number }
   | { kind: 'accordion-registration'; high?: boolean; middle?: number; low?: boolean }
   | { kind: 'swing'; straight?: boolean; first?: number; second?: number; swingType?: NoteType }
   | { kind: 'eyeglasses' }
   | { kind: 'damp' }
   | { kind: 'damp-all' }
-  | { kind: 'scordatura' }
+  | { kind: 'scordatura'; accords?: Accord[] }
+  | { kind: 'harp-pedals'; pedalTunings?: PedalTuning[] }
   | { kind: 'image'; source?: string; type?: string }
-  | { kind: 'other-direction'; text: string };
+  | { kind: 'other-direction'; text: string; defaultX?: number; defaultY?: number; halign?: string; printObject?: boolean };
+
+export interface Accord {
+  string: number;
+  tuningStep: string;
+  tuningAlter?: number;
+  tuningOctave: number;
+}
+
+export interface PedalTuning {
+  pedalStep: string;
+  pedalAlter: number;
+}
 
 export type DynamicsValue =
   | 'pppppp' | 'ppppp' | 'pppp' | 'ppp' | 'pp' | 'p'
