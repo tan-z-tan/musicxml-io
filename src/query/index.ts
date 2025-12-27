@@ -250,3 +250,116 @@ export function getStaveCount(score: Score, partIndex: number = 0): number {
 
   return 1;
 }
+
+/**
+ * Round-trip metrics for measuring preservation fidelity
+ */
+export interface RoundtripMetrics {
+  notesOriginal: number;
+  notesPreserved: number;
+  measuresOriginal: number;
+  measuresPreserved: number;
+  partsOriginal: number;
+  partsPreserved: number;
+  preservationRate: number;
+}
+
+/**
+ * Compare two scores and calculate round-trip preservation metrics
+ */
+export function measureRoundtrip(original: Score, exported: Score): RoundtripMetrics {
+  const notesOriginal = countNotes(original);
+  const notesExported = countNotes(exported);
+  const notesPreserved = Math.min(notesOriginal, notesExported);
+
+  const measuresOriginal = getMeasureCount(original);
+  const measuresExported = getMeasureCount(exported);
+  const measuresPreserved = Math.min(measuresOriginal, measuresExported);
+
+  const partsOriginal = original.parts.length;
+  const partsExported = exported.parts.length;
+  const partsPreserved = Math.min(partsOriginal, partsExported);
+
+  // Calculate preservation rate based on notes (most granular)
+  const preservationRate = notesOriginal > 0
+    ? notesPreserved / notesOriginal
+    : 1;
+
+  return {
+    notesOriginal,
+    notesPreserved,
+    measuresOriginal,
+    measuresPreserved,
+    partsOriginal,
+    partsPreserved,
+    preservationRate,
+  };
+}
+
+/**
+ * Count total notes in a score
+ */
+export function countNotes(score: Score): number {
+  let count = 0;
+
+  for (const part of score.parts) {
+    for (const measure of part.measures) {
+      for (const entry of measure.entries) {
+        if (entry.type === 'note') {
+          count++;
+        }
+      }
+    }
+  }
+
+  return count;
+}
+
+/**
+ * Compare two scores for structural equality
+ */
+export function scoresEqual(a: Score, b: Score): boolean {
+  // Check parts count
+  if (a.parts.length !== b.parts.length) return false;
+
+  for (let i = 0; i < a.parts.length; i++) {
+    const partA = a.parts[i];
+    const partB = b.parts[i];
+
+    if (partA.measures.length !== partB.measures.length) return false;
+
+    for (let j = 0; j < partA.measures.length; j++) {
+      const measureA = partA.measures[j];
+      const measureB = partB.measures[j];
+
+      if (measureA.number !== measureB.number) return false;
+
+      // Compare entries count
+      const notesA = measureA.entries.filter(e => e.type === 'note');
+      const notesB = measureB.entries.filter(e => e.type === 'note');
+
+      if (notesA.length !== notesB.length) return false;
+
+      // Compare each note
+      for (let k = 0; k < notesA.length; k++) {
+        const noteA = notesA[k] as NoteEntry;
+        const noteB = notesB[k] as NoteEntry;
+
+        if (!pitchesEqual(noteA.pitch, noteB.pitch)) return false;
+        if (noteA.duration !== noteB.duration) return false;
+        if (noteA.voice !== noteB.voice) return false;
+      }
+    }
+  }
+
+  return true;
+}
+
+/**
+ * Compare two pitches for equality
+ */
+function pitchesEqual(a: Pitch | undefined, b: Pitch | undefined): boolean {
+  if (a === undefined && b === undefined) return true;
+  if (a === undefined || b === undefined) return false;
+  return a.step === b.step && a.octave === b.octave && (a.alter ?? 0) === (b.alter ?? 0);
+}

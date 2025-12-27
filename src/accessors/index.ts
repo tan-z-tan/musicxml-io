@@ -279,3 +279,38 @@ export function isRestMeasure(measure: Measure): boolean {
   const notes = measure.entries.filter((entry): entry is NoteEntry => entry.type === 'note');
   return notes.length === 0 || notes.every((note) => !note.pitch);
 }
+
+/**
+ * Options for normalized position calculation
+ */
+export interface NormalizedPositionOptions {
+  baseDivisions: number;
+  currentDivisions?: number;
+}
+
+/**
+ * Get a normalized position of a note using a common base divisions
+ * This is useful when comparing positions across measures with different divisions
+ */
+export function getNormalizedPosition(
+  note: NoteEntry,
+  measure: Measure,
+  options: NormalizedPositionOptions
+): number {
+  const absolutePosition = getAbsolutePosition(note, measure);
+  const currentDivisions = options.currentDivisions ?? measure.attributes?.divisions ?? 1;
+
+  // Convert from current divisions to base divisions
+  return (absolutePosition * options.baseDivisions) / currentDivisions;
+}
+
+/**
+ * Get normalized duration of a note using a common base divisions
+ */
+export function getNormalizedDuration(
+  note: NoteEntry,
+  options: NormalizedPositionOptions
+): number {
+  const currentDivisions = options.currentDivisions ?? 1;
+  return (note.duration * options.baseDivisions) / currentDivisions;
+}

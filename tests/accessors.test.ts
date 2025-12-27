@@ -16,6 +16,8 @@ import {
   getStaves,
   hasNotes,
   isRestMeasure,
+  getNormalizedPosition,
+  getNormalizedDuration,
 } from '../src/accessors';
 
 const fixturesPath = join(__dirname, 'fixtures');
@@ -240,6 +242,48 @@ describe('Accessors', () => {
 
     it('should return true for empty measures', () => {
       expect(isRestMeasure({ number: 1, entries: [] })).toBe(true);
+    });
+  });
+
+  describe('getNormalizedPosition', () => {
+    it('should normalize position to base divisions', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+      const measure = score.parts[0].measures[0];
+      const divisions = measure.attributes?.divisions ?? 1;
+
+      const notes = measure.entries.filter((e) => e.type === 'note');
+      const note = notes[1]; // Second note
+
+      // Position 1 with divisions 1, normalized to base 480
+      const normalizedPos = getNormalizedPosition(note, measure, {
+        baseDivisions: 480,
+        currentDivisions: divisions,
+      });
+
+      expect(normalizedPos).toBe(480); // 1 * 480 / 1 = 480
+    });
+  });
+
+  describe('getNormalizedDuration', () => {
+    it('should normalize duration to base divisions', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+      const measure = score.parts[0].measures[0];
+      const divisions = measure.attributes?.divisions ?? 1;
+
+      const notes = measure.entries.filter((e) => e.type === 'note');
+      const note = notes[0];
+
+      if (note.type === 'note') {
+        const normalizedDur = getNormalizedDuration(note, {
+          baseDivisions: 480,
+          currentDivisions: divisions,
+        });
+
+        // Quarter note with divisions 1, normalized to base 480
+        expect(normalizedDur).toBe(note.duration * 480 / divisions);
+      }
     });
   });
 });
