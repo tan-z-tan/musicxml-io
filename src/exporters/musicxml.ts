@@ -27,6 +27,11 @@ import type {
   Credit,
   SystemLayout,
   PageLayout,
+  StaffDetails,
+  MeasureStyle,
+  HarmonyEntry,
+  FiguredBassEntry,
+  TupletNotation,
 } from '../types';
 
 export interface SerializeOptions {
@@ -410,7 +415,19 @@ function serializeScorePart(part: PartInfo, indent: string): string[] {
       if (inst.sound) {
         lines.push(`${indent}    <instrument-sound>${escapeXml(inst.sound)}</instrument-sound>`);
       }
+      if (inst.solo) {
+        lines.push(`${indent}    <solo/>`);
+      }
+      if (inst.ensemble !== undefined) {
+        lines.push(`${indent}    <ensemble>${inst.ensemble}</ensemble>`);
+      }
       lines.push(`${indent}  </score-instrument>`);
+    }
+  }
+
+  if (part.groups) {
+    for (const group of part.groups) {
+      lines.push(`${indent}  <group>${escapeXml(group)}</group>`);
     }
   }
 
@@ -605,6 +622,18 @@ function serializeAttributes(attrs: MeasureAttributes, indent: string): string[]
     lines.push(...serializeTranspose(attrs.transpose, indent + '  '));
   }
 
+  if (attrs.staffDetails) {
+    for (const sd of attrs.staffDetails) {
+      lines.push(...serializeStaffDetails(sd, indent + '  '));
+    }
+  }
+
+  if (attrs.measureStyle) {
+    for (const ms of attrs.measureStyle) {
+      lines.push(...serializeMeasureStyle(ms, indent + '  '));
+    }
+  }
+
   lines.push(`${indent}</attributes>`);
 
   return lines;
@@ -614,10 +643,27 @@ function serializeKey(key: KeySignature, indent: string): string[] {
   const lines: string[] = [];
 
   lines.push(`${indent}<key>`);
-  lines.push(`${indent}  <fifths>${key.fifths}</fifths>`);
-  if (key.mode) {
-    lines.push(`${indent}  <mode>${key.mode}</mode>`);
+
+  // Non-traditional key signatures
+  if (key.keySteps && key.keyAlters && key.keySteps.length > 0) {
+    for (let i = 0; i < key.keySteps.length; i++) {
+      lines.push(`${indent}  <key-step>${key.keySteps[i]}</key-step>`);
+      if (i < key.keyAlters.length) {
+        lines.push(`${indent}  <key-alter>${key.keyAlters[i]}</key-alter>`);
+      }
+    }
+    if (key.keyOctaves) {
+      for (const ko of key.keyOctaves) {
+        lines.push(`${indent}  <key-octave number="${ko.number}">${ko.octave}</key-octave>`);
+      }
+    }
+  } else {
+    lines.push(`${indent}  <fifths>${key.fifths}</fifths>`);
+    if (key.mode) {
+      lines.push(`${indent}  <mode>${key.mode}</mode>`);
+    }
   }
+
   lines.push(`${indent}</key>`);
 
   return lines;
@@ -642,6 +688,9 @@ function serializeClef(clef: Clef, indent: string): string[] {
   lines.push(`${indent}<clef${numberAttr}>`);
   lines.push(`${indent}  <sign>${clef.sign}</sign>`);
   lines.push(`${indent}  <line>${clef.line}</line>`);
+  if (clef.clefOctaveChange !== undefined) {
+    lines.push(`${indent}  <clef-octave-change>${clef.clefOctaveChange}</clef-octave-change>`);
+  }
   lines.push(`${indent}</clef>`);
 
   return lines;
@@ -671,6 +720,10 @@ function serializeEntry(entry: MeasureEntry, indent: string): string[] {
       return serializeForward(entry, indent);
     case 'direction':
       return serializeDirection(entry, indent);
+    case 'harmony':
+      return serializeHarmony(entry, indent);
+    case 'figured-bass':
+      return serializeFiguredBass(entry, indent);
     default:
       return [];
   }
@@ -739,7 +792,11 @@ function serializeNote(note: NoteEntry, indent: string): string[] {
   }
 
   // Tie
-  if (note.tie) {
+  if (note.ties && note.ties.length > 0) {
+    for (const tie of note.ties) {
+      lines.push(`${indent}  <tie type="${tie.type}"/>`);
+    }
+  } else if (note.tie) {
     lines.push(`${indent}  <tie type="${note.tie.type}"/>`);
   }
 
@@ -775,6 +832,11 @@ function serializeNote(note: NoteEntry, indent: string): string[] {
     lines.push(`${indent}    <normal-notes>${note.timeModification.normalNotes}</normal-notes>`);
     if (note.timeModification.normalType) {
       lines.push(`${indent}    <normal-type>${note.timeModification.normalType}</normal-type>`);
+    }
+    if (note.timeModification.normalDots) {
+      for (let i = 0; i < note.timeModification.normalDots; i++) {
+        lines.push(`${indent}    <normal-dot/>`);
+      }
     }
     lines.push(`${indent}  </time-modification>`);
   }
@@ -875,6 +937,13 @@ function serializeNotations(notations: Notation[], indent: string): string[] {
       if (notation.number !== undefined) attrs += ` number="${notation.number}"`;
       attrs += ` type="${notation.slurType}"`;
       if (notation.lineType) attrs += ` line-type="${notation.lineType}"`;
+      if (notation.defaultX !== undefined) attrs += ` default-x="${notation.defaultX}"`;
+      if (notation.defaultY !== undefined) attrs += ` default-y="${notation.defaultY}"`;
+      if (notation.bezierX !== undefined) attrs += ` bezier-x="${notation.bezierX}"`;
+      if (notation.bezierY !== undefined) attrs += ` bezier-y="${notation.bezierY}"`;
+      if (notation.bezierX2 !== undefined) attrs += ` bezier-x2="${notation.bezierX2}"`;
+      if (notation.bezierY2 !== undefined) attrs += ` bezier-y2="${notation.bezierY2}"`;
+      if (notation.placement) attrs += ` placement="${notation.placement}"`;
       lines.push(`${indent}  <slur${attrs}/>`);
     } else if (notation.type === 'tuplet') {
       let attrs = ` type="${notation.tupletType}"`;
@@ -882,7 +951,44 @@ function serializeNotations(notations: Notation[], indent: string): string[] {
       if (notation.bracket !== undefined) attrs += ` bracket="${notation.bracket ? 'yes' : 'no'}"`;
       if (notation.showNumber) attrs += ` show-number="${notation.showNumber}"`;
       if (notation.showType) attrs += ` show-type="${notation.showType}"`;
-      lines.push(`${indent}  <tuplet${attrs}/>`);
+
+      const tup = notation as TupletNotation;
+      if (tup.tupletActual || tup.tupletNormal) {
+        lines.push(`${indent}  <tuplet${attrs}>`);
+        if (tup.tupletActual) {
+          lines.push(`${indent}    <tuplet-actual>`);
+          if (tup.tupletActual.tupletNumber !== undefined) {
+            lines.push(`${indent}      <tuplet-number>${tup.tupletActual.tupletNumber}</tuplet-number>`);
+          }
+          if (tup.tupletActual.tupletType) {
+            lines.push(`${indent}      <tuplet-type>${tup.tupletActual.tupletType}</tuplet-type>`);
+          }
+          if (tup.tupletActual.tupletDots) {
+            for (let i = 0; i < tup.tupletActual.tupletDots; i++) {
+              lines.push(`${indent}      <tuplet-dot/>`);
+            }
+          }
+          lines.push(`${indent}    </tuplet-actual>`);
+        }
+        if (tup.tupletNormal) {
+          lines.push(`${indent}    <tuplet-normal>`);
+          if (tup.tupletNormal.tupletNumber !== undefined) {
+            lines.push(`${indent}      <tuplet-number>${tup.tupletNormal.tupletNumber}</tuplet-number>`);
+          }
+          if (tup.tupletNormal.tupletType) {
+            lines.push(`${indent}      <tuplet-type>${tup.tupletNormal.tupletType}</tuplet-type>`);
+          }
+          if (tup.tupletNormal.tupletDots) {
+            for (let i = 0; i < tup.tupletNormal.tupletDots; i++) {
+              lines.push(`${indent}      <tuplet-dot/>`);
+            }
+          }
+          lines.push(`${indent}    </tuplet-normal>`);
+        }
+        lines.push(`${indent}  </tuplet>`);
+      } else {
+        lines.push(`${indent}  <tuplet${attrs}/>`);
+      }
     } else if (notation.type === 'dynamics') {
       const placementAttr = notation.placement ? ` placement="${notation.placement}"` : '';
       lines.push(`${indent}  <dynamics${placementAttr}>`);
@@ -939,7 +1045,24 @@ function serializeNotations(notations: Notation[], indent: string): string[] {
     for (const orn of ornaments) {
       if (orn.type === 'ornament') {
         const placementAttr = orn.placement ? ` placement="${orn.placement}"` : '';
-        lines.push(`${indent}    <${orn.ornament}${placementAttr}/>`);
+        if (orn.ornament === 'wavy-line') {
+          let wlAttrs = '';
+          if (orn.wavyLineType) wlAttrs += ` type="${orn.wavyLineType}"`;
+          if (orn.number !== undefined) wlAttrs += ` number="${orn.number}"`;
+          wlAttrs += placementAttr;
+          lines.push(`${indent}    <wavy-line${wlAttrs}/>`);
+        } else if (orn.ornament === 'tremolo') {
+          let tremAttrs = '';
+          if (orn.tremoloType) tremAttrs += ` type="${orn.tremoloType}"`;
+          tremAttrs += placementAttr;
+          if (orn.tremoloMarks !== undefined) {
+            lines.push(`${indent}    <tremolo${tremAttrs}>${orn.tremoloMarks}</tremolo>`);
+          } else {
+            lines.push(`${indent}    <tremolo${tremAttrs}/>`);
+          }
+        } else {
+          lines.push(`${indent}    <${orn.ornament}${placementAttr}/>`);
+        }
       }
     }
     lines.push(`${indent}  </ornaments>`);
@@ -1020,6 +1143,10 @@ function serializeDirection(direction: DirectionEntry, indent: string): string[]
     lines.push(...serializeDirectionType(dirType, indent + '  '));
   }
 
+  if (direction.offset !== undefined) {
+    lines.push(`${indent}  <offset>${direction.offset}</offset>`);
+  }
+
   if (direction.staff !== undefined) {
     lines.push(`${indent}  <staff>${direction.staff}</staff>`);
   }
@@ -1066,16 +1193,67 @@ function serializeDirectionType(dirType: DirectionType, indent: string): string[
       if (dirType.beatUnitDot) {
         lines.push(`${indent}    <beat-unit-dot/>`);
       }
+      if (dirType.beatUnit2) {
+        lines.push(`${indent}    <beat-unit>${dirType.beatUnit2}</beat-unit>`);
+        if (dirType.beatUnitDot2) {
+          lines.push(`${indent}    <beat-unit-dot/>`);
+        }
+      }
       lines.push(`${indent}    <per-minute>${dirType.perMinute}</per-minute>`);
       lines.push(`${indent}  </metronome>`);
       break;
 
-    case 'words':
-      lines.push(`${indent}  <words>${escapeXml(dirType.text)}</words>`);
+    case 'words': {
+      let wordAttrs = '';
+      if (dirType.defaultX !== undefined) wordAttrs += ` default-x="${dirType.defaultX}"`;
+      if (dirType.defaultY !== undefined) wordAttrs += ` default-y="${dirType.defaultY}"`;
+      if (dirType.fontFamily) wordAttrs += ` font-family="${escapeXml(dirType.fontFamily)}"`;
+      if (dirType.fontSize) wordAttrs += ` font-size="${escapeXml(dirType.fontSize)}"`;
+      if (dirType.fontStyle) wordAttrs += ` font-style="${escapeXml(dirType.fontStyle)}"`;
+      if (dirType.fontWeight) wordAttrs += ` font-weight="${escapeXml(dirType.fontWeight)}"`;
+      lines.push(`${indent}  <words${wordAttrs}>${escapeXml(dirType.text)}</words>`);
+      break;
+    }
+
+    case 'rehearsal': {
+      let rehAttrs = '';
+      if (dirType.enclosure) rehAttrs += ` enclosure="${escapeXml(dirType.enclosure)}"`;
+      lines.push(`${indent}  <rehearsal${rehAttrs}>${escapeXml(dirType.text)}</rehearsal>`);
+      break;
+    }
+
+    case 'bracket': {
+      let bracketAttrs = ` type="${dirType.type}"`;
+      if (dirType.number !== undefined) bracketAttrs += ` number="${dirType.number}"`;
+      if (dirType.lineEnd) bracketAttrs += ` line-end="${dirType.lineEnd}"`;
+      if (dirType.lineType) bracketAttrs += ` line-type="${dirType.lineType}"`;
+      lines.push(`${indent}  <bracket${bracketAttrs}/>`);
+      break;
+    }
+
+    case 'dashes': {
+      let dashAttrs = ` type="${dirType.type}"`;
+      if (dirType.number !== undefined) dashAttrs += ` number="${dirType.number}"`;
+      lines.push(`${indent}  <dashes${dashAttrs}/>`);
+      break;
+    }
+
+    case 'accordion-registration':
+      lines.push(`${indent}  <accordion-registration>`);
+      if (dirType.high) {
+        lines.push(`${indent}    <accordion-high/>`);
+      }
+      if (dirType.middle !== undefined) {
+        lines.push(`${indent}    <accordion-middle>${dirType.middle}</accordion-middle>`);
+      }
+      if (dirType.low) {
+        lines.push(`${indent}    <accordion-low/>`);
+      }
+      lines.push(`${indent}  </accordion-registration>`);
       break;
 
-    case 'rehearsal':
-      lines.push(`${indent}  <rehearsal>${escapeXml(dirType.text)}</rehearsal>`);
+    case 'other-direction':
+      lines.push(`${indent}  <other-direction>${escapeXml(dirType.text)}</other-direction>`);
       break;
 
     case 'segno':
@@ -1132,4 +1310,201 @@ function escapeXml(str: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&apos;');
+}
+
+// ============================================================
+// New Serialize Functions for Extended Support
+// ============================================================
+
+function serializeStaffDetails(sd: StaffDetails, indent: string): string[] {
+  const lines: string[] = [];
+
+  let attrs = '';
+  if (sd.number !== undefined) attrs += ` number="${sd.number}"`;
+  if (sd.showFrets) attrs += ` show-frets="${sd.showFrets}"`;
+  lines.push(`${indent}<staff-details${attrs}>`);
+
+  if (sd.staffType) {
+    lines.push(`${indent}  <staff-type>${sd.staffType}</staff-type>`);
+  }
+
+  if (sd.staffLines !== undefined) {
+    lines.push(`${indent}  <staff-lines>${sd.staffLines}</staff-lines>`);
+  }
+
+  if (sd.staffTuning) {
+    for (const tuning of sd.staffTuning) {
+      const tuningAttr = ` line="${tuning.line}"`;
+      lines.push(`${indent}  <staff-tuning${tuningAttr}>`);
+      lines.push(`${indent}    <tuning-step>${tuning.tuningStep}</tuning-step>`);
+      if (tuning.tuningAlter !== undefined) {
+        lines.push(`${indent}    <tuning-alter>${tuning.tuningAlter}</tuning-alter>`);
+      }
+      lines.push(`${indent}    <tuning-octave>${tuning.tuningOctave}</tuning-octave>`);
+      lines.push(`${indent}  </staff-tuning>`);
+    }
+  }
+
+  if (sd.capo !== undefined) {
+    lines.push(`${indent}  <capo>${sd.capo}</capo>`);
+  }
+
+  if (sd.staffSize !== undefined) {
+    lines.push(`${indent}  <staff-size>${sd.staffSize}</staff-size>`);
+  }
+
+  lines.push(`${indent}</staff-details>`);
+
+  return lines;
+}
+
+function serializeMeasureStyle(ms: MeasureStyle, indent: string): string[] {
+  const lines: string[] = [];
+
+  const attrs = ms.number !== undefined ? ` number="${ms.number}"` : '';
+  lines.push(`${indent}<measure-style${attrs}>`);
+
+  if (ms.multipleRest !== undefined) {
+    lines.push(`${indent}  <multiple-rest>${ms.multipleRest}</multiple-rest>`);
+  }
+
+  if (ms.measureRepeat) {
+    let mrAttrs = ` type="${ms.measureRepeat.type}"`;
+    if (ms.measureRepeat.slashes !== undefined) mrAttrs += ` slashes="${ms.measureRepeat.slashes}"`;
+    lines.push(`${indent}  <measure-repeat${mrAttrs}/>`);
+  }
+
+  if (ms.beatRepeat) {
+    let brAttrs = ` type="${ms.beatRepeat.type}"`;
+    if (ms.beatRepeat.slashes !== undefined) brAttrs += ` slashes="${ms.beatRepeat.slashes}"`;
+    lines.push(`${indent}  <beat-repeat${brAttrs}/>`);
+  }
+
+  if (ms.slash) {
+    let slAttrs = ` type="${ms.slash.type}"`;
+    if (ms.slash.useDots) slAttrs += ' use-dots="yes"';
+    if (ms.slash.useStems) slAttrs += ' use-stems="yes"';
+    lines.push(`${indent}  <slash${slAttrs}/>`);
+  }
+
+  lines.push(`${indent}</measure-style>`);
+
+  return lines;
+}
+
+function serializeHarmony(harmony: HarmonyEntry, indent: string): string[] {
+  const lines: string[] = [];
+
+  let attrs = '';
+  if (harmony.placement) attrs += ` placement="${harmony.placement}"`;
+  lines.push(`${indent}<harmony${attrs}>`);
+
+  // Root
+  lines.push(`${indent}  <root>`);
+  lines.push(`${indent}    <root-step>${harmony.root.rootStep}</root-step>`);
+  if (harmony.root.rootAlter !== undefined) {
+    lines.push(`${indent}    <root-alter>${harmony.root.rootAlter}</root-alter>`);
+  }
+  lines.push(`${indent}  </root>`);
+
+  // Kind
+  let kindAttrs = '';
+  if (harmony.kindText) kindAttrs += ` text="${escapeXml(harmony.kindText)}"`;
+  lines.push(`${indent}  <kind${kindAttrs}>${escapeXml(harmony.kind)}</kind>`);
+
+  // Bass
+  if (harmony.bass) {
+    lines.push(`${indent}  <bass>`);
+    lines.push(`${indent}    <bass-step>${harmony.bass.bassStep}</bass-step>`);
+    if (harmony.bass.bassAlter !== undefined) {
+      lines.push(`${indent}    <bass-alter>${harmony.bass.bassAlter}</bass-alter>`);
+    }
+    lines.push(`${indent}  </bass>`);
+  }
+
+  // Degrees
+  if (harmony.degrees) {
+    for (const deg of harmony.degrees) {
+      lines.push(`${indent}  <degree>`);
+      lines.push(`${indent}    <degree-value>${deg.degreeValue}</degree-value>`);
+      if (deg.degreeAlter !== undefined) {
+        lines.push(`${indent}    <degree-alter>${deg.degreeAlter}</degree-alter>`);
+      }
+      lines.push(`${indent}    <degree-type>${deg.degreeType}</degree-type>`);
+      lines.push(`${indent}  </degree>`);
+    }
+  }
+
+  // Frame
+  if (harmony.frame) {
+    lines.push(`${indent}  <frame>`);
+    if (harmony.frame.frameStrings !== undefined) {
+      lines.push(`${indent}    <frame-strings>${harmony.frame.frameStrings}</frame-strings>`);
+    }
+    if (harmony.frame.frameFrets !== undefined) {
+      lines.push(`${indent}    <frame-frets>${harmony.frame.frameFrets}</frame-frets>`);
+    }
+    if (harmony.frame.frameNotes) {
+      for (const fn of harmony.frame.frameNotes) {
+        lines.push(`${indent}    <frame-note>`);
+        lines.push(`${indent}      <string>${fn.string}</string>`);
+        lines.push(`${indent}      <fret>${fn.fret}</fret>`);
+        if (fn.fingering) {
+          lines.push(`${indent}      <fingering>${escapeXml(fn.fingering)}</fingering>`);
+        }
+        if (fn.barre) {
+          lines.push(`${indent}      <barre type="${fn.barre}"/>`);
+        }
+        lines.push(`${indent}    </frame-note>`);
+      }
+    }
+    lines.push(`${indent}  </frame>`);
+  }
+
+  // Offset
+  if (harmony.offset !== undefined) {
+    lines.push(`${indent}  <offset>${harmony.offset}</offset>`);
+  }
+
+  // Staff
+  if (harmony.staff !== undefined) {
+    lines.push(`${indent}  <staff>${harmony.staff}</staff>`);
+  }
+
+  lines.push(`${indent}</harmony>`);
+
+  return lines;
+}
+
+function serializeFiguredBass(fb: FiguredBassEntry, indent: string): string[] {
+  const lines: string[] = [];
+
+  let attrs = '';
+  if (fb.parentheses) attrs += ' parentheses="yes"';
+  lines.push(`${indent}<figured-bass${attrs}>`);
+
+  for (const fig of fb.figures) {
+    lines.push(`${indent}  <figure>`);
+    if (fig.prefix) {
+      lines.push(`${indent}    <prefix>${escapeXml(fig.prefix)}</prefix>`);
+    }
+    if (fig.figureNumber) {
+      lines.push(`${indent}    <figure-number>${escapeXml(fig.figureNumber)}</figure-number>`);
+    }
+    if (fig.suffix) {
+      lines.push(`${indent}    <suffix>${escapeXml(fig.suffix)}</suffix>`);
+    }
+    if (fig.extend) {
+      lines.push(`${indent}    <extend/>`);
+    }
+    lines.push(`${indent}  </figure>`);
+  }
+
+  if (fb.duration !== undefined) {
+    lines.push(`${indent}  <duration>${fb.duration}</duration>`);
+  }
+
+  lines.push(`${indent}</figured-bass>`);
+
+  return lines;
 }
