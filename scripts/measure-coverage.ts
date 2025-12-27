@@ -115,18 +115,21 @@ function compareXml(original: unknown[], roundtrip: unknown[]): CompareStats {
   return stats;
 }
 
+// Attributes that define an element's identity for matching
+const IDENTITY_ATTRIBUTES = new Set(['id', 'number', 'type', 'location', 'placement', 'part-id']);
+
 // Create a signature for an element to match regardless of order
 function getElementSignature(node: unknown, tagName: string): string {
   const attrs = getAttributes(node);
-  const text = getTextContent(node);
-  const attrStr = Object.entries(attrs)
-    .filter(([k]) => !IGNORED_ATTRIBUTES.has(k))
+  // Using only tagName and identity attributes for matching.
+  // This allows nodes to match even if display attributes (like width, default-x) differ.
+  const identityAttrStr = Object.entries(attrs)
+    .filter(([k]) => IDENTITY_ATTRIBUTES.has(k))
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([k, v]) => `${k}=${v}`)
     .join(',');
-  // Normalize text (ignore whitespace-only)
-  const normalizedText = text?.trim() || '';
-  return `${tagName}|${attrStr}|${normalizedText}`;
+
+  return `${tagName}|${identityAttrStr}`;
 }
 
 function compareNodes(
