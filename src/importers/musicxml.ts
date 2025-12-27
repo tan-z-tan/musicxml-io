@@ -38,8 +38,6 @@ import type {
   NoteheadInfo,
   NoteheadValue,
   Support,
-  MiscellaneousField,
-  Creator,
   Encoding,
   SystemLayout,
   PageLayout,
@@ -129,16 +127,6 @@ function getElementTextAsInt(elements: OrderedElement[], tagName: string, defaul
   const text = getElementText(elements, tagName);
   if (text === undefined || text === '') return defaultValue;
   const value = parseInt(text, 10);
-  return isNaN(value) ? defaultValue : value;
-}
-
-/**
- * Get element text as float with optional default value
- */
-function getElementTextAsFloat(elements: OrderedElement[], tagName: string, defaultValue?: number): number | undefined {
-  const text = getElementText(elements, tagName);
-  if (text === undefined || text === '') return defaultValue;
-  const value = parseFloat(text);
   return isNaN(value) ? defaultValue : value;
 }
 
@@ -1330,8 +1318,8 @@ function parseNotations(elements: OrderedElement[], notationsIndex: number = 0):
       // Collect accidental-marks for the ornaments group
       const accidentalMarks = collectElements(ornContent, 'accidental-mark', (c, a) => {
         const value = extractText(c);
-        return isValidAccidental(value) ? { value, placement: a['placement'] as 'above' | 'below' | undefined } : null;
-      }).filter((m): m is { value: string; placement?: 'above' | 'below' } => m !== null);
+        return isValidAccidental(value) ? { value: value as Accidental, placement: a['placement'] as 'above' | 'below' | undefined } : null;
+      }).filter((m) => m !== null);
 
       for (const orn of ornContent) {
         // Simple ornaments

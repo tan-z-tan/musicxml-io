@@ -2,9 +2,6 @@ import type {
   Score,
   Part,
   Measure,
-  MeasureEntry,
-  NoteEntry,
-  MeasureAttributes,
   TimeSignature,
   Pitch,
 } from '../types';
@@ -566,7 +563,7 @@ export function validateBeams(
  */
 export function validateSlurs(
   measure: Measure,
-  location: ValidationLocation
+  _location: ValidationLocation
 ): ValidationError[] {
   const errors: ValidationError[] = [];
 
@@ -1344,7 +1341,7 @@ export function validateTiesAcrossMeasures(part: Part): ValidationError[] {
   }
 
   // Report unclosed ties at end of part
-  for (const [pitchKey, { measureIndex, entryIndex, pitch }] of openTies.entries()) {
+  for (const [, { measureIndex, entryIndex, pitch }] of openTies.entries()) {
     const measure = part.measures[measureIndex];
     errors.push({
       code: 'TIE_START_WITHOUT_STOP',

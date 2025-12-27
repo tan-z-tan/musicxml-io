@@ -371,8 +371,6 @@ function expandRepeats(measures: Measure[]): number[] {
   let i = 0;
 
   while (i < measures.length) {
-    const measure = measures[i];
-
     // Find if there's a backward repeat ahead
     let backwardRepeatIndex = -1;
     let repeatTimes = 2;
