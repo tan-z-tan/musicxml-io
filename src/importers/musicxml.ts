@@ -107,16 +107,39 @@ function getElementContent(elements: OrderedElement[], tagName: string): Ordered
   return findElement(elements, tagName);
 }
 
+/** Extract text content from an element array */
+function extractText(elements: OrderedElement[]): string {
+  for (const item of elements) {
+    if (item['#text'] !== undefined) return String(item['#text']);
+  }
+  return '';
+}
+
 function getElementText(elements: OrderedElement[], tagName: string): string | undefined {
   const content = findElement(elements, tagName);
   if (!content) return undefined;
-  for (const item of content) {
-    if (item['#text'] !== undefined) {
-      return String(item['#text']);
-    }
-  }
-  // Element exists but has no text content - return empty string
-  return '';
+  const text = extractText(content);
+  return text || '';
+}
+
+/**
+ * Get element text as integer with optional default value
+ */
+function getElementTextAsInt(elements: OrderedElement[], tagName: string, defaultValue?: number): number | undefined {
+  const text = getElementText(elements, tagName);
+  if (text === undefined || text === '') return defaultValue;
+  const value = parseInt(text, 10);
+  return isNaN(value) ? defaultValue : value;
+}
+
+/**
+ * Get element text as float with optional default value
+ */
+function getElementTextAsFloat(elements: OrderedElement[], tagName: string, defaultValue?: number): number | undefined {
+  const text = getElementText(elements, tagName);
+  if (text === undefined || text === '') return defaultValue;
+  const value = parseFloat(text);
+  return isNaN(value) ? defaultValue : value;
 }
 
 function getAttributes(element: OrderedElement): Record<string, string> {
@@ -130,6 +153,46 @@ function getAttributes(element: OrderedElement): Record<string, string> {
     }
   }
   return attrs;
+}
+
+/**
+ * Collect and parse all elements of a given tag name
+ */
+function collectElements<T>(
+  elements: OrderedElement[],
+  tagName: string,
+  parser: (content: OrderedElement[], attrs: Record<string, string>) => T
+): T[] {
+  const results: T[] = [];
+  for (const el of elements) {
+    if (el[tagName]) {
+      results.push(parser(el[tagName] as OrderedElement[], getAttributes(el)));
+    }
+  }
+  return results;
+}
+
+/**
+ * Find first element with tag and parse it
+ */
+function parseFirstElement<T>(
+  elements: OrderedElement[],
+  tagName: string,
+  parser: (content: OrderedElement[], attrs: Record<string, string>) => T
+): T | undefined {
+  for (const el of elements) {
+    if (el[tagName]) {
+      return parser(el[tagName] as OrderedElement[], getAttributes(el));
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Check if an element with the given tag name exists
+ */
+function hasElement(elements: OrderedElement[], tagName: string): boolean {
+  return elements.some(el => el[tagName] !== undefined);
 }
 
 function parseScorePartwise(elements: OrderedElement[]): Score {
@@ -167,36 +230,12 @@ function parseMetadata(elements: OrderedElement[]): ScoreMetadata {
   const identification = getElementContent(elements, 'identification');
   if (identification) {
     // Creators
-    const creators: Creator[] = [];
-    for (const el of identification) {
-      if (el['creator']) {
-        const attrs = getAttributes(el);
-        const content = el['creator'] as OrderedElement[];
-        let text = '';
-        for (const item of content) {
-          if (item['#text'] !== undefined) {
-            text = String(item['#text']);
-            break;
-          }
-        }
-        creators.push({ type: attrs['type'], value: text });
-      }
-    }
+    const creators = collectElements(identification, 'creator', (content, attrs) =>
+      ({ type: attrs['type'], value: extractText(content) }));
     if (creators.length > 0) metadata.creators = creators;
 
     // Rights
-    const rights: string[] = [];
-    for (const el of identification) {
-      if (el['rights']) {
-        const content = el['rights'] as OrderedElement[];
-        for (const item of content) {
-          if (item['#text'] !== undefined) {
-            rights.push(String(item['#text']));
-            break;
-          }
-        }
-      }
-    }
+    const rights = collectElements(identification, 'rights', (content) => extractText(content));
     if (rights.length > 0) metadata.rights = rights;
 
     // Source
@@ -211,21 +250,8 @@ function parseMetadata(elements: OrderedElement[]): ScoreMetadata {
     // Miscellaneous
     const miscellaneous = getElementContent(identification, 'miscellaneous');
     if (miscellaneous) {
-      const fields: MiscellaneousField[] = [];
-      for (const el of miscellaneous) {
-        if (el['miscellaneous-field']) {
-          const attrs = getAttributes(el);
-          const content = el['miscellaneous-field'] as OrderedElement[];
-          let text = '';
-          for (const item of content) {
-            if (item['#text'] !== undefined) {
-              text = String(item['#text']);
-              break;
-            }
-          }
-          fields.push({ name: attrs['name'] || '', value: text });
-        }
-      }
+      const fields = collectElements(miscellaneous, 'miscellaneous-field', (content, attrs) =>
+        ({ name: attrs['name'] || '', value: extractText(content) }));
       if (fields.length > 0) metadata.miscellaneous = fields;
     }
   }
@@ -236,55 +262,17 @@ function parseMetadata(elements: OrderedElement[]): ScoreMetadata {
 function parseEncoding(elements: OrderedElement[]): Encoding {
   const encoding: Encoding = {};
 
-  const software: string[] = [];
-  const encoder: string[] = [];
-  const supports: Support[] = [];
+  const software = collectElements(elements, 'software', (c) => extractText(c));
+  const encoder = collectElements(elements, 'encoder', (c) => extractText(c));
+  const supports = collectElements(elements, 'supports', (_, attrs) => {
+    const support: Support = { element: attrs['element'] || '', type: attrs['type'] === 'no' ? 'no' : 'yes' };
+    if (attrs['attribute']) support.attribute = attrs['attribute'];
+    if (attrs['value']) support.value = attrs['value'];
+    return support;
+  });
 
-  for (const el of elements) {
-    if (el['software']) {
-      const content = el['software'] as OrderedElement[];
-      for (const item of content) {
-        if (item['#text'] !== undefined) {
-          software.push(String(item['#text']));
-          break;
-        }
-      }
-    } else if (el['encoding-date']) {
-      const content = el['encoding-date'] as OrderedElement[];
-      for (const item of content) {
-        if (item['#text'] !== undefined) {
-          encoding.encodingDate = String(item['#text']);
-          break;
-        }
-      }
-    } else if (el['encoder']) {
-      const content = el['encoder'] as OrderedElement[];
-      for (const item of content) {
-        if (item['#text'] !== undefined) {
-          encoder.push(String(item['#text']));
-          break;
-        }
-      }
-    } else if (el['encoding-description']) {
-      const content = el['encoding-description'] as OrderedElement[];
-      for (const item of content) {
-        if (item['#text'] !== undefined) {
-          encoding.encodingDescription = String(item['#text']);
-          break;
-        }
-      }
-    } else if (el['supports']) {
-      const attrs = getAttributes(el);
-      const support: Support = {
-        element: attrs['element'] || '',
-        type: attrs['type'] === 'no' ? 'no' : 'yes',
-      };
-      if (attrs['attribute']) support.attribute = attrs['attribute'];
-      if (attrs['value']) support.value = attrs['value'];
-      supports.push(support);
-    }
-  }
-
+  encoding.encodingDate = getElementText(elements, 'encoding-date');
+  encoding.encodingDescription = getElementText(elements, 'encoding-description');
   if (software.length > 0) encoding.software = software;
   if (encoder.length > 0) encoding.encoder = encoder;
   if (supports.length > 0) encoding.supports = supports;
@@ -400,65 +388,20 @@ function parseDefaults(elements: OrderedElement[]): Defaults | undefined {
   if (lyricLanguages.length > 0) defaults.lyricLanguage = lyricLanguages;
 
   // Appearance (store as raw key-value pairs)
-  for (const el of defaultsContent) {
-    if (el['appearance']) {
-      const appContent = el['appearance'] as OrderedElement[];
-      const appearance: Record<string, unknown> = {};
-      for (const appEl of appContent) {
-        // Handle common appearance children
-        if (appEl['line-width']) {
-          if (!appearance['line-widths']) appearance['line-widths'] = [];
-          const attrs = getAttributes(appEl);
-          const content = appEl['line-width'] as OrderedElement[];
-          let value = '';
-          for (const item of content) {
-            if (item['#text'] !== undefined) {
-              value = String(item['#text']);
-              break;
-            }
-          }
-          (appearance['line-widths'] as Array<{ type: string; value: number }>).push({
-            type: attrs['type'] || '',
-            value: parseFloat(value) || 0,
-          });
-        } else if (appEl['note-size']) {
-          if (!appearance['note-sizes']) appearance['note-sizes'] = [];
-          const attrs = getAttributes(appEl);
-          const content = appEl['note-size'] as OrderedElement[];
-          let value = '';
-          for (const item of content) {
-            if (item['#text'] !== undefined) {
-              value = String(item['#text']);
-              break;
-            }
-          }
-          (appearance['note-sizes'] as Array<{ type: string; value: number }>).push({
-            type: attrs['type'] || '',
-            value: parseFloat(value) || 0,
-          });
-        } else if (appEl['distance']) {
-          if (!appearance['distances']) appearance['distances'] = [];
-          const attrs = getAttributes(appEl);
-          const content = appEl['distance'] as OrderedElement[];
-          let value = '';
-          for (const item of content) {
-            if (item['#text'] !== undefined) {
-              value = String(item['#text']);
-              break;
-            }
-          }
-          (appearance['distances'] as Array<{ type: string; value: number }>).push({
-            type: attrs['type'] || '',
-            value: parseFloat(value) || 0,
-          });
-        }
-      }
-      if (Object.keys(appearance).length > 0) {
-        defaults.appearance = appearance;
-      }
-      break;
-    }
-  }
+  const appResult = parseFirstElement(defaultsContent, 'appearance', (appContent) => {
+    const appearance: Record<string, unknown> = {};
+    const lineWidths = collectElements(appContent, 'line-width', (c, a) =>
+      ({ type: a['type'] || '', value: parseFloat(extractText(c)) || 0 }));
+    const noteSizes = collectElements(appContent, 'note-size', (c, a) =>
+      ({ type: a['type'] || '', value: parseFloat(extractText(c)) || 0 }));
+    const distances = collectElements(appContent, 'distance', (c, a) =>
+      ({ type: a['type'] || '', value: parseFloat(extractText(c)) || 0 }));
+    if (lineWidths.length > 0) appearance['line-widths'] = lineWidths;
+    if (noteSizes.length > 0) appearance['note-sizes'] = noteSizes;
+    if (distances.length > 0) appearance['distances'] = distances;
+    return Object.keys(appearance).length > 0 ? appearance : undefined;
+  });
+  if (appResult) defaults.appearance = appResult;
 
   return defaults;
 }
@@ -519,86 +462,42 @@ function parseSystemLayout(elements: OrderedElement[]): SystemLayout {
 }
 
 function parseCredits(elements: OrderedElement[]): Credit[] | undefined {
-  const credits: Credit[] = [];
-
-  for (const el of elements) {
-    if (el['credit']) {
-      const attrs = getAttributes(el);
-      const content = el['credit'] as OrderedElement[];
-      const credit: Credit = {};
-
-      if (attrs['page']) credit.page = parseInt(attrs['page'], 10);
-
-      const types: string[] = [];
-      const words: CreditWords[] = [];
-
-      for (const child of content) {
-        if (child['credit-type']) {
-          const typeContent = child['credit-type'] as OrderedElement[];
-          for (const item of typeContent) {
-            if (item['#text'] !== undefined) {
-              types.push(String(item['#text']));
-              break;
-            }
-          }
-        } else if (child['credit-words']) {
-          const wordAttrs = getAttributes(child);
-          const wordContent = child['credit-words'] as OrderedElement[];
-          let text = '';
-          for (const item of wordContent) {
-            if (item['#text'] !== undefined) {
-              text = String(item['#text']);
-              break;
-            }
-          }
-          const cw: CreditWords = { text };
-          if (wordAttrs['default-x']) cw.defaultX = parseFloat(wordAttrs['default-x']);
-          if (wordAttrs['default-y']) cw.defaultY = parseFloat(wordAttrs['default-y']);
-          if (wordAttrs['font-size']) cw.fontSize = wordAttrs['font-size'];
-          if (wordAttrs['font-weight']) cw.fontWeight = wordAttrs['font-weight'];
-          if (wordAttrs['font-style']) cw.fontStyle = wordAttrs['font-style'];
-          if (wordAttrs['justify']) cw.justify = wordAttrs['justify'];
-          if (wordAttrs['halign']) cw.halign = wordAttrs['halign'];
-          if (wordAttrs['valign']) cw.valign = wordAttrs['valign'];
-          if (wordAttrs['letter-spacing']) cw.letterSpacing = wordAttrs['letter-spacing'];
-          if (wordAttrs['xml:lang']) cw.xmlLang = wordAttrs['xml:lang'];
-          if (wordAttrs['xml:space']) cw.xmlSpace = wordAttrs['xml:space'];
-          words.push(cw);
-        }
-      }
-
-      if (types.length > 0) credit.creditType = types;
-      if (words.length > 0) credit.creditWords = words;
-      credits.push(credit);
-    }
-  }
-
+  const credits = collectElements(elements, 'credit', (content, attrs) => {
+    const credit: Credit = {};
+    if (attrs['page']) credit.page = parseInt(attrs['page'], 10);
+    const types = collectElements(content, 'credit-type', (c) => extractText(c));
+    const words = collectElements(content, 'credit-words', (c, a) => {
+      const cw: CreditWords = { text: extractText(c) };
+      if (a['default-x']) cw.defaultX = parseFloat(a['default-x']);
+      if (a['default-y']) cw.defaultY = parseFloat(a['default-y']);
+      if (a['font-size']) cw.fontSize = a['font-size'];
+      if (a['font-weight']) cw.fontWeight = a['font-weight'];
+      if (a['font-style']) cw.fontStyle = a['font-style'];
+      if (a['justify']) cw.justify = a['justify'];
+      if (a['halign']) cw.halign = a['halign'];
+      if (a['valign']) cw.valign = a['valign'];
+      if (a['letter-spacing']) cw.letterSpacing = a['letter-spacing'];
+      if (a['xml:lang']) cw.xmlLang = a['xml:lang'];
+      if (a['xml:space']) cw.xmlSpace = a['xml:space'];
+      return cw;
+    });
+    if (types.length > 0) credit.creditType = types;
+    if (words.length > 0) credit.creditWords = words;
+    return credit;
+  });
   return credits.length > 0 ? credits : undefined;
 }
 
 function parseDisplayTexts(elements: OrderedElement[]): DisplayText[] {
-  const displayTexts: DisplayText[] = [];
-  for (const el of elements) {
-    if (el['display-text']) {
-      const dtAttrs = getAttributes(el);
-      const dtContent = el['display-text'] as OrderedElement[];
-      let text = '';
-      for (const item of dtContent) {
-        if (item['#text'] !== undefined) {
-          text = String(item['#text']);
-          break;
-        }
-      }
-      const dt: DisplayText = { text };
-      if (dtAttrs['font-family']) dt.fontFamily = dtAttrs['font-family'];
-      if (dtAttrs['font-size']) dt.fontSize = dtAttrs['font-size'];
-      if (dtAttrs['font-style']) dt.fontStyle = dtAttrs['font-style'];
-      if (dtAttrs['font-weight']) dt.fontWeight = dtAttrs['font-weight'];
-      if (dtAttrs['xml:space']) dt.xmlSpace = dtAttrs['xml:space'];
-      displayTexts.push(dt);
-    }
-  }
-  return displayTexts;
+  return collectElements(elements, 'display-text', (c, a) => {
+    const dt: DisplayText = { text: extractText(c) };
+    if (a['font-family']) dt.fontFamily = a['font-family'];
+    if (a['font-size']) dt.fontSize = a['font-size'];
+    if (a['font-style']) dt.fontStyle = a['font-style'];
+    if (a['font-weight']) dt.fontWeight = a['font-weight'];
+    if (a['xml:space']) dt.xmlSpace = a['xml:space'];
+    return dt;
+  });
 }
 
 function parsePartList(elements: OrderedElement[]): PartListEntry[] {
@@ -669,37 +568,16 @@ function parsePartList(elements: OrderedElement[]): PartListEntry[] {
           const sound = getElementText(instContent, 'instrument-sound');
           if (sound) inst.sound = sound;
           // Check for solo/ensemble
-          for (const ic of instContent) {
-            if (ic['solo'] !== undefined) {
-              inst.solo = true;
-            } else if (ic['ensemble']) {
-              const ensContent = ic['ensemble'] as OrderedElement[];
-              for (const item of ensContent) {
-                if (item['#text'] !== undefined) {
-                  inst.ensemble = parseInt(String(item['#text']), 10);
-                  break;
-                }
-              }
-            }
-          }
+          if (hasElement(instContent, 'solo')) inst.solo = true;
+          const ens = getElementText(instContent, 'ensemble');
+          if (ens) inst.ensemble = parseInt(ens, 10);
           instruments.push(inst);
         }
       }
       if (instruments.length > 0) partInfo.scoreInstruments = instruments;
 
       // Group elements (after MIDI instruments in score-part)
-      const groups: string[] = [];
-      for (const child of content) {
-        if (child['group']) {
-          const groupContent = child['group'] as OrderedElement[];
-          for (const item of groupContent) {
-            if (item['#text'] !== undefined) {
-              groups.push(String(item['#text']));
-              break;
-            }
-          }
-        }
-      }
+      const groups = collectElements(content, 'group', (c) => extractText(c));
       if (groups.length > 0) partInfo.groups = groups;
 
       // MIDI instruments
@@ -745,46 +623,22 @@ function parsePartList(elements: OrderedElement[]): PartListEntry[] {
 
       const name = getElementText(content, 'group-name');
       if (name) group.groupName = name;
-
-      // group-name-display
-      for (const child of content) {
-        if (child['group-name-display']) {
-          group.groupNameDisplay = parseDisplayTexts(child['group-name-display'] as OrderedElement[]);
-          break;
-        }
-      }
+      const gnd = parseFirstElement(content, 'group-name-display', (c) => parseDisplayTexts(c));
+      if (gnd) group.groupNameDisplay = gnd;
 
       const abbr = getElementText(content, 'group-abbreviation');
       if (abbr) group.groupAbbreviation = abbr;
-
-      // group-abbreviation-display
-      for (const child of content) {
-        if (child['group-abbreviation-display']) {
-          group.groupAbbreviationDisplay = parseDisplayTexts(child['group-abbreviation-display'] as OrderedElement[]);
-          break;
-        }
-      }
+      const gad = parseFirstElement(content, 'group-abbreviation-display', (c) => parseDisplayTexts(c));
+      if (gad) group.groupAbbreviationDisplay = gad;
 
       // Parse group-symbol with default-x attribute
-      for (const child of content) {
-        if (child['group-symbol']) {
-          const symbolContent = child['group-symbol'] as OrderedElement[];
-          for (const item of symbolContent) {
-            if (item['#text'] !== undefined) {
-              const symbol = String(item['#text']);
-              if (['none', 'brace', 'line', 'bracket', 'square'].includes(symbol)) {
-                group.groupSymbol = symbol as PartGroup['groupSymbol'];
-              }
-              break;
-            }
-          }
-          const symbolAttrs = getAttributes(child);
-          if (symbolAttrs['default-x']) {
-            group.groupSymbolDefaultX = parseFloat(symbolAttrs['default-x']);
-          }
-          break;
+      parseFirstElement(content, 'group-symbol', (c, a) => {
+        const symbol = extractText(c);
+        if (['none', 'brace', 'line', 'bracket', 'square'].includes(symbol)) {
+          group.groupSymbol = symbol as PartGroup['groupSymbol'];
         }
-      }
+        if (a['default-x']) group.groupSymbolDefaultX = parseFloat(a['default-x']);
+      });
 
       const barline = getElementText(content, 'group-barline');
       if (barline && ['yes', 'no', 'Mensurstrich'].includes(barline)) {
@@ -914,41 +768,18 @@ function parsePrint(elements: OrderedElement[], attrs: Record<string, string>): 
   }
 
   // measure-numbering with attributes
-  for (const el of elements) {
-    if (el['measure-numbering']) {
-      const mnAttrs = getAttributes(el);
-      const mnContent = el['measure-numbering'] as OrderedElement[];
-      let value = '';
-      for (const item of mnContent) {
-        if (item['#text'] !== undefined) {
-          value = String(item['#text']);
-          break;
-        }
-      }
-      const measureNumbering: MeasureNumbering = { value };
-      if (mnAttrs['system'] && ['only-top', 'only-bottom', 'all-system-parts', 'none'].includes(mnAttrs['system'])) {
-        measureNumbering.system = mnAttrs['system'] as MeasureNumbering['system'];
-      }
-      print.measureNumbering = measureNumbering;
-      break;
+  parseFirstElement(elements, 'measure-numbering', (c, a) => {
+    const measureNumbering: MeasureNumbering = { value: extractText(c) };
+    if (a['system'] && ['only-top', 'only-bottom', 'all-system-parts', 'none'].includes(a['system'])) {
+      measureNumbering.system = a['system'] as MeasureNumbering['system'];
     }
-  }
+    print.measureNumbering = measureNumbering;
+  });
 
-  // part-name-display
-  for (const el of elements) {
-    if (el['part-name-display']) {
-      print.partNameDisplay = parseDisplayTexts(el['part-name-display'] as OrderedElement[]);
-      break;
-    }
-  }
-
-  // part-abbreviation-display
-  for (const el of elements) {
-    if (el['part-abbreviation-display']) {
-      print.partAbbreviationDisplay = parseDisplayTexts(el['part-abbreviation-display'] as OrderedElement[]);
-      break;
-    }
-  }
+  const pnd = parseFirstElement(elements, 'part-name-display', (c) => parseDisplayTexts(c));
+  if (pnd) print.partNameDisplay = pnd;
+  const pad = parseFirstElement(elements, 'part-abbreviation-display', (c) => parseDisplayTexts(c));
+  if (pad) print.partAbbreviationDisplay = pad;
 
   return print;
 }
@@ -956,11 +787,11 @@ function parsePrint(elements: OrderedElement[], attrs: Record<string, string>): 
 function parseAttributes(elements: OrderedElement[]): MeasureAttributes {
   const attrs: MeasureAttributes = {};
 
-  const divisions = getElementText(elements, 'divisions');
-  if (divisions) attrs.divisions = parseInt(divisions, 10);
+  const divisions = getElementTextAsInt(elements, 'divisions');
+  if (divisions !== undefined) attrs.divisions = divisions;
 
-  const staves = getElementText(elements, 'staves');
-  if (staves) attrs.staves = parseInt(staves, 10);
+  const staves = getElementTextAsInt(elements, 'staves');
+  if (staves !== undefined) attrs.staves = staves;
 
   // Time signature
   const time = getElementContent(elements, 'time');
@@ -1042,28 +873,8 @@ function parseTimeSignature(elements: OrderedElement[], parentElements: OrderedE
   }
 
   // Collect all beats and beat-type values for compound time signatures
-  const beatsList: number[] = [];
-  const beatTypeList: number[] = [];
-
-  for (const el of elements) {
-    if (el['beats']) {
-      const content = el['beats'] as OrderedElement[];
-      for (const item of content) {
-        if (item['#text'] !== undefined) {
-          beatsList.push(parseInt(String(item['#text']), 10));
-          break;
-        }
-      }
-    } else if (el['beat-type']) {
-      const content = el['beat-type'] as OrderedElement[];
-      for (const item of content) {
-        if (item['#text'] !== undefined) {
-          beatTypeList.push(parseInt(String(item['#text']), 10));
-          break;
-        }
-      }
-    }
-  }
+  const beatsList = collectElements(elements, 'beats', (c) => parseInt(extractText(c), 10));
+  const beatTypeList = collectElements(elements, 'beat-type', (c) => parseInt(extractText(c), 10));
 
   const time: TimeSignature = {
     beats: beatsList.length > 0 ? String(beatsList[0]) : '4',
@@ -1110,61 +921,19 @@ function parseKeySignature(elements: OrderedElement[]): KeySignature {
   }
 
   // Parse cancel element with its location attribute
-  for (const el of elements) {
-    if (el['cancel'] !== undefined) {
-      const cancelContent = el['cancel'] as OrderedElement[];
-      const cancelAttrs = getAttributes(el);
-      for (const item of cancelContent) {
-        if (item['#text'] !== undefined) {
-          key.cancel = parseInt(String(item['#text']), 10);
-          break;
-        }
-      }
-      if (cancelAttrs['location']) {
-        key.cancelLocation = cancelAttrs['location'] as 'left' | 'right' | 'before-barline';
-      }
-      break;
-    }
-  }
+  parseFirstElement(elements, 'cancel', (c, a) => {
+    key.cancel = parseInt(extractText(c), 10);
+    if (a['location']) key.cancelLocation = a['location'] as 'left' | 'right' | 'before-barline';
+  });
 
   // Non-traditional key signatures
-  const keySteps: string[] = [];
-  const keyAlters: number[] = [];
-  const keyOctaves: KeyOctave[] = [];
-
-  for (const el of elements) {
-    if (el['key-step']) {
-      const content = el['key-step'] as OrderedElement[];
-      for (const item of content) {
-        if (item['#text'] !== undefined) {
-          keySteps.push(String(item['#text']));
-          break;
-        }
-      }
-    } else if (el['key-alter']) {
-      const content = el['key-alter'] as OrderedElement[];
-      for (const item of content) {
-        if (item['#text'] !== undefined) {
-          keyAlters.push(parseFloat(String(item['#text'])));
-          break;
-        }
-      }
-    } else if (el['key-octave']) {
-      const koAttrs = getAttributes(el);
-      const content = el['key-octave'] as OrderedElement[];
-      for (const item of content) {
-        if (item['#text'] !== undefined) {
-          const ko: KeyOctave = {
-            number: parseInt(koAttrs['number'] || '1', 10),
-            octave: parseInt(String(item['#text']), 10),
-          };
-          if (koAttrs['cancel'] === 'yes') ko.cancel = true;
-          keyOctaves.push(ko);
-          break;
-        }
-      }
-    }
-  }
+  const keySteps = collectElements(elements, 'key-step', (c) => extractText(c));
+  const keyAlters = collectElements(elements, 'key-alter', (c) => parseFloat(extractText(c)));
+  const keyOctaves = collectElements(elements, 'key-octave', (c, a) => {
+    const ko: KeyOctave = { number: parseInt(a['number'] || '1', 10), octave: parseInt(extractText(c), 10) };
+    if (a['cancel'] === 'yes') ko.cancel = true;
+    return ko;
+  });
 
   if (keySteps.length > 0) key.keySteps = keySteps;
   if (keyAlters.length > 0) key.keyAlters = keyAlters;
@@ -1183,26 +952,23 @@ function parseClef(elements: OrderedElement[], attrs: Record<string, string>): C
     clef.staff = parseInt(attrs['number'], 10);
   }
 
-  const octaveChange = getElementText(elements, 'clef-octave-change');
-  if (octaveChange) {
-    clef.clefOctaveChange = parseInt(octaveChange, 10);
+  const octaveChange = getElementTextAsInt(elements, 'clef-octave-change');
+  if (octaveChange !== undefined) {
+    clef.clefOctaveChange = octaveChange;
   }
 
   return clef;
 }
 
 function parseTranspose(elements: OrderedElement[]): Transpose {
-  const diatonic = getElementText(elements, 'diatonic');
-  const chromatic = getElementText(elements, 'chromatic');
-  const octaveChange = getElementText(elements, 'octave-change');
-
   const transpose: Transpose = {
-    diatonic: parseInt(diatonic || '0', 10),
-    chromatic: parseInt(chromatic || '0', 10),
+    diatonic: getElementTextAsInt(elements, 'diatonic', 0)!,
+    chromatic: getElementTextAsInt(elements, 'chromatic', 0)!,
   };
 
-  if (octaveChange) {
-    transpose.octaveChange = parseInt(octaveChange, 10);
+  const octaveChange = getElementTextAsInt(elements, 'octave-change');
+  if (octaveChange !== undefined) {
+    transpose.octaveChange = octaveChange;
   }
 
   return transpose;
@@ -1211,8 +977,8 @@ function parseTranspose(elements: OrderedElement[]): Transpose {
 function parseNote(elements: OrderedElement[], attrs: Record<string, string>): NoteEntry {
   const note: NoteEntry = {
     type: 'note',
-    duration: parseInt(getElementText(elements, 'duration') || '0', 10),
-    voice: parseInt(getElementText(elements, 'voice') || '1', 10),
+    duration: getElementTextAsInt(elements, 'duration', 0)!,
+    voice: getElementTextAsInt(elements, 'voice', 1)!,
   };
 
   // Layout attributes
@@ -1226,23 +992,13 @@ function parseNote(elements: OrderedElement[], attrs: Record<string, string>): N
   if (attrs['print-spacing'] === 'no') note.printSpacing = false;
 
   // Cue note
-  for (const el of elements) {
-    if (el['cue'] !== undefined) {
-      note.cue = true;
-      break;
-    }
+  if (hasElement(elements, 'cue')) {
+    note.cue = true;
   }
 
   // Instrument reference
-  for (const el of elements) {
-    if (el['instrument'] !== undefined) {
-      const instAttrs = getAttributes(el);
-      if (instAttrs['id']) {
-        note.instrument = instAttrs['id'];
-      }
-      break;
-    }
-  }
+  const instData = parseFirstElement(elements, 'instrument', (_, attrs) => attrs['id']);
+  if (instData) note.instrument = instData;
 
   // Pitch or rest
   const pitch = getElementContent(elements, 'pitch');
@@ -1271,161 +1027,86 @@ function parseNote(elements: OrderedElement[], attrs: Record<string, string>): N
   }
 
   // Unpitched (percussion)
-  for (const el of elements) {
-    if (el['unpitched'] !== undefined) {
-      const unpitchedContent = el['unpitched'] as OrderedElement[];
-      note.unpitched = {};
-
-      const displayStep = getElementText(unpitchedContent, 'display-step');
-      if (displayStep) note.unpitched.displayStep = displayStep;
-
-      const displayOctave = getElementText(unpitchedContent, 'display-octave');
-      if (displayOctave) note.unpitched.displayOctave = parseInt(displayOctave, 10);
-
-      break;
-    }
-  }
+  parseFirstElement(elements, 'unpitched', (c) => {
+    note.unpitched = {};
+    const displayStep = getElementText(c, 'display-step');
+    if (displayStep) note.unpitched.displayStep = displayStep;
+    const displayOctave = getElementText(c, 'display-octave');
+    if (displayOctave) note.unpitched.displayOctave = parseInt(displayOctave, 10);
+  });
 
   // Staff
-  const staff = getElementText(elements, 'staff');
-  if (staff) note.staff = parseInt(staff, 10);
+  const staff = getElementTextAsInt(elements, 'staff');
+  if (staff !== undefined) note.staff = staff;
 
   // Chord - check if chord element exists
-  for (const el of elements) {
-    if (el['chord'] !== undefined) {
-      note.chord = true;
-      break;
-    }
+  if (hasElement(elements, 'chord')) {
+    note.chord = true;
   }
 
   // Note type
-  for (const el of elements) {
-    if (el['type']) {
-      const typeContent = el['type'] as OrderedElement[];
-      for (const item of typeContent) {
-        if (item['#text'] !== undefined) {
-          const noteType = String(item['#text']);
-          if (isValidNoteType(noteType)) {
-            note.noteType = noteType;
-          }
-          break;
-        }
-      }
-      const typeAttrs = getAttributes(el);
-      if (typeAttrs['size']) {
-        note.noteTypeSize = typeAttrs['size'];
-      }
-      break;
-    }
-  }
+  parseFirstElement(elements, 'type', (c, a) => {
+    const noteType = extractText(c);
+    if (isValidNoteType(noteType)) note.noteType = noteType;
+    if (a['size']) note.noteTypeSize = a['size'];
+  });
 
   // Dots
-  let dotCount = 0;
-  for (const el of elements) {
-    if (el['dot'] !== undefined) {
-      dotCount++;
-    }
-  }
+  const dotCount = elements.filter(el => el['dot'] !== undefined).length;
   if (dotCount > 0) note.dots = dotCount;
 
   // Accidental
-  for (const el of elements) {
-    if (el['accidental']) {
-      const accAttrs = getAttributes(el);
-      const accContent = el['accidental'] as OrderedElement[];
-      let accValue = '';
-      for (const item of accContent) {
-        if (item['#text'] !== undefined) {
-          accValue = String(item['#text']);
-          break;
-        }
-      }
-      if (isValidAccidental(accValue)) {
-        const accInfo: AccidentalInfo = { value: accValue };
-        if (accAttrs['cautionary'] === 'yes') accInfo.cautionary = true;
-        if (accAttrs['editorial'] === 'yes') accInfo.editorial = true;
-        if (accAttrs['parentheses'] === 'yes') accInfo.parentheses = true;
-        if (accAttrs['bracket'] === 'yes') accInfo.bracket = true;
-        if (accAttrs['relative-x']) accInfo.relativeX = parseFloat(accAttrs['relative-x']);
-        if (accAttrs['relative-y']) accInfo.relativeY = parseFloat(accAttrs['relative-y']);
-        if (accAttrs['color']) accInfo.color = accAttrs['color'];
-        if (accAttrs['size']) accInfo.size = accAttrs['size'];
-        if (accAttrs['font-size']) accInfo.fontSize = accAttrs['font-size'];
-        note.accidental = accInfo;
-      }
-      break;
+  parseFirstElement(elements, 'accidental', (c, a) => {
+    const accValue = extractText(c);
+    if (isValidAccidental(accValue)) {
+      const accInfo: AccidentalInfo = { value: accValue };
+      if (a['cautionary'] === 'yes') accInfo.cautionary = true;
+      if (a['editorial'] === 'yes') accInfo.editorial = true;
+      if (a['parentheses'] === 'yes') accInfo.parentheses = true;
+      if (a['bracket'] === 'yes') accInfo.bracket = true;
+      if (a['relative-x']) accInfo.relativeX = parseFloat(a['relative-x']);
+      if (a['relative-y']) accInfo.relativeY = parseFloat(a['relative-y']);
+      if (a['color']) accInfo.color = a['color'];
+      if (a['size']) accInfo.size = a['size'];
+      if (a['font-size']) accInfo.fontSize = a['font-size'];
+      note.accidental = accInfo;
     }
-  }
+  });
 
   // Stem
-  for (const el of elements) {
-    if (el['stem']) {
-      const stemAttrs = getAttributes(el);
-      const stemContent = el['stem'] as OrderedElement[];
-      let stemValue = '';
-      for (const item of stemContent) {
-        if (item['#text'] !== undefined) {
-          stemValue = String(item['#text']);
-          break;
-        }
-      }
-      if (stemValue === 'up' || stemValue === 'down' || stemValue === 'none' || stemValue === 'double') {
-        note.stem = { value: stemValue };
-        if (stemAttrs['default-x']) note.stem.defaultX = parseFloat(stemAttrs['default-x']);
-        if (stemAttrs['default-y']) note.stem.defaultY = parseFloat(stemAttrs['default-y']);
-      }
-      break;
+  parseFirstElement(elements, 'stem', (c, a) => {
+    const stemValue = extractText(c);
+    if (stemValue === 'up' || stemValue === 'down' || stemValue === 'none' || stemValue === 'double') {
+      note.stem = { value: stemValue };
+      if (a['default-x']) note.stem.defaultX = parseFloat(a['default-x']);
+      if (a['default-y']) note.stem.defaultY = parseFloat(a['default-y']);
     }
-  }
+  });
 
   // Notehead
-  for (const el of elements) {
-    if (el['notehead']) {
-      const nhAttrs = getAttributes(el);
-      const nhContent = el['notehead'] as OrderedElement[];
-      let nhValue = '';
-      for (const item of nhContent) {
-        if (item['#text'] !== undefined) {
-          nhValue = String(item['#text']);
-          break;
-        }
-      }
-      if (isValidNotehead(nhValue)) {
-        const nhInfo: NoteheadInfo = { value: nhValue };
-        if (nhAttrs['filled'] === 'yes') nhInfo.filled = true;
-        else if (nhAttrs['filled'] === 'no') nhInfo.filled = false;
-        if (nhAttrs['parentheses'] === 'yes') nhInfo.parentheses = true;
-        note.notehead = nhInfo;
-      }
-      break;
+  parseFirstElement(elements, 'notehead', (c, a) => {
+    const nhValue = extractText(c);
+    if (isValidNotehead(nhValue)) {
+      const nhInfo: NoteheadInfo = { value: nhValue };
+      if (a['filled'] === 'yes') nhInfo.filled = true;
+      else if (a['filled'] === 'no') nhInfo.filled = false;
+      if (a['parentheses'] === 'yes') nhInfo.parentheses = true;
+      note.notehead = nhInfo;
     }
-  }
+  });
 
   // Tie (collect all tie elements)
-  const tieElements: { type: 'start' | 'stop' | 'continue' }[] = [];
-  for (const el of elements) {
-    if (el['tie']) {
-      const tieAttrs = getAttributes(el);
-      const tieType = tieAttrs['type'];
-      if (tieType === 'start' || tieType === 'stop' || tieType === 'continue') {
-        tieElements.push({ type: tieType });
-      }
-    }
-  }
+  const tieElements = collectElements(elements, 'tie', (_, a) => {
+    const t = a['type'];
+    return (t === 'start' || t === 'stop' || t === 'continue') ? { type: t } : null;
+  }).filter((t): t is { type: 'start' | 'stop' | 'continue' } => t !== null);
   if (tieElements.length > 0) {
     note.tie = tieElements[0];
-    if (tieElements.length > 1) {
-      note.ties = tieElements;
-    }
+    if (tieElements.length > 1) note.ties = tieElements;
   }
 
   // Beam
-  const beams: BeamInfo[] = [];
-  for (const el of elements) {
-    if (el['beam']) {
-      beams.push(parseBeam(el['beam'] as OrderedElement[], getAttributes(el)));
-    }
-  }
+  const beams = collectElements(elements, 'beam', (c, a) => parseBeam(c, a));
   if (beams.length > 0) note.beam = beams;
 
   // Notations - collect ALL notations elements, not just the first
@@ -1513,23 +1194,12 @@ function parsePitch(elements: OrderedElement[]): Pitch {
 }
 
 function parseBeam(elements: OrderedElement[], attrs: Record<string, string>): BeamInfo {
-  const beam: BeamInfo = {
+  const text = extractText(elements);
+  const validTypes = ['begin', 'continue', 'end', 'forward hook', 'backward hook'];
+  return {
     number: parseInt(attrs['number'] || '1', 10),
-    type: 'begin',
+    type: validTypes.includes(text) ? text as BeamInfo['type'] : 'begin',
   };
-
-  for (const el of elements) {
-    if (el['#text'] !== undefined) {
-      const text = String(el['#text']);
-      if (text === 'begin' || text === 'continue' || text === 'end' ||
-          text === 'forward hook' || text === 'backward hook') {
-        beam.type = text;
-      }
-      break;
-    }
-  }
-
-  return beam;
 }
 
 function parseNotations(elements: OrderedElement[], notationsIndex: number = 0): Notation[] {
@@ -1658,22 +1328,10 @@ function parseNotations(elements: OrderedElement[], notationsIndex: number = 0):
       ];
 
       // Collect accidental-marks for the ornaments group
-      const accidentalMarks: { value: string; placement?: 'above' | 'below' }[] = [];
-      for (const orn of ornContent) {
-        if (orn['accidental-mark'] !== undefined) {
-          const amAttrs = getAttributes(orn);
-          const amContent = orn['accidental-mark'] as OrderedElement[];
-          for (const item of amContent) {
-            if (item['#text'] !== undefined && isValidAccidental(String(item['#text']))) {
-              accidentalMarks.push({
-                value: String(item['#text']),
-                placement: amAttrs['placement'] as 'above' | 'below' | undefined,
-              });
-              break;
-            }
-          }
-        }
-      }
+      const accidentalMarks = collectElements(ornContent, 'accidental-mark', (c, a) => {
+        const value = extractText(c);
+        return isValidAccidental(value) ? { value, placement: a['placement'] as 'above' | 'below' | undefined } : null;
+      }).filter((m): m is { value: string; placement?: 'above' | 'below' } => m !== null);
 
       for (const orn of ornContent) {
         // Simple ornaments
@@ -1716,28 +1374,17 @@ function parseNotations(elements: OrderedElement[], notationsIndex: number = 0):
         // Tremolo
         if (orn['tremolo'] !== undefined) {
           const tremAttrs = getAttributes(orn);
-          const tremContent = orn['tremolo'] as OrderedElement[];
-          let marks: number | undefined;
-          for (const item of tremContent) {
-            if (item['#text'] !== undefined) {
-              marks = parseInt(String(item['#text']), 10);
-              break;
-            }
-          }
+          const marks = extractText(orn['tremolo'] as OrderedElement[]);
           const tremNotation: OrnamentNotation = {
             type: 'ornament',
             ornament: 'tremolo',
-            tremoloMarks: marks,
+            tremoloMarks: marks ? parseInt(marks, 10) : undefined,
             tremoloType: tremAttrs['type'] as 'start' | 'stop' | 'single' | 'unmeasured' | undefined,
             placement: tremAttrs['placement'] as 'above' | 'below' | undefined,
             notationsIndex,
           };
-          if (tremAttrs['default-x']) {
-            tremNotation.defaultX = parseFloat(tremAttrs['default-x']);
-          }
-          if (tremAttrs['default-y']) {
-            tremNotation.defaultY = parseFloat(tremAttrs['default-y']);
-          }
+          if (tremAttrs['default-x']) tremNotation.defaultX = parseFloat(tremAttrs['default-x']);
+          if (tremAttrs['default-y']) tremNotation.defaultY = parseFloat(tremAttrs['default-y']);
           notations.push(tremNotation);
         }
       }
@@ -1766,19 +1413,10 @@ function parseNotations(elements: OrderedElement[], notationsIndex: number = 0):
           };
           const bendAlter = getElementText(bendContent, 'bend-alter');
           if (bendAlter) techNotation.bendAlter = parseFloat(bendAlter);
-          for (const bc of bendContent) {
-            if (bc['pre-bend'] !== undefined) techNotation.preBend = true;
-            if (bc['release'] !== undefined) techNotation.release = true;
-            if (bc['with-bar']) {
-              const wbContent = bc['with-bar'] as OrderedElement[];
-              for (const item of wbContent) {
-                if (item['#text'] !== undefined) {
-                  techNotation.withBar = parseFloat(String(item['#text']));
-                  break;
-                }
-              }
-            }
-          }
+          if (hasElement(bendContent, 'pre-bend')) techNotation.preBend = true;
+          if (hasElement(bendContent, 'release')) techNotation.release = true;
+          const withBar = getElementText(bendContent, 'with-bar');
+          if (withBar) techNotation.withBar = parseFloat(withBar);
           notations.push(techNotation);
         }
         // Handle other technical elements
@@ -1791,45 +1429,28 @@ function parseNotations(elements: OrderedElement[], notationsIndex: number = 0):
               placement: techAttrs['placement'] as 'above' | 'below' | undefined,
               notationsIndex,
             };
+            const techElContent = tech[techType] as OrderedElement[];
             // Get text content for elements that have it
             if (technicalWithText.includes(techType)) {
-              const techElContent = tech[techType] as OrderedElement[];
-              for (const item of techElContent) {
-                if (item['#text'] !== undefined) {
-                  notation.text = String(item['#text']);
-                  break;
-                }
-              }
+              const text = extractText(techElContent);
+              if (text) notation.text = text;
             }
             // Get string/fret for those elements
             if (techType === 'string') {
-              const techElContent = tech[techType] as OrderedElement[];
-              for (const item of techElContent) {
-                if (item['#text'] !== undefined) {
-                  notation.string = parseInt(String(item['#text']), 10);
-                  break;
-                }
-              }
+              const text = extractText(techElContent);
+              if (text) notation.string = parseInt(text, 10);
             }
             if (techType === 'fret') {
-              const techElContent = tech[techType] as OrderedElement[];
-              for (const item of techElContent) {
-                if (item['#text'] !== undefined) {
-                  notation.fret = parseInt(String(item['#text']), 10);
-                  break;
-                }
-              }
+              const text = extractText(techElContent);
+              if (text) notation.fret = parseInt(text, 10);
             }
             // Handle harmonic children
             if (techType === 'harmonic') {
-              const harmContent = tech[techType] as OrderedElement[];
-              for (const hc of harmContent) {
-                if (hc['natural'] !== undefined) notation.harmonicNatural = true;
-                if (hc['artificial'] !== undefined) notation.harmonicArtificial = true;
-                if (hc['base-pitch'] !== undefined) notation.basePitch = true;
-                if (hc['touching-pitch'] !== undefined) notation.touchingPitch = true;
-                if (hc['sounding-pitch'] !== undefined) notation.soundingPitch = true;
-              }
+              if (hasElement(techElContent, 'natural')) notation.harmonicNatural = true;
+              if (hasElement(techElContent, 'artificial')) notation.harmonicArtificial = true;
+              if (hasElement(techElContent, 'base-pitch')) notation.basePitch = true;
+              if (hasElement(techElContent, 'touching-pitch')) notation.touchingPitch = true;
+              if (hasElement(techElContent, 'sounding-pitch')) notation.soundingPitch = true;
             }
             // Handle hammer-on/pull-off type attribute
             if (techType === 'hammer-on' || techType === 'pull-off') {
@@ -1870,20 +1491,11 @@ function parseNotations(elements: OrderedElement[], notationsIndex: number = 0):
       let otherDynamics: string | undefined;
       for (const dyn of dynContent) {
         for (const dv of allDynamics) {
-          if (dyn[dv] !== undefined) {
-            dynamicsValues.push(dv);
-          }
+          if (dyn[dv] !== undefined) dynamicsValues.push(dv);
         }
         // Handle other-dynamics
-        if (dyn['other-dynamics']) {
-          const odContent = dyn['other-dynamics'] as OrderedElement[];
-          for (const item of odContent) {
-            if (item['#text'] !== undefined) {
-              otherDynamics = String(item['#text']);
-              break;
-            }
-          }
-        }
+        const od = parseFirstElement([dyn], 'other-dynamics', (c) => extractText(c));
+        if (od) otherDynamics = od;
       }
       if (dynamicsValues.length > 0 || otherDynamics) {
         const dynAttrs = getAttributes(el);
@@ -1897,28 +1509,17 @@ function parseNotations(elements: OrderedElement[], notationsIndex: number = 0):
         notations.push(dynNotation);
       }
     } else if (el['fermata'] !== undefined) {
-      const fermataContent = el['fermata'] as OrderedElement[];
-      const fermataAttrs = getAttributes(el);
-      let shape: string | undefined;
-      for (const item of fermataContent) {
-        if (item['#text'] !== undefined) {
-          shape = String(item['#text']);
-          break;
-        }
-      }
+      const a = getAttributes(el);
+      const shape = extractText(el['fermata'] as OrderedElement[]);
       const fermataNotation: Notation = {
         type: 'fermata',
-        shape: shape as any,
-        fermataType: fermataAttrs['type'] as 'upright' | 'inverted' | undefined,
-        placement: fermataAttrs['placement'] as 'above' | 'below' | undefined,
+        shape: shape as any || undefined,
+        fermataType: a['type'] as 'upright' | 'inverted' | undefined,
+        placement: a['placement'] as 'above' | 'below' | undefined,
         notationsIndex,
       };
-      if (fermataAttrs['default-x']) {
-        (fermataNotation as any).defaultX = parseFloat(fermataAttrs['default-x']);
-      }
-      if (fermataAttrs['default-y']) {
-        (fermataNotation as any).defaultY = parseFloat(fermataAttrs['default-y']);
-      }
+      if (a['default-x']) (fermataNotation as any).defaultX = parseFloat(a['default-x']);
+      if (a['default-y']) (fermataNotation as any).defaultY = parseFloat(a['default-y']);
       notations.push(fermataNotation);
     } else if (el['arpeggiate'] !== undefined) {
       const arpAttrs = getAttributes(el);
@@ -2104,22 +1705,11 @@ function parseDirection(elements: OrderedElement[], attrs: Record<string, string
   if (voice) direction.voice = parseInt(voice, 10);
 
   // Parse offset with sound attribute
-  for (const el of elements) {
-    if (el['offset']) {
-      const offsetContent = el['offset'] as OrderedElement[];
-      for (const item of offsetContent) {
-        if (item['#text'] !== undefined) {
-          direction.offset = parseInt(String(item['#text']), 10);
-          break;
-        }
-      }
-      const offsetAttrs = getAttributes(el);
-      if (offsetAttrs['sound'] === 'yes') {
-        direction.offsetSound = true;
-      }
-      break;
-    }
-  }
+  parseFirstElement(elements, 'offset', (c, a) => {
+    const text = extractText(c);
+    if (text) direction.offset = parseInt(text, 10);
+    if (a['sound'] === 'yes') direction.offsetSound = true;
+  });
 
   // Direction types
   for (const el of elements) {
@@ -2253,42 +1843,38 @@ function parseDirectionType(elements: OrderedElement[]): DirectionType | null {
 
     // Words
     if (el['words']) {
-      const wordAttrs = getAttributes(el);
-      const wordsContent = el['words'] as OrderedElement[];
-      for (const w of wordsContent) {
-        if (w['#text'] !== undefined) {
-          const result: DirectionType = { kind: 'words', text: String(w['#text']) };
-          if (wordAttrs['default-x']) result.defaultX = parseFloat(wordAttrs['default-x']);
-          if (wordAttrs['default-y']) result.defaultY = parseFloat(wordAttrs['default-y']);
-          if (wordAttrs['relative-x']) result.relativeX = parseFloat(wordAttrs['relative-x']);
-          if (wordAttrs['font-family']) result.fontFamily = wordAttrs['font-family'];
-          if (wordAttrs['font-size']) result.fontSize = wordAttrs['font-size'];
-          if (wordAttrs['font-style']) result.fontStyle = wordAttrs['font-style'];
-          if (wordAttrs['font-weight']) result.fontWeight = wordAttrs['font-weight'];
-          if (wordAttrs['xml:lang']) result.xmlLang = wordAttrs['xml:lang'];
-          if (wordAttrs['justify']) result.justify = wordAttrs['justify'];
-          if (wordAttrs['color']) result.color = wordAttrs['color'];
-          if (wordAttrs['xml:space']) result.xmlSpace = wordAttrs['xml:space'];
-          if (wordAttrs['halign']) result.halign = wordAttrs['halign'];
-          return result;
-        }
+      const a = getAttributes(el);
+      const text = extractText(el['words'] as OrderedElement[]);
+      if (text) {
+        const result: DirectionType = { kind: 'words', text };
+        if (a['default-x']) result.defaultX = parseFloat(a['default-x']);
+        if (a['default-y']) result.defaultY = parseFloat(a['default-y']);
+        if (a['relative-x']) result.relativeX = parseFloat(a['relative-x']);
+        if (a['font-family']) result.fontFamily = a['font-family'];
+        if (a['font-size']) result.fontSize = a['font-size'];
+        if (a['font-style']) result.fontStyle = a['font-style'];
+        if (a['font-weight']) result.fontWeight = a['font-weight'];
+        if (a['xml:lang']) result.xmlLang = a['xml:lang'];
+        if (a['justify']) result.justify = a['justify'];
+        if (a['color']) result.color = a['color'];
+        if (a['xml:space']) result.xmlSpace = a['xml:space'];
+        if (a['halign']) result.halign = a['halign'];
+        return result;
       }
     }
 
     // Rehearsal
     if (el['rehearsal']) {
-      const rehAttrs = getAttributes(el);
-      const rehContent = el['rehearsal'] as OrderedElement[];
-      for (const r of rehContent) {
-        if (r['#text'] !== undefined) {
-          const result: DirectionType = { kind: 'rehearsal', text: String(r['#text']) };
-          if (rehAttrs['enclosure']) result.enclosure = rehAttrs['enclosure'];
-          if (rehAttrs['default-x']) result.defaultX = parseFloat(rehAttrs['default-x']);
-          if (rehAttrs['default-y']) result.defaultY = parseFloat(rehAttrs['default-y']);
-          if (rehAttrs['font-size']) result.fontSize = rehAttrs['font-size'];
-          if (rehAttrs['font-weight']) result.fontWeight = rehAttrs['font-weight'];
-          return result;
-        }
+      const a = getAttributes(el);
+      const text = extractText(el['rehearsal'] as OrderedElement[]);
+      if (text) {
+        const result: DirectionType = { kind: 'rehearsal', text };
+        if (a['enclosure']) result.enclosure = a['enclosure'];
+        if (a['default-x']) result.defaultX = parseFloat(a['default-x']);
+        if (a['default-y']) result.defaultY = parseFloat(a['default-y']);
+        if (a['font-size']) result.fontSize = a['font-size'];
+        if (a['font-weight']) result.fontWeight = a['font-weight'];
+        return result;
       }
     }
 
@@ -2538,49 +2124,52 @@ function parseBarline(elements: OrderedElement[], attrs: Record<string, string>)
   return barline;
 }
 
-// Helper functions
+// ============================================================
+// Type Validators (using Sets for O(1) lookup)
+// ============================================================
+
+const VALID_NOTE_TYPES = new Set<string>([
+  'maxima', 'long', 'breve', 'whole', 'half', 'quarter',
+  'eighth', '16th', '32nd', '64th', '128th', '256th', '512th', '1024th',
+]);
+
+const VALID_ACCIDENTALS = new Set<string>([
+  'sharp', 'natural', 'flat', 'double-sharp', 'double-flat', 'sharp-sharp', 'flat-flat',
+  'natural-sharp', 'natural-flat', 'quarter-flat', 'quarter-sharp',
+  'three-quarters-flat', 'three-quarters-sharp', 'sharp-down', 'sharp-up',
+  'natural-down', 'natural-up', 'flat-down', 'flat-up', 'double-sharp-down',
+  'double-sharp-up', 'flat-flat-down', 'flat-flat-up', 'arrow-down', 'arrow-up',
+  'triple-sharp', 'triple-flat', 'slash-quarter-sharp', 'slash-sharp',
+  'slash-flat', 'double-slash-flat', 'sharp-1', 'sharp-2', 'sharp-3', 'sharp-5',
+  'flat-1', 'flat-2', 'flat-3', 'flat-4', 'sori', 'koron', 'other',
+]);
+
+const VALID_NOTEHEADS = new Set<string>([
+  'slash', 'triangle', 'diamond', 'square', 'cross', 'x', 'circle-x',
+  'inverted triangle', 'arrow down', 'arrow up', 'circled', 'slashed',
+  'back slashed', 'normal', 'cluster', 'circle dot', 'left triangle',
+  'rectangle', 'none', 'do', 're', 'mi', 'fa', 'fa up', 'so', 'la', 'ti', 'other',
+]);
+
+const VALID_BAR_STYLES = new Set<string>([
+  'regular', 'dotted', 'dashed', 'heavy',
+  'light-light', 'light-heavy', 'heavy-light', 'heavy-heavy', 'none',
+]);
+
 function isValidNoteType(value: string): value is NoteType {
-  const validTypes = [
-    'maxima', 'long', 'breve',
-    'whole', 'half', 'quarter',
-    'eighth', '16th', '32nd', '64th', '128th', '256th', '512th', '1024th',
-  ];
-  return validTypes.includes(value);
+  return VALID_NOTE_TYPES.has(value);
 }
 
 function isValidAccidental(value: string): value is Accidental {
-  const validAccidentals = [
-    'sharp', 'natural', 'flat',
-    'double-sharp', 'double-flat', 'sharp-sharp', 'flat-flat',
-    'natural-sharp', 'natural-flat',
-    'quarter-flat', 'quarter-sharp',
-    'three-quarters-flat', 'three-quarters-sharp',
-    'sharp-down', 'sharp-up', 'natural-down', 'natural-up',
-    'flat-down', 'flat-up', 'double-sharp-down', 'double-sharp-up',
-    'flat-flat-down', 'flat-flat-up', 'arrow-down', 'arrow-up',
-    'triple-sharp', 'triple-flat', 'slash-quarter-sharp', 'slash-sharp',
-    'slash-flat', 'double-slash-flat', 'sharp-1', 'sharp-2', 'sharp-3', 'sharp-5',
-    'flat-1', 'flat-2', 'flat-3', 'flat-4', 'sori', 'koron', 'other',
-  ];
-  return validAccidentals.includes(value);
+  return VALID_ACCIDENTALS.has(value);
 }
 
 function isValidNotehead(value: string): value is NoteheadValue {
-  const validNoteheads = [
-    'slash', 'triangle', 'diamond', 'square', 'cross', 'x', 'circle-x',
-    'inverted triangle', 'arrow down', 'arrow up', 'circled', 'slashed',
-    'back slashed', 'normal', 'cluster', 'circle dot', 'left triangle',
-    'rectangle', 'none', 'do', 're', 'mi', 'fa', 'fa up', 'so', 'la', 'ti', 'other',
-  ];
-  return validNoteheads.includes(value);
+  return VALID_NOTEHEADS.has(value);
 }
 
 function isValidBarStyle(value: string): value is NonNullable<Barline['barStyle']> {
-  const validStyles = [
-    'regular', 'dotted', 'dashed', 'heavy',
-    'light-light', 'light-heavy', 'heavy-light', 'heavy-heavy', 'none',
-  ];
-  return validStyles.includes(value);
+  return VALID_BAR_STYLES.has(value);
 }
 
 // ============================================================

@@ -8,6 +8,7 @@ import type {
   Chord,
   NoteIteratorItem,
 } from '../types';
+import { getAbsolutePositionForNote, createPositionState, updatePositionForEntry } from '../utils';
 
 /**
  * Filter options for voice/staff selection
@@ -92,30 +93,7 @@ export function groupByStaff(measure: Measure): StaffGroup[] {
  * Position is in divisions from the start of the measure
  */
 export function getAbsolutePosition(note: NoteEntry, measure: Measure): number {
-  let position = 0;
-
-  for (const entry of measure.entries) {
-    if (entry === note) {
-      return position;
-    }
-
-    switch (entry.type) {
-      case 'note':
-        // Chord notes don't advance position
-        if (!entry.chord) {
-          position += entry.duration;
-        }
-        break;
-      case 'backup':
-        position -= entry.duration;
-        break;
-      case 'forward':
-        position += entry.duration;
-        break;
-    }
-  }
-
-  return position;
+  return getAbsolutePositionForNote(note, measure);
 }
 
 /**
@@ -123,31 +101,17 @@ export function getAbsolutePosition(note: NoteEntry, measure: Measure): number {
  */
 export function withAbsolutePositions(measure: Measure): NoteWithPosition[] {
   const result: NoteWithPosition[] = [];
-  let position = 0;
-  let lastNonChordPosition = 0;
+  const state = createPositionState();
 
   for (const entry of measure.entries) {
     if (entry.type === 'note') {
-      // Chord notes use the position of the previous non-chord note
-      const notePosition = entry.chord ? lastNonChordPosition : position;
-
+      const notePosition = entry.chord ? state.lastNonChordPosition : state.position;
       result.push({
         ...entry,
         absolutePosition: notePosition,
       });
-
-      // Chord notes don't advance position
-      if (!entry.chord) {
-        lastNonChordPosition = position;
-        position += entry.duration;
-      }
-    } else if (entry.type === 'backup') {
-      position -= entry.duration;
-      lastNonChordPosition = position;
-    } else if (entry.type === 'forward') {
-      position += entry.duration;
-      lastNonChordPosition = position;
     }
+    updatePositionForEntry(state, entry);
   }
 
   return result;
@@ -203,26 +167,19 @@ export function getChords(measure: Measure, filter?: VoiceFilter): Chord[] {
 export function* iterateNotes(score: Score): Generator<NoteIteratorItem> {
   for (const part of score.parts) {
     for (const measure of part.measures) {
-      let position = 0;
+      const state = createPositionState();
 
       for (const entry of measure.entries) {
         if (entry.type === 'note') {
+          const notePosition = entry.chord ? state.lastNonChordPosition : state.position;
           yield {
             part,
             measure,
             note: entry,
-            position,
+            position: notePosition,
           };
-
-          // Chord notes don't advance position
-          if (!entry.chord) {
-            position += entry.duration;
-          }
-        } else if (entry.type === 'backup') {
-          position -= entry.duration;
-        } else if (entry.type === 'forward') {
-          position += entry.duration;
         }
+        updatePositionForEntry(state, entry);
       }
     }
   }

@@ -6,6 +6,7 @@ import type {
   NoteEntry,
   Pitch,
 } from '../types';
+import { pitchToSemitone } from '../utils';
 
 /**
  * Get a specific measure from the score
@@ -117,16 +118,6 @@ export interface FindNotesFilter {
 }
 
 /**
- * Convert pitch to a numeric value for comparison
- */
-function pitchToNumber(pitch: Pitch): number {
-  const stepValues: Record<string, number> = {
-    'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11,
-  };
-  return pitch.octave * 12 + stepValues[pitch.step] + (pitch.alter ?? 0);
-}
-
-/**
  * Find notes matching specific criteria
  */
 export function findNotes(score: Score, filter: FindNotesFilter): NoteEntry[] {
@@ -139,15 +130,15 @@ export function findNotes(score: Score, filter: FindNotesFilter): NoteEntry[] {
 
         // Filter by pitch range
         if (filter.pitchRange && entry.pitch) {
-          const noteValue = pitchToNumber(entry.pitch);
+          const noteValue = pitchToSemitone(entry.pitch);
 
           if (filter.pitchRange.min) {
-            const minValue = pitchToNumber(filter.pitchRange.min);
+            const minValue = pitchToSemitone(filter.pitchRange.min);
             if (noteValue < minValue) continue;
           }
 
           if (filter.pitchRange.max) {
-            const maxValue = pitchToNumber(filter.pitchRange.max);
+            const maxValue = pitchToSemitone(filter.pitchRange.max);
             if (noteValue > maxValue) continue;
           }
         }

@@ -103,6 +103,14 @@ export type { AddNoteOptions } from './operations';
 // File operations
 export { parseFile, serializeToFile, decodeBuffer } from './file';
 
+// Utils (shared pitch and position utilities)
+export {
+  STEPS,
+  STEP_SEMITONES,
+  pitchToSemitone,
+  getMeasureEndPosition,
+} from './utils';
+
 // Validator
 export {
   validate,
