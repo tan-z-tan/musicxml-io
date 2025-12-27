@@ -594,6 +594,7 @@ function parseDisplayTexts(elements: OrderedElement[]): DisplayText[] {
       if (dtAttrs['font-size']) dt.fontSize = dtAttrs['font-size'];
       if (dtAttrs['font-style']) dt.fontStyle = dtAttrs['font-style'];
       if (dtAttrs['font-weight']) dt.fontWeight = dtAttrs['font-weight'];
+      if (dtAttrs['xml:space']) dt.xmlSpace = dtAttrs['xml:space'];
       displayTexts.push(dt);
     }
   }
@@ -764,9 +765,25 @@ function parsePartList(elements: OrderedElement[]): PartListEntry[] {
         }
       }
 
-      const symbol = getElementText(content, 'group-symbol');
-      if (symbol && ['none', 'brace', 'line', 'bracket', 'square'].includes(symbol)) {
-        group.groupSymbol = symbol as PartGroup['groupSymbol'];
+      // Parse group-symbol with default-x attribute
+      for (const child of content) {
+        if (child['group-symbol']) {
+          const symbolContent = child['group-symbol'] as OrderedElement[];
+          for (const item of symbolContent) {
+            if (item['#text'] !== undefined) {
+              const symbol = String(item['#text']);
+              if (['none', 'brace', 'line', 'bracket', 'square'].includes(symbol)) {
+                group.groupSymbol = symbol as PartGroup['groupSymbol'];
+              }
+              break;
+            }
+          }
+          const symbolAttrs = getAttributes(child);
+          if (symbolAttrs['default-x']) {
+            group.groupSymbolDefaultX = parseFloat(symbolAttrs['default-x']);
+          }
+          break;
+        }
       }
 
       const barline = getElementText(content, 'group-barline');
@@ -1604,6 +1621,13 @@ function parseNotations(elements: OrderedElement[], notationsIndex: number = 0):
                 artNotation.strongAccentType = artAttrs['type'];
               }
             }
+            // Handle positioning attributes
+            if (artAttrs['default-x']) {
+              artNotation.defaultX = parseFloat(artAttrs['default-x']);
+            }
+            if (artAttrs['default-y']) {
+              artNotation.defaultY = parseFloat(artAttrs['default-y']);
+            }
             notations.push(artNotation);
           }
         }
@@ -1645,6 +1669,10 @@ function parseNotations(elements: OrderedElement[], notationsIndex: number = 0):
               placement: ornAttrs['placement'] as 'above' | 'below' | undefined,
               notationsIndex,
             };
+            // Handle default-y positioning
+            if (ornAttrs['default-y']) {
+              ornNotation.defaultY = parseFloat(ornAttrs['default-y']);
+            }
             // Attach accidental marks to the first ornament in the group
             if (accidentalMarks.length > 0 && notations.filter(n => n.type === 'ornament').length === 0) {
               ornNotation.accidentalMarks = accidentalMarks as any;
@@ -1655,14 +1683,18 @@ function parseNotations(elements: OrderedElement[], notationsIndex: number = 0):
         // Wavy-line
         if (orn['wavy-line'] !== undefined) {
           const wlAttrs = getAttributes(orn);
-          notations.push({
+          const wlNotation: OrnamentNotation = {
             type: 'ornament',
             ornament: 'wavy-line',
             wavyLineType: wlAttrs['type'] as 'start' | 'stop' | 'continue' | undefined,
             number: wlAttrs['number'] ? parseInt(wlAttrs['number'], 10) : undefined,
             placement: wlAttrs['placement'] as 'above' | 'below' | undefined,
             notationsIndex,
-          });
+          };
+          if (wlAttrs['default-y']) {
+            wlNotation.defaultY = parseFloat(wlAttrs['default-y']);
+          }
+          notations.push(wlNotation);
         }
         // Tremolo
         if (orn['tremolo'] !== undefined) {
@@ -1843,13 +1875,20 @@ function parseNotations(elements: OrderedElement[], notationsIndex: number = 0):
           break;
         }
       }
-      notations.push({
+      const fermataNotation: Notation = {
         type: 'fermata',
         shape: shape as any,
         fermataType: fermataAttrs['type'] as 'upright' | 'inverted' | undefined,
         placement: fermataAttrs['placement'] as 'above' | 'below' | undefined,
         notationsIndex,
-      });
+      };
+      if (fermataAttrs['default-x']) {
+        (fermataNotation as any).defaultX = parseFloat(fermataAttrs['default-x']);
+      }
+      if (fermataAttrs['default-y']) {
+        (fermataNotation as any).defaultY = parseFloat(fermataAttrs['default-y']);
+      }
+      notations.push(fermataNotation);
     } else if (el['arpeggiate'] !== undefined) {
       const arpAttrs = getAttributes(el);
       notations.push({
@@ -2029,8 +2068,23 @@ function parseDirection(elements: OrderedElement[], attrs: Record<string, string
   const voice = getElementText(elements, 'voice');
   if (voice) direction.voice = parseInt(voice, 10);
 
-  const offset = getElementText(elements, 'offset');
-  if (offset) direction.offset = parseInt(offset, 10);
+  // Parse offset with sound attribute
+  for (const el of elements) {
+    if (el['offset']) {
+      const offsetContent = el['offset'] as OrderedElement[];
+      for (const item of offsetContent) {
+        if (item['#text'] !== undefined) {
+          direction.offset = parseInt(String(item['#text']), 10);
+          break;
+        }
+      }
+      const offsetAttrs = getAttributes(el);
+      if (offsetAttrs['sound'] === 'yes') {
+        direction.offsetSound = true;
+      }
+      break;
+    }
+  }
 
   // Direction types
   for (const el of elements) {
@@ -2178,6 +2232,8 @@ function parseDirectionType(elements: OrderedElement[]): DirectionType | null {
           if (wordAttrs['xml:lang']) result.xmlLang = wordAttrs['xml:lang'];
           if (wordAttrs['justify']) result.justify = wordAttrs['justify'];
           if (wordAttrs['color']) result.color = wordAttrs['color'];
+          if (wordAttrs['xml:space']) result.xmlSpace = wordAttrs['xml:space'];
+          if (wordAttrs['halign']) result.halign = wordAttrs['halign'];
           return result;
         }
       }
@@ -2191,6 +2247,10 @@ function parseDirectionType(elements: OrderedElement[]): DirectionType | null {
         if (r['#text'] !== undefined) {
           const result: DirectionType = { kind: 'rehearsal', text: String(r['#text']) };
           if (rehAttrs['enclosure']) result.enclosure = rehAttrs['enclosure'];
+          if (rehAttrs['default-x']) result.defaultX = parseFloat(rehAttrs['default-x']);
+          if (rehAttrs['default-y']) result.defaultY = parseFloat(rehAttrs['default-y']);
+          if (rehAttrs['font-size']) result.fontSize = rehAttrs['font-size'];
+          if (rehAttrs['font-weight']) result.fontWeight = rehAttrs['font-weight'];
           return result;
         }
       }
@@ -2589,6 +2649,7 @@ function parseHarmony(elements: OrderedElement[], attrs: Record<string, string>)
     harmony.printFrame = false;
   }
   if (attrs['default-y']) harmony.defaultY = parseFloat(attrs['default-y']);
+  if (attrs['halign']) harmony.halign = attrs['halign'];
   if (attrs['font-size']) harmony.fontSize = attrs['font-size'];
 
   // Parse root

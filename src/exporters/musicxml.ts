@@ -407,6 +407,7 @@ function serializeDisplayTexts(texts: DisplayText[], indent: string): string[] {
     if (dt.fontSize) attrs += ` font-size="${escapeXml(dt.fontSize)}"`;
     if (dt.fontStyle) attrs += ` font-style="${escapeXml(dt.fontStyle)}"`;
     if (dt.fontWeight) attrs += ` font-weight="${escapeXml(dt.fontWeight)}"`;
+    if (dt.xmlSpace) attrs += ` xml:space="${escapeXml(dt.xmlSpace)}"`;
     lines.push(`${indent}<display-text${attrs}>${escapeXml(dt.text)}</display-text>`);
   }
   return lines;
@@ -531,7 +532,8 @@ function serializePartGroup(group: PartGroup, indent: string): string[] {
   }
 
   if (group.groupSymbol) {
-    lines.push(`${indent}  <group-symbol>${group.groupSymbol}</group-symbol>`);
+    const defaultXAttr = group.groupSymbolDefaultX !== undefined ? ` default-x="${group.groupSymbolDefaultX}"` : '';
+    lines.push(`${indent}  <group-symbol${defaultXAttr}>${group.groupSymbol}</group-symbol>`);
   }
 
   if (group.groupBarline) {
@@ -1180,6 +1182,8 @@ function serializeNotationsGroup(notations: Notation[], indent: string): string[
       let attrs = '';
       if (notation.fermataType) attrs += ` type="${notation.fermataType}"`;
       if (notation.placement) attrs += ` placement="${notation.placement}"`;
+      if (notation.defaultX !== undefined) attrs += ` default-x="${notation.defaultX}"`;
+      if (notation.defaultY !== undefined) attrs += ` default-y="${notation.defaultY}"`;
       if (notation.shape) {
         lines.push(`${indent}  <fermata${attrs}>${notation.shape}</fermata>`);
       } else {
@@ -1219,6 +1223,9 @@ function serializeNotationsGroup(notations: Notation[], indent: string): string[
         if (art.articulation === 'strong-accent' && art.strongAccentType) {
           artAttrs += ` type="${art.strongAccentType}"`;
         }
+        // Handle positioning attributes
+        if (art.defaultX !== undefined) artAttrs += ` default-x="${art.defaultX}"`;
+        if (art.defaultY !== undefined) artAttrs += ` default-y="${art.defaultY}"`;
         lines.push(`${indent}    <${art.articulation}${artAttrs}/>`);
       }
     }
@@ -1238,6 +1245,7 @@ function serializeNotationsGroup(notations: Notation[], indent: string): string[
           if (orn.wavyLineType) wlAttrs += ` type="${orn.wavyLineType}"`;
           if (orn.number !== undefined) wlAttrs += ` number="${orn.number}"`;
           wlAttrs += placementAttr;
+          if (orn.defaultY !== undefined) wlAttrs += ` default-y="${orn.defaultY}"`;
           lines.push(`${indent}    <wavy-line${wlAttrs}/>`);
         } else if (orn.ornament === 'tremolo') {
           let tremAttrs = '';
@@ -1249,7 +1257,9 @@ function serializeNotationsGroup(notations: Notation[], indent: string): string[
             lines.push(`${indent}    <tremolo${tremAttrs}/>`);
           }
         } else {
-          lines.push(`${indent}    <${orn.ornament}${placementAttr}/>`);
+          let ornAttrs = placementAttr;
+          if (orn.defaultY !== undefined) ornAttrs += ` default-y="${orn.defaultY}"`;
+          lines.push(`${indent}    <${orn.ornament}${ornAttrs}/>`);
         }
         // Collect accidental marks
         if (orn.accidentalMarks) {
@@ -1437,7 +1447,8 @@ function serializeDirection(direction: DirectionEntry, indent: string): string[]
   }
 
   if (direction.offset !== undefined) {
-    lines.push(`${indent}  <offset>${direction.offset}</offset>`);
+    const soundAttr = direction.offsetSound ? ' sound="yes"' : '';
+    lines.push(`${indent}  <offset${soundAttr}>${direction.offset}</offset>`);
   }
 
   if (direction.staff !== undefined) {
@@ -1544,6 +1555,8 @@ function serializeDirectionType(dirType: DirectionType, indent: string): string[
       if (dirType.xmlLang) wordAttrs += ` xml:lang="${escapeXml(dirType.xmlLang)}"`;
       if (dirType.justify) wordAttrs += ` justify="${escapeXml(dirType.justify)}"`;
       if (dirType.color) wordAttrs += ` color="${escapeXml(dirType.color)}"`;
+      if (dirType.xmlSpace) wordAttrs += ` xml:space="${escapeXml(dirType.xmlSpace)}"`;
+      if (dirType.halign) wordAttrs += ` halign="${escapeXml(dirType.halign)}"`;
       lines.push(`${indent}  <words${wordAttrs}>${escapeXml(dirType.text)}</words>`);
       break;
     }
@@ -1551,6 +1564,10 @@ function serializeDirectionType(dirType: DirectionType, indent: string): string[
     case 'rehearsal': {
       let rehAttrs = '';
       if (dirType.enclosure) rehAttrs += ` enclosure="${escapeXml(dirType.enclosure)}"`;
+      if (dirType.defaultX !== undefined) rehAttrs += ` default-x="${dirType.defaultX}"`;
+      if (dirType.defaultY !== undefined) rehAttrs += ` default-y="${dirType.defaultY}"`;
+      if (dirType.fontSize) rehAttrs += ` font-size="${escapeXml(dirType.fontSize)}"`;
+      if (dirType.fontWeight) rehAttrs += ` font-weight="${escapeXml(dirType.fontWeight)}"`;
       lines.push(`${indent}  <rehearsal${rehAttrs}>${escapeXml(dirType.text)}</rehearsal>`);
       break;
     }
@@ -1810,6 +1827,7 @@ function serializeHarmony(harmony: HarmonyEntry, indent: string): string[] {
   if (harmony.placement) attrs += ` placement="${harmony.placement}"`;
   if (harmony.printFrame !== undefined) attrs += ` print-frame="${harmony.printFrame ? 'yes' : 'no'}"`;
   if (harmony.defaultY !== undefined) attrs += ` default-y="${harmony.defaultY}"`;
+  if (harmony.halign) attrs += ` halign="${escapeXml(harmony.halign)}"`;
   if (harmony.fontSize) attrs += ` font-size="${escapeXml(harmony.fontSize)}"`;
   lines.push(`${indent}<harmony${attrs}>`);
 

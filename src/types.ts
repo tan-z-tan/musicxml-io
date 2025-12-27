@@ -142,6 +142,7 @@ export interface DisplayText {
   fontSize?: string;
   fontStyle?: string;
   fontWeight?: string;
+  xmlSpace?: string;
 }
 
 export interface ScoreInstrument {
@@ -179,6 +180,7 @@ export interface PartGroup {
   groupAbbreviation?: string;
   groupAbbreviationDisplay?: DisplayText[];
   groupSymbol?: 'none' | 'brace' | 'line' | 'bracket' | 'square';
+  groupSymbolDefaultX?: number;
   groupBarline?: 'yes' | 'no' | 'Mensurstrich';
 }
 
@@ -411,6 +413,7 @@ export interface DirectionEntry {
   staff?: number;
   voice?: number;
   offset?: number;
+  offsetSound?: boolean;
   sound?: DirectionSound;
 }
 
@@ -450,6 +453,7 @@ export interface HarmonyEntry {
   // Positioning attributes
   defaultY?: number;
   fontSize?: string;
+  halign?: string;
 }
 
 export interface HarmonyDegree {
@@ -592,6 +596,9 @@ export interface ArticulationNotation extends BaseNotation {
   articulation: ArticulationType;
   // For strong-accent: up/down
   strongAccentType?: 'up' | 'down';
+  // Positioning
+  defaultX?: number;
+  defaultY?: number;
 }
 
 export type ArticulationType =
@@ -616,6 +623,8 @@ export interface OrnamentNotation extends BaseNotation {
   // For tremolo
   tremoloMarks?: number;
   tremoloType?: 'start' | 'stop' | 'single' | 'unmeasured';
+  // Positioning
+  defaultY?: number;
 }
 
 export type OrnamentType =
@@ -698,6 +707,9 @@ export interface FermataNotation extends BaseNotation {
   type: 'fermata';
   shape?: 'normal' | 'angled' | 'square' | 'double-angled' | 'double-square' | 'double-dot' | 'half-curve' | 'curlew';
   fermataType?: 'upright' | 'inverted';
+  // Positioning
+  defaultX?: number;
+  defaultY?: number;
 }
 
 export interface ArpeggiateNotation extends BaseNotation {
@@ -734,8 +746,8 @@ export type DirectionType =
   | { kind: 'dynamics'; value: DynamicsValue; defaultX?: number; defaultY?: number; relativeX?: number; halign?: string }
   | { kind: 'wedge'; type: 'crescendo' | 'diminuendo' | 'stop'; spread?: number; defaultY?: number }
   | { kind: 'metronome'; beatUnit: NoteType; perMinute?: number | string; beatUnitDot?: boolean; beatUnit2?: NoteType; beatUnitDot2?: boolean; parentheses?: boolean; defaultY?: number; fontFamily?: string; fontSize?: string }
-  | { kind: 'words'; text: string; defaultX?: number; defaultY?: number; relativeX?: number; fontFamily?: string; fontSize?: string; fontStyle?: string; fontWeight?: string; xmlLang?: string; justify?: string; color?: string }
-  | { kind: 'rehearsal'; text: string; enclosure?: string }
+  | { kind: 'words'; text: string; defaultX?: number; defaultY?: number; relativeX?: number; fontFamily?: string; fontSize?: string; fontStyle?: string; fontWeight?: string; xmlLang?: string; justify?: string; color?: string; xmlSpace?: string; halign?: string }
+  | { kind: 'rehearsal'; text: string; enclosure?: string; defaultX?: number; defaultY?: number; fontSize?: string; fontWeight?: string }
   | { kind: 'segno' }
   | { kind: 'coda' }
   | { kind: 'pedal'; type: 'start' | 'stop' | 'change' | 'continue'; line?: boolean; defaultY?: number; relativeX?: number; halign?: string }
