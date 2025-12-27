@@ -1096,9 +1096,24 @@ function parseNote(elements: OrderedElement[], attrs: Record<string, string>): N
   }
 
   // Stem
-  const stem = getElementText(elements, 'stem');
-  if (stem === 'up' || stem === 'down' || stem === 'none' || stem === 'double') {
-    note.stem = stem;
+  for (const el of elements) {
+    if (el['stem']) {
+      const stemAttrs = getAttributes(el);
+      const stemContent = el['stem'] as OrderedElement[];
+      let stemValue = '';
+      for (const item of stemContent) {
+        if (item['#text'] !== undefined) {
+          stemValue = String(item['#text']);
+          break;
+        }
+      }
+      if (stemValue === 'up' || stemValue === 'down' || stemValue === 'none' || stemValue === 'double') {
+        note.stem = { value: stemValue };
+        if (stemAttrs['default-x']) note.stem.defaultX = parseFloat(stemAttrs['default-x']);
+        if (stemAttrs['default-y']) note.stem.defaultY = parseFloat(stemAttrs['default-y']);
+      }
+      break;
+    }
   }
 
   // Notehead

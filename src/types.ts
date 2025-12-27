@@ -301,7 +301,7 @@ export interface NoteEntry {
   noteType?: NoteType;
   dots?: number;
   accidental?: AccidentalInfo;
-  stem?: 'up' | 'down' | 'none' | 'double';
+  stem?: StemInfo;
   notehead?: NoteheadInfo;
   noteheadText?: string;
 
@@ -460,6 +460,12 @@ export interface NoteheadInfo {
   value: NoteheadValue;
   filled?: boolean;
   parentheses?: boolean;
+}
+
+export interface StemInfo {
+  value: 'up' | 'down' | 'none' | 'double';
+  defaultX?: number;
+  defaultY?: number;
 }
 
 export type NoteheadValue =

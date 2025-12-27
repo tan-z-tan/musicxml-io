@@ -852,7 +852,10 @@ function serializeNote(note: NoteEntry, indent: string): string[] {
 
   // Stem
   if (note.stem) {
-    lines.push(`${indent}  <stem>${note.stem}</stem>`);
+    let stemAttrs = '';
+    if (note.stem.defaultX !== undefined) stemAttrs += ` default-x="${note.stem.defaultX}"`;
+    if (note.stem.defaultY !== undefined) stemAttrs += ` default-y="${note.stem.defaultY}"`;
+    lines.push(`${indent}  <stem${stemAttrs}>${note.stem.value}</stem>`);
   }
 
   // Notehead
