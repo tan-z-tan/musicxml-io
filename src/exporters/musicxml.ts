@@ -36,6 +36,7 @@ import type {
   TechnicalNotation,
   DisplayText,
   AttributesEntry,
+  GroupingEntry,
 } from '../types';
 import {
   validate,
@@ -893,6 +894,13 @@ function serializeEntry(entry: MeasureEntry, indent: string): string[] {
       return serializeSound(entry, indent);
     case 'attributes':
       return serializeAttributes((entry as AttributesEntry).attributes, indent);
+    case 'grouping': {
+      const grouping = entry as GroupingEntry;
+      let attrs = ` type="${grouping.groupingType}"`;
+      if (grouping.number) attrs += ` number="${escapeXml(grouping.number)}"`;
+      if (grouping.memberOf) attrs += ` member-of="${escapeXml(grouping.memberOf)}"`;
+      return [`${indent}<grouping${attrs}/>`];
+    }
     default:
       return [];
   }

@@ -325,7 +325,14 @@ export interface Barline {
 // ============================================================
 // MeasureEntry (MusicXML順序を保持するフラット構造)
 // ============================================================
-export type MeasureEntry = NoteEntry | BackupEntry | ForwardEntry | DirectionEntry | HarmonyEntry | FiguredBassEntry | SoundEntry | AttributesEntry;
+export type MeasureEntry = NoteEntry | BackupEntry | ForwardEntry | DirectionEntry | HarmonyEntry | FiguredBassEntry | SoundEntry | AttributesEntry | GroupingEntry;
+
+export interface GroupingEntry {
+  type: 'grouping';
+  groupingType: 'start' | 'stop' | 'single';
+  number?: string;
+  memberOf?: string;
+}
 
 export interface AttributesEntry {
   type: 'attributes';

@@ -64,6 +64,7 @@ import type {
   OrnamentNotation,
   ArticulationNotation,
   DynamicsNotation,
+  GroupingEntry,
 } from '../types';
 
 // Parser with preserveOrder to maintain element order
@@ -738,6 +739,15 @@ function parseMeasure(elements: OrderedElement[], attrs: Record<string, string>)
       measure.entries.push(parseFiguredBass(el['figured-bass'] as OrderedElement[], getAttributes(el)));
     } else if (el['sound']) {
       measure.entries.push(parseSound(el['sound'] as OrderedElement[], getAttributes(el)));
+    } else if (el['grouping'] !== undefined) {
+      const groupingAttrs = getAttributes(el);
+      const grouping: GroupingEntry = {
+        type: 'grouping',
+        groupingType: (groupingAttrs['type'] as 'start' | 'stop' | 'single') || 'start',
+      };
+      if (groupingAttrs['number']) grouping.number = groupingAttrs['number'];
+      if (groupingAttrs['member-of']) grouping.memberOf = groupingAttrs['member-of'];
+      measure.entries.push(grouping);
     }
   }
 
