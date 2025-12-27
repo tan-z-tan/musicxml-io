@@ -1,4 +1,4 @@
-import type { Score, NoteEntry, Pitch, Part } from '../types';
+import type { Score, NoteEntry, Pitch, Part, Measure } from '../types';
 
 /**
  * MIDI export options
@@ -30,13 +30,16 @@ export function exportMidi(score: Score, options: MidiExportOptions = {}): Uint8
   tracks.push(conductorTrack);
 
   // Create a track for each part
+  // Filter partList to only include score-parts (exclude part-groups)
+  const scoreParts = score.partList.filter(entry => entry.type === 'score-part');
+
   for (let partIndex = 0; partIndex < score.parts.length; partIndex++) {
     const part = score.parts[partIndex];
-    const partEntry = score.partList[partIndex];
+    const partEntry = scoreParts[partIndex];
     // Only score-part entries have MIDI instruments
     let channel = partIndex % 16;
     let program = 1;
-    if (partEntry && partEntry.type === 'score-part' && partEntry.midiInstruments?.[0]) {
+    if (partEntry && partEntry.midiInstruments?.[0]) {
       const midiInst = partEntry.midiInstruments[0];
       channel = midiInst.channel ?? channel;
       program = midiInst.program ?? program;
@@ -110,13 +113,17 @@ function createConductorTrack(
     }
   }
 
-  // Scan for tempo changes in directions
+  // Scan for tempo changes in directions (with repeat expansion)
   let currentTick = 0;
   if (score.parts.length > 0) {
     const part = score.parts[0];
     let divisions = 1;
 
-    for (const measure of part.measures) {
+    // Expand repeats for conductor track as well
+    const measureOrder = expandRepeats(part.measures);
+
+    for (const measureIndex of measureOrder) {
+      const measure = part.measures[measureIndex];
       if (measure.attributes?.divisions) {
         divisions = measure.attributes.divisions;
       }
@@ -186,7 +193,13 @@ function createPartTrack(
   let divisions = 1;
   let chromaticTranspose = 0; // Track transposition for transposing instruments
 
-  for (const measure of part.measures) {
+  // Expand repeats to get playback order
+  const measureOrder = expandRepeats(part.measures);
+
+  for (const measureIndex of measureOrder) {
+    const measure = part.measures[measureIndex];
+
+    // Update divisions from the original measure (need to track last seen divisions)
     if (measure.attributes?.divisions) {
       divisions = measure.attributes.divisions;
     }
@@ -197,6 +210,8 @@ function createPartTrack(
 
     const measureStartTick = currentTick;
     let position = 0;
+    let chordBasePosition = 0; // Position for chord notes (same as previous non-chord note)
+    let maxPosition = 0; // Track maximum position for multi-voice measures
 
     for (const entry of measure.entries) {
       if (entry.type === 'note') {
@@ -204,7 +219,9 @@ function createPartTrack(
 
         if (note.pitch && !note.grace) {
           const midiNote = pitchToMidiNote(note.pitch, chromaticTranspose);
-          const startTick = measureStartTick + Math.round((position * ticksPerQuarterNote) / divisions);
+          // Chord notes use the same position as the previous non-chord note
+          const notePosition = note.chord ? chordBasePosition : position;
+          const startTick = measureStartTick + Math.round((notePosition * ticksPerQuarterNote) / divisions);
           const durationTicks = Math.round((note.duration * ticksPerQuarterNote) / divisions);
 
           noteEvents.push({
@@ -224,28 +241,40 @@ function createPartTrack(
 
         // Chord notes share the same position
         if (!note.chord) {
+          chordBasePosition = position; // Save position for subsequent chord notes
           position += note.duration;
+          if (position > maxPosition) {
+            maxPosition = position;
+          }
         }
       } else if (entry.type === 'backup') {
         position -= entry.duration;
       } else if (entry.type === 'forward') {
         position += entry.duration;
+        if (position > maxPosition) {
+          maxPosition = position;
+        }
       }
     }
 
     // Move to the end of the measure
-    // For implicit (pickup/anacrusis) measures, use actual duration instead of full measure
+    // For implicit (pickup) measures, use actual content duration
+    // For regular measures, use time signature-based duration
     if (measure.implicit) {
-      // Use the actual content duration for anacrusis measures
-      currentTick = measureStartTick + Math.round((position * ticksPerQuarterNote) / divisions);
+      // Implicit measures (pickup/anacrusis) should use actual content length
+      currentTick = measureStartTick + Math.round((maxPosition * ticksPerQuarterNote) / divisions);
     } else {
-      // For regular measures, use full measure duration from time signature
       const timeAttrs = findTimeSignature(part, measure.number);
       if (timeAttrs) {
         const measureDuration = (timeAttrs.beats / timeAttrs.beatType) * 4 * divisions;
-        currentTick = measureStartTick + Math.round((measureDuration * ticksPerQuarterNote) / divisions);
+        const calculatedTicks = Math.round((measureDuration * ticksPerQuarterNote) / divisions);
+        const actualTicks = Math.round((maxPosition * ticksPerQuarterNote) / divisions);
+        // Use the smaller of calculated and actual for incomplete measures
+        // (e.g., last measure before repeat that combines with pickup)
+        const ticksToAdd = Math.min(calculatedTicks, actualTicks > 0 ? actualTicks : calculatedTicks);
+        currentTick = measureStartTick + ticksToAdd;
       } else {
-        currentTick = measureStartTick + Math.round((position * ticksPerQuarterNote) / divisions);
+        currentTick = measureStartTick + Math.round((maxPosition * ticksPerQuarterNote) / divisions);
       }
     }
   }
@@ -308,6 +337,86 @@ function findTimeSignature(
   }
 
   return time;
+}
+
+/**
+ * Check if a measure has a forward repeat at the start
+ */
+function hasForwardRepeat(measure: Measure): boolean {
+  if (!measure.barlines) return false;
+  return measure.barlines.some(
+    (b) => b.location === 'left' && b.repeat?.direction === 'forward'
+  );
+}
+
+/**
+ * Check if a measure has a backward repeat at the end
+ */
+function hasBackwardRepeat(measure: Measure): { found: boolean; times: number } {
+  if (!measure.barlines) return { found: false, times: 2 };
+  const barline = measure.barlines.find(
+    (b) => b.location === 'right' && b.repeat?.direction === 'backward'
+  );
+  if (barline?.repeat) {
+    return { found: true, times: barline.repeat.times ?? 2 };
+  }
+  return { found: false, times: 2 };
+}
+
+/**
+ * Expand repeats and return an array of measure indices in playback order
+ */
+function expandRepeats(measures: Measure[]): number[] {
+  const result: number[] = [];
+  let i = 0;
+
+  while (i < measures.length) {
+    const measure = measures[i];
+
+    // Find if there's a backward repeat ahead
+    let backwardRepeatIndex = -1;
+    let repeatTimes = 2;
+
+    for (let j = i; j < measures.length; j++) {
+      const backwardInfo = hasBackwardRepeat(measures[j]);
+      if (backwardInfo.found) {
+        backwardRepeatIndex = j;
+        repeatTimes = backwardInfo.times;
+        break;
+      }
+      // Stop searching if we hit another forward repeat (nested repeats)
+      if (j > i && hasForwardRepeat(measures[j])) {
+        break;
+      }
+    }
+
+    if (backwardRepeatIndex >= 0) {
+      // Find the matching forward repeat (or start of piece)
+      let forwardRepeatIndex = 0;
+      for (let j = i; j <= backwardRepeatIndex; j++) {
+        if (hasForwardRepeat(measures[j])) {
+          forwardRepeatIndex = j;
+          break;
+        }
+      }
+
+      // Play through the repeat section 'times' times
+      for (let rep = 0; rep < repeatTimes; rep++) {
+        for (let j = forwardRepeatIndex; j <= backwardRepeatIndex; j++) {
+          result.push(j);
+        }
+      }
+
+      // Continue after the repeat
+      i = backwardRepeatIndex + 1;
+    } else {
+      // No repeat, just add this measure
+      result.push(i);
+      i++;
+    }
+  }
+
+  return result;
 }
 
 /**
