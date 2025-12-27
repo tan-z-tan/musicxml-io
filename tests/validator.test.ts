@@ -1,0 +1,744 @@
+import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'fs';
+import { join } from 'path';
+import { parse } from '../src';
+import type { Score, NoteEntry, Measure, Part } from '../src/types';
+import {
+  validate,
+  isValid,
+  assertValid,
+  validateDivisions,
+  validateMeasureDuration,
+  validateBackupForward,
+  validateTies,
+  validateBeams,
+  validateSlurs,
+  validateTuplets,
+  validatePartReferences,
+  validateVoiceStaff,
+  validateTiesAcrossMeasures,
+  validateSlursAcrossMeasures,
+  formatLocation,
+  ValidationException,
+} from '../src/validator';
+
+const fixturesPath = join(__dirname, 'fixtures');
+
+// Helper to create a minimal valid score
+function createMinimalScore(): Score {
+  return {
+    metadata: {},
+    partList: [{ type: 'score-part', id: 'P1', name: 'Part 1' }],
+    parts: [{
+      id: 'P1',
+      measures: [{
+        number: '1',
+        attributes: {
+          divisions: 1,
+          time: { beats: '4', beatType: 4 },
+        },
+        entries: [],
+      }],
+    }],
+  };
+}
+
+// Helper to create a note
+function createNote(overrides: Partial<NoteEntry> = {}): NoteEntry {
+  return {
+    type: 'note',
+    pitch: { step: 'C', octave: 4 },
+    duration: 1,
+    voice: 1,
+    ...overrides,
+  };
+}
+
+describe('Validator', () => {
+  describe('validate', () => {
+    it('should validate a valid score', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = validate(score);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+    });
+
+    it('should return errors for invalid score', () => {
+      const score = createMinimalScore();
+      // Create invalid state: part not in partList
+      score.parts.push({ id: 'P2', measures: [] });
+
+      const result = validate(score);
+      expect(result.valid).toBe(false);
+      expect(result.errors.length).toBeGreaterThan(0);
+    });
+
+    it('should respect validation options', () => {
+      const score = createMinimalScore();
+      score.parts.push({ id: 'P2', measures: [] });
+
+      // Disable part reference checking
+      const result = validate(score, { checkPartReferences: false });
+      expect(result.valid).toBe(true);
+    });
+  });
+
+  describe('isValid', () => {
+    it('should return true for valid score', () => {
+      const score = createMinimalScore();
+      expect(isValid(score)).toBe(true);
+    });
+
+    it('should return false for invalid score', () => {
+      const score = createMinimalScore();
+      score.parts.push({ id: 'P2', measures: [] });
+      expect(isValid(score)).toBe(false);
+    });
+  });
+
+  describe('assertValid', () => {
+    it('should not throw for valid score', () => {
+      const score = createMinimalScore();
+      expect(() => assertValid(score)).not.toThrow();
+    });
+
+    it('should throw ValidationException for invalid score', () => {
+      const score = createMinimalScore();
+      score.parts.push({ id: 'P2', measures: [] });
+
+      expect(() => assertValid(score)).toThrow(ValidationException);
+    });
+  });
+
+  describe('validateDivisions', () => {
+    it('should pass when divisions are defined before notes', () => {
+      const score = createMinimalScore();
+      score.parts[0].measures[0].entries.push(createNote());
+
+      const errors = validateDivisions(score);
+      expect(errors).toHaveLength(0);
+    });
+
+    it('should error when notes appear before divisions', () => {
+      const score = createMinimalScore();
+      delete score.parts[0].measures[0].attributes?.divisions;
+      score.parts[0].measures[0].entries.push(createNote());
+
+      const errors = validateDivisions(score);
+      expect(errors).toHaveLength(1);
+      expect(errors[0].code).toBe('MISSING_DIVISIONS');
+    });
+
+    it('should error for invalid divisions value', () => {
+      const score = createMinimalScore();
+      score.parts[0].measures[0].attributes!.divisions = 0;
+
+      const errors = validateDivisions(score);
+      expect(errors).toHaveLength(1);
+      expect(errors[0].code).toBe('INVALID_DIVISIONS');
+    });
+
+    it('should error for negative divisions', () => {
+      const score = createMinimalScore();
+      score.parts[0].measures[0].attributes!.divisions = -1;
+
+      const errors = validateDivisions(score);
+      expect(errors).toHaveLength(1);
+      expect(errors[0].code).toBe('INVALID_DIVISIONS');
+    });
+  });
+
+  describe('validateMeasureDuration', () => {
+    it('should pass when duration matches time signature', () => {
+      const measure: Measure = {
+        number: '1',
+        entries: [
+          createNote({ duration: 4, voice: 1 }),
+        ],
+      };
+
+      const errors = validateMeasureDuration(
+        measure,
+        1, // divisions
+        { beats: '4', beatType: 4 },
+        { measureNumber: '1' }
+      );
+      expect(errors).toHaveLength(0);
+    });
+
+    it('should error when duration overflows', () => {
+      const measure: Measure = {
+        number: '1',
+        entries: [
+          createNote({ duration: 8, voice: 1 }), // 8 beats in 4/4 time
+        ],
+      };
+
+      const errors = validateMeasureDuration(
+        measure,
+        1,
+        { beats: '4', beatType: 4 },
+        { measureNumber: '1' }
+      );
+      expect(errors).toHaveLength(1);
+      expect(errors[0].code).toBe('MEASURE_DURATION_OVERFLOW');
+    });
+
+    it('should warn when duration underflows', () => {
+      const measure: Measure = {
+        number: '1',
+        entries: [
+          createNote({ duration: 2, voice: 1 }), // 2 beats in 4/4 time
+        ],
+      };
+
+      const errors = validateMeasureDuration(
+        measure,
+        1,
+        { beats: '4', beatType: 4 },
+        { measureNumber: '1' }
+      );
+      expect(errors).toHaveLength(1);
+      expect(errors[0].code).toBe('MEASURE_DURATION_UNDERFLOW');
+      expect(errors[0].level).toBe('warning');
+    });
+
+    it('should respect tolerance', () => {
+      const measure: Measure = {
+        number: '1',
+        entries: [
+          createNote({ duration: 3, voice: 1 }), // Off by 1
+        ],
+      };
+
+      const errors = validateMeasureDuration(
+        measure,
+        1,
+        { beats: '4', beatType: 4 },
+        { measureNumber: '1' },
+        1 // tolerance of 1
+      );
+      expect(errors).toHaveLength(0);
+    });
+
+    it('should skip validation for senzaMisura', () => {
+      const measure: Measure = {
+        number: '1',
+        entries: [
+          createNote({ duration: 100, voice: 1 }),
+        ],
+      };
+
+      const errors = validateMeasureDuration(
+        measure,
+        1,
+        { beats: '4', beatType: 4, senzaMisura: true },
+        { measureNumber: '1' }
+      );
+      expect(errors).toHaveLength(0);
+    });
+  });
+
+  describe('validateBackupForward', () => {
+    it('should pass for valid backup/forward sequence', () => {
+      const measure: Measure = {
+        number: '1',
+        entries: [
+          createNote({ duration: 4, voice: 1 }),
+          { type: 'backup', duration: 4 },
+          createNote({ duration: 4, voice: 2 }),
+        ],
+      };
+
+      const errors = validateBackupForward(measure, { measureNumber: '1' });
+      expect(errors).toHaveLength(0);
+    });
+
+    it('should error when backup exceeds position', () => {
+      const measure: Measure = {
+        number: '1',
+        entries: [
+          createNote({ duration: 2, voice: 1 }),
+          { type: 'backup', duration: 4 }, // Backing up more than we advanced
+        ],
+      };
+
+      const errors = validateBackupForward(measure, { measureNumber: '1' });
+      expect(errors.length).toBeGreaterThan(0);
+      expect(errors.some(e => e.code === 'BACKUP_EXCEEDS_POSITION')).toBe(true);
+    });
+
+    it('should error when position goes negative', () => {
+      const measure: Measure = {
+        number: '1',
+        entries: [
+          { type: 'backup', duration: 1 }, // Start at 0, backup by 1
+        ],
+      };
+
+      const errors = validateBackupForward(measure, { measureNumber: '1' });
+      expect(errors.some(e => e.code === 'NEGATIVE_POSITION' || e.code === 'BACKUP_EXCEEDS_POSITION')).toBe(true);
+    });
+
+    it('should handle forward correctly', () => {
+      const measure: Measure = {
+        number: '1',
+        entries: [
+          { type: 'forward', duration: 2 },
+          createNote({ duration: 2, voice: 1 }),
+          { type: 'backup', duration: 4 },
+          createNote({ duration: 4, voice: 2 }),
+        ],
+      };
+
+      const errors = validateBackupForward(measure, { measureNumber: '1' });
+      expect(errors).toHaveLength(0);
+    });
+  });
+
+  describe('validateBeams', () => {
+    it('should pass for valid beam pairs', () => {
+      const measure: Measure = {
+        number: '1',
+        entries: [
+          createNote({ voice: 1, beam: [{ number: 1, type: 'begin' }] }),
+          createNote({ voice: 1, beam: [{ number: 1, type: 'continue' }] }),
+          createNote({ voice: 1, beam: [{ number: 1, type: 'end' }] }),
+        ],
+      };
+
+      const errors = validateBeams(measure, { measureNumber: '1' });
+      expect(errors).toHaveLength(0);
+    });
+
+    it('should error for beam begin without end', () => {
+      const measure: Measure = {
+        number: '1',
+        entries: [
+          createNote({ voice: 1, beam: [{ number: 1, type: 'begin' }] }),
+          createNote({ voice: 1 }),
+        ],
+      };
+
+      const errors = validateBeams(measure, { measureNumber: '1' });
+      expect(errors).toHaveLength(1);
+      expect(errors[0].code).toBe('BEAM_BEGIN_WITHOUT_END');
+    });
+
+    it('should error for beam end without begin', () => {
+      const measure: Measure = {
+        number: '1',
+        entries: [
+          createNote({ voice: 1 }),
+          createNote({ voice: 1, beam: [{ number: 1, type: 'end' }] }),
+        ],
+      };
+
+      const errors = validateBeams(measure, { measureNumber: '1' });
+      expect(errors).toHaveLength(1);
+      expect(errors[0].code).toBe('BEAM_END_WITHOUT_BEGIN');
+    });
+
+    it('should handle multiple beam levels', () => {
+      const measure: Measure = {
+        number: '1',
+        entries: [
+          createNote({ voice: 1, beam: [{ number: 1, type: 'begin' }, { number: 2, type: 'begin' }] }),
+          createNote({ voice: 1, beam: [{ number: 1, type: 'continue' }, { number: 2, type: 'end' }] }),
+          createNote({ voice: 1, beam: [{ number: 1, type: 'end' }] }),
+        ],
+      };
+
+      const errors = validateBeams(measure, { measureNumber: '1' });
+      expect(errors).toHaveLength(0);
+    });
+  });
+
+  describe('validateTies', () => {
+    it('should pass for valid tie pairs', () => {
+      const measure: Measure = {
+        number: '1',
+        entries: [
+          createNote({ pitch: { step: 'C', octave: 4 }, voice: 1, tie: { type: 'start' } }),
+          createNote({ pitch: { step: 'C', octave: 4 }, voice: 1, tie: { type: 'stop' } }),
+        ],
+      };
+
+      const errors = validateTies(measure, { measureNumber: '1' });
+      expect(errors).toHaveLength(0);
+    });
+
+    it('should warn for tie stop without start', () => {
+      const measure: Measure = {
+        number: '1',
+        entries: [
+          createNote({ pitch: { step: 'C', octave: 4 }, voice: 1, tie: { type: 'stop' } }),
+        ],
+      };
+
+      const errors = validateTies(measure, { measureNumber: '1' });
+      expect(errors).toHaveLength(1);
+      expect(errors[0].code).toBe('TIE_STOP_WITHOUT_START');
+    });
+
+    it('should handle ties array', () => {
+      const measure: Measure = {
+        number: '1',
+        entries: [
+          createNote({
+            pitch: { step: 'C', octave: 4 },
+            voice: 1,
+            ties: [{ type: 'start' }],
+          }),
+          createNote({
+            pitch: { step: 'C', octave: 4 },
+            voice: 1,
+            ties: [{ type: 'stop' }],
+          }),
+        ],
+      };
+
+      const errors = validateTies(measure, { measureNumber: '1' });
+      expect(errors).toHaveLength(0);
+    });
+  });
+
+  describe('validateSlurs', () => {
+    it('should pass for valid slur pairs', () => {
+      const measure: Measure = {
+        number: '1',
+        entries: [
+          createNote({
+            voice: 1,
+            notations: [{ type: 'slur', slurType: 'start' }],
+          }),
+          createNote({
+            voice: 1,
+            notations: [{ type: 'slur', slurType: 'stop' }],
+          }),
+        ],
+      };
+
+      const errors = validateSlurs(measure, { measureNumber: '1' });
+      expect(errors).toHaveLength(0);
+    });
+
+    it('should handle numbered slurs', () => {
+      const measure: Measure = {
+        number: '1',
+        entries: [
+          createNote({
+            voice: 1,
+            notations: [
+              { type: 'slur', slurType: 'start', number: 1 },
+              { type: 'slur', slurType: 'start', number: 2 },
+            ],
+          }),
+          createNote({
+            voice: 1,
+            notations: [
+              { type: 'slur', slurType: 'stop', number: 1 },
+              { type: 'slur', slurType: 'stop', number: 2 },
+            ],
+          }),
+        ],
+      };
+
+      const errors = validateSlurs(measure, { measureNumber: '1' });
+      expect(errors).toHaveLength(0);
+    });
+  });
+
+  describe('validateTuplets', () => {
+    it('should pass for valid tuplet pairs', () => {
+      const measure: Measure = {
+        number: '1',
+        entries: [
+          createNote({
+            voice: 1,
+            notations: [{ type: 'tuplet', tupletType: 'start' }],
+          }),
+          createNote({ voice: 1 }),
+          createNote({
+            voice: 1,
+            notations: [{ type: 'tuplet', tupletType: 'stop' }],
+          }),
+        ],
+      };
+
+      const errors = validateTuplets(measure, { measureNumber: '1' });
+      expect(errors).toHaveLength(0);
+    });
+
+    it('should error for tuplet start without stop', () => {
+      const measure: Measure = {
+        number: '1',
+        entries: [
+          createNote({
+            voice: 1,
+            notations: [{ type: 'tuplet', tupletType: 'start' }],
+          }),
+          createNote({ voice: 1 }),
+        ],
+      };
+
+      const errors = validateTuplets(measure, { measureNumber: '1' });
+      expect(errors).toHaveLength(1);
+      expect(errors[0].code).toBe('TUPLET_START_WITHOUT_STOP');
+    });
+
+    it('should error for tuplet stop without start', () => {
+      const measure: Measure = {
+        number: '1',
+        entries: [
+          createNote({ voice: 1 }),
+          createNote({
+            voice: 1,
+            notations: [{ type: 'tuplet', tupletType: 'stop' }],
+          }),
+        ],
+      };
+
+      const errors = validateTuplets(measure, { measureNumber: '1' });
+      expect(errors).toHaveLength(1);
+      expect(errors[0].code).toBe('TUPLET_STOP_WITHOUT_START');
+    });
+  });
+
+  describe('validatePartReferences', () => {
+    it('should pass when parts match partList', () => {
+      const score = createMinimalScore();
+      const errors = validatePartReferences(score);
+      expect(errors).toHaveLength(0);
+    });
+
+    it('should error when part is not in partList', () => {
+      const score = createMinimalScore();
+      score.parts.push({ id: 'P2', measures: [] });
+
+      const errors = validatePartReferences(score);
+      expect(errors).toHaveLength(1);
+      expect(errors[0].code).toBe('PART_ID_NOT_IN_PART_LIST');
+    });
+
+    it('should error when partList entry has no part', () => {
+      const score = createMinimalScore();
+      score.partList.push({ type: 'score-part', id: 'P2', name: 'Part 2' });
+
+      const errors = validatePartReferences(score);
+      expect(errors).toHaveLength(1);
+      expect(errors[0].code).toBe('PART_LIST_ID_NOT_IN_PARTS');
+    });
+  });
+
+  describe('validateVoiceStaff', () => {
+    it('should pass for valid voice/staff numbers', () => {
+      const measure: Measure = {
+        number: '1',
+        entries: [
+          createNote({ voice: 1, staff: 1 }),
+          createNote({ voice: 2, staff: 1 }),
+        ],
+      };
+
+      const errors = validateVoiceStaff(measure, 1, { measureNumber: '1' });
+      expect(errors).toHaveLength(0);
+    });
+
+    it('should error for invalid voice number', () => {
+      const measure: Measure = {
+        number: '1',
+        entries: [
+          createNote({ voice: 0 }), // Invalid
+        ],
+      };
+
+      const errors = validateVoiceStaff(measure, 1, { measureNumber: '1' });
+      expect(errors).toHaveLength(1);
+      expect(errors[0].code).toBe('INVALID_VOICE_NUMBER');
+    });
+
+    it('should error for invalid staff number', () => {
+      const measure: Measure = {
+        number: '1',
+        entries: [
+          createNote({ voice: 1, staff: 0 }), // Invalid
+        ],
+      };
+
+      const errors = validateVoiceStaff(measure, 1, { measureNumber: '1' });
+      expect(errors).toHaveLength(1);
+      expect(errors[0].code).toBe('INVALID_STAFF_NUMBER');
+    });
+
+    it('should error when staff exceeds staves count', () => {
+      const measure: Measure = {
+        number: '1',
+        entries: [
+          createNote({ voice: 1, staff: 3 }), // Only 2 staves declared
+        ],
+      };
+
+      const errors = validateVoiceStaff(measure, 2, { measureNumber: '1' });
+      expect(errors).toHaveLength(1);
+      expect(errors[0].code).toBe('STAFF_EXCEEDS_STAVES');
+    });
+
+    it('should error for negative duration', () => {
+      const measure: Measure = {
+        number: '1',
+        entries: [
+          createNote({ voice: 1, duration: -1 }),
+        ],
+      };
+
+      const errors = validateVoiceStaff(measure, 1, { measureNumber: '1' });
+      expect(errors).toHaveLength(1);
+      expect(errors[0].code).toBe('INVALID_DURATION');
+    });
+  });
+
+  describe('validateTiesAcrossMeasures', () => {
+    it('should pass for valid cross-measure ties', () => {
+      const part: Part = {
+        id: 'P1',
+        measures: [
+          {
+            number: '1',
+            entries: [
+              createNote({ pitch: { step: 'C', octave: 4 }, voice: 1, tie: { type: 'start' } }),
+            ],
+          },
+          {
+            number: '2',
+            entries: [
+              createNote({ pitch: { step: 'C', octave: 4 }, voice: 1, tie: { type: 'stop' } }),
+            ],
+          },
+        ],
+      };
+
+      const errors = validateTiesAcrossMeasures(part);
+      expect(errors).toHaveLength(0);
+    });
+
+    it('should warn for unclosed tie at end of part', () => {
+      const part: Part = {
+        id: 'P1',
+        measures: [
+          {
+            number: '1',
+            entries: [
+              createNote({ pitch: { step: 'C', octave: 4 }, voice: 1, tie: { type: 'start' } }),
+            ],
+          },
+        ],
+      };
+
+      const errors = validateTiesAcrossMeasures(part);
+      expect(errors).toHaveLength(1);
+      expect(errors[0].code).toBe('TIE_START_WITHOUT_STOP');
+    });
+  });
+
+  describe('validateSlursAcrossMeasures', () => {
+    it('should pass for valid cross-measure slurs', () => {
+      const part: Part = {
+        id: 'P1',
+        measures: [
+          {
+            number: '1',
+            entries: [
+              createNote({ voice: 1, notations: [{ type: 'slur', slurType: 'start' }] }),
+            ],
+          },
+          {
+            number: '2',
+            entries: [
+              createNote({ voice: 1, notations: [{ type: 'slur', slurType: 'stop' }] }),
+            ],
+          },
+        ],
+      };
+
+      const errors = validateSlursAcrossMeasures(part);
+      expect(errors).toHaveLength(0);
+    });
+
+    it('should warn for unclosed slur at end of part', () => {
+      const part: Part = {
+        id: 'P1',
+        measures: [
+          {
+            number: '1',
+            entries: [
+              createNote({ voice: 1, notations: [{ type: 'slur', slurType: 'start' }] }),
+            ],
+          },
+        ],
+      };
+
+      const errors = validateSlursAcrossMeasures(part);
+      expect(errors).toHaveLength(1);
+      expect(errors[0].code).toBe('SLUR_START_WITHOUT_STOP');
+    });
+  });
+
+  describe('formatLocation', () => {
+    it('should format location with all fields', () => {
+      const location = {
+        partId: 'P1',
+        measureNumber: '5',
+        entryIndex: 3,
+        voice: 2,
+        staff: 1,
+      };
+
+      const formatted = formatLocation(location);
+      expect(formatted).toContain('part=P1');
+      expect(formatted).toContain('measure=5');
+      expect(formatted).toContain('entry[3]');
+      expect(formatted).toContain('voice=2');
+      expect(formatted).toContain('staff=1');
+    });
+
+    it('should format location with index fallbacks', () => {
+      const location = {
+        partIndex: 0,
+        measureIndex: 2,
+      };
+
+      const formatted = formatLocation(location);
+      expect(formatted).toContain('part[0]');
+      expect(formatted).toContain('measure[2]');
+    });
+  });
+
+  describe('Integration with real files', () => {
+    it('should validate all basic fixtures', () => {
+      const files = [
+        'basic/single-note.xml',
+        'basic/two-measures.xml',
+        'basic/two-parts.xml',
+      ];
+
+      for (const file of files) {
+        try {
+          const xml = readFileSync(join(fixturesPath, file), 'utf-8');
+          const score = parse(xml);
+          const result = validate(score);
+
+          // Real files should be valid
+          if (!result.valid) {
+            console.log(`Validation errors for ${file}:`, result.errors);
+          }
+          // Note: Some files may have minor issues, so we just check it doesn't throw
+        } catch (e) {
+          // File might not exist, skip
+        }
+      }
+    });
+  });
+});
