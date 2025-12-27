@@ -58,13 +58,18 @@ export function exportMidi(score: Score, options: MidiExportOptions = {}): Uint8
 }
 
 /**
- * Convert pitch to MIDI note number
+ * Convert pitch to MIDI note number with optional transposition
+ * @param pitch - The pitch to convert
+ * @param transpose - Optional transpose settings (chromatic semitones to add)
  */
-function pitchToMidiNote(pitch: Pitch): number {
+function pitchToMidiNote(pitch: Pitch, chromaticTranspose: number = 0): number {
   const stepValues: Record<string, number> = {
     'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11,
   };
-  return (pitch.octave + 1) * 12 + stepValues[pitch.step] + (pitch.alter ?? 0);
+  const baseMidi = (pitch.octave + 1) * 12 + stepValues[pitch.step] + (pitch.alter ?? 0);
+  // Apply transposition for transposing instruments
+  // chromatic value indicates how many semitones the written pitch should be transposed
+  return baseMidi + chromaticTranspose;
 }
 
 /**
@@ -183,6 +188,7 @@ function createPartTrack(
 
   let currentTick = 0;
   let divisions = 1;
+  let chromaticTranspose = 0; // Track transposition for transposing instruments
 
   // Expand repeats to get playback order
   const measureOrder = expandRepeats(part.measures);
@@ -194,6 +200,10 @@ function createPartTrack(
     if (measure.attributes?.divisions) {
       divisions = measure.attributes.divisions;
     }
+    // Update transposition if specified in this measure's attributes
+    if (measure.attributes?.transpose) {
+      chromaticTranspose = measure.attributes.transpose.chromatic;
+    }
 
     const measureStartTick = currentTick;
     let position = 0;
@@ -204,7 +214,7 @@ function createPartTrack(
         const note = entry as NoteEntry;
 
         if (note.pitch && !note.grace) {
-          const midiNote = pitchToMidiNote(note.pitch);
+          const midiNote = pitchToMidiNote(note.pitch, chromaticTranspose);
           const startTick = measureStartTick + Math.round((position * ticksPerQuarterNote) / divisions);
           const durationTicks = Math.round((note.duration * ticksPerQuarterNote) / divisions);
 

@@ -10,9 +10,8 @@
  *   npx tsx scripts/convert-to-midi.ts tests/fixtures/basic/scale.xml output.mid
  */
 
-import { readFile, writeFile } from 'fs/promises';
-import { basename, dirname, join } from 'path';
-import { parse } from '../src/importers/musicxml';
+import { writeFile } from 'fs/promises';
+import { parseFile } from '../src/file';
 import { exportMidi } from '../src/exporters/midi';
 
 async function main() {
@@ -35,10 +34,7 @@ async function main() {
 
   try {
     console.log(`Reading: ${inputPath}`);
-    const xmlContent = await readFile(inputPath, 'utf-8');
-
-    console.log('Parsing MusicXML...');
-    const score = parse(xmlContent);
+    const score = await parseFile(inputPath);
 
     console.log(`  Title: ${score.metadata.workTitle || score.metadata.movementTitle || '(untitled)'}`);
     console.log(`  Parts: ${score.parts.length}`);
