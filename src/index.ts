@@ -89,3 +89,14 @@ export {
   modifyNoteDuration,
 } from './operations';
 export type { AddNoteOptions } from './operations';
+
+// Compressed format (.mxl)
+export {
+  parseCompressed,
+  serializeCompressed,
+  isCompressed,
+  parseAuto,
+} from './compressed';
+
+// File operations
+export { parseFile, serializeToFile } from './file';
