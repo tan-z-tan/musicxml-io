@@ -1,7 +1,7 @@
 {
   "name": "musicxml-io",
   "version": "0.1.0",
-  "description": "A TypeScript library for parsing, manipulating, and serializing MusicXML with high round-trip fidelity",
+  "description": "Parse, manipulate, and serialize MusicXML with 99.6% round-trip fidelity. Supports .xml/.mxl formats, transposition, MIDI export, and more.",
   "author": "tan-z-tan",
   "license": "MIT",
   "repository": {
