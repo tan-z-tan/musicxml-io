@@ -210,6 +210,7 @@ function createPartTrack(
 
     const measureStartTick = currentTick;
     let position = 0;
+    let chordBasePosition = 0; // Position for chord notes (same as previous non-chord note)
     let maxPosition = 0; // Track maximum position for multi-voice measures
 
     for (const entry of measure.entries) {
@@ -218,7 +219,9 @@ function createPartTrack(
 
         if (note.pitch && !note.grace) {
           const midiNote = pitchToMidiNote(note.pitch, chromaticTranspose);
-          const startTick = measureStartTick + Math.round((position * ticksPerQuarterNote) / divisions);
+          // Chord notes use the same position as the previous non-chord note
+          const notePosition = note.chord ? chordBasePosition : position;
+          const startTick = measureStartTick + Math.round((notePosition * ticksPerQuarterNote) / divisions);
           const durationTicks = Math.round((note.duration * ticksPerQuarterNote) / divisions);
 
           noteEvents.push({
@@ -238,6 +241,7 @@ function createPartTrack(
 
         // Chord notes share the same position
         if (!note.chord) {
+          chordBasePosition = position; // Save position for subsequent chord notes
           position += note.duration;
           if (position > maxPosition) {
             maxPosition = position;
