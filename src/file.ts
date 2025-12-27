@@ -1,7 +1,6 @@
 import { readFile, writeFile } from 'fs/promises';
-import { parse } from './parser';
-import { serialize, SerializeOptions } from './serializer';
-import { parseCompressed, serializeCompressed, isCompressed } from './compressed';
+import { parse, parseCompressed, isCompressed } from './importers';
+import { serialize, serializeCompressed, exportMidi, SerializeOptions, MidiExportOptions } from './exporters';
 import type { Score } from './types';
 
 /**
@@ -24,8 +23,16 @@ export async function parseFile(filePath: string): Promise<Score> {
 }
 
 /**
+ * Export options combining all format options
+ */
+export interface ExportOptions extends SerializeOptions, MidiExportOptions {}
+
+/**
  * Serialize a Score to a file
- * Format is determined by file extension (.mxl for compressed, .xml/.musicxml for uncompressed)
+ * Format is determined by file extension:
+ * - .mxl: Compressed MusicXML
+ * - .xml/.musicxml: Uncompressed MusicXML
+ * - .mid/.midi: Standard MIDI File
  * @param score - The Score to serialize
  * @param filePath - Path to write the file
  * @param options - Serialization options
@@ -33,12 +40,15 @@ export async function parseFile(filePath: string): Promise<Score> {
 export async function serializeToFile(
   score: Score,
   filePath: string,
-  options: SerializeOptions = {}
+  options: ExportOptions = {}
 ): Promise<void> {
   const lowerPath = filePath.toLowerCase();
 
   if (lowerPath.endsWith('.mxl')) {
     const data = serializeCompressed(score, options);
+    await writeFile(filePath, data);
+  } else if (lowerPath.endsWith('.mid') || lowerPath.endsWith('.midi')) {
+    const data = exportMidi(score, options);
     await writeFile(filePath, data);
   } else {
     const xmlString = serialize(score, options);

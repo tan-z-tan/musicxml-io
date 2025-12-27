@@ -33,12 +33,12 @@ export type {
   NoteIteratorItem,
 } from './types';
 
-// Parser
-export { parse } from './parser';
+// Importers
+export { parse, parseCompressed, isCompressed, parseAuto } from './importers';
 
-// Serializer
-export { serialize } from './serializer';
-export type { SerializeOptions } from './serializer';
+// Exporters
+export { serialize, serializeCompressed, exportMidi } from './exporters';
+export type { SerializeOptions, MidiExportOptions } from './exporters';
 
 // Accessors (re-export for convenience)
 export {
@@ -55,8 +55,10 @@ export {
   getStaves,
   hasNotes,
   isRestMeasure,
+  getNormalizedPosition,
+  getNormalizedDuration,
 } from './accessors';
-export type { VoiceFilter } from './accessors';
+export type { VoiceFilter, NormalizedPositionOptions } from './accessors';
 
 // Query (re-export for convenience)
 export {
@@ -71,8 +73,11 @@ export {
   getPartIndex,
   hasMultipleStaves,
   getStaveCount,
+  measureRoundtrip,
+  countNotes,
+  scoresEqual,
 } from './query';
-export type { PitchRange, FindNotesFilter } from './query';
+export type { PitchRange, FindNotesFilter, RoundtripMetrics } from './query';
 
 // Operations (re-export for convenience)
 export {
@@ -89,14 +94,6 @@ export {
   modifyNoteDuration,
 } from './operations';
 export type { AddNoteOptions } from './operations';
-
-// Compressed format (.mxl)
-export {
-  parseCompressed,
-  serializeCompressed,
-  isCompressed,
-  parseAuto,
-} from './compressed';
 
 // File operations
 export { parseFile, serializeToFile } from './file';

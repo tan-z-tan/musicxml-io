@@ -20,7 +20,7 @@ import type {
   Clef,
   Transpose,
   Barline,
-} from './types';
+} from '../types';
 
 export interface SerializeOptions {
   version?: '3.1' | '4.0';

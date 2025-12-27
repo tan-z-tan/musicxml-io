@@ -1,7 +1,6 @@
-import { unzipSync, zipSync, strToU8, strFromU8 } from 'fflate';
-import { parse } from './parser';
-import { serialize, SerializeOptions } from './serializer';
-import type { Score } from './types';
+import { unzipSync, strFromU8 } from 'fflate';
+import { parse } from './musicxml';
+import type { Score } from '../types';
 
 /**
  * Parse a compressed MusicXML (.mxl) file
@@ -55,36 +54,6 @@ export function parseCompressed(data: Uint8Array): Score {
   const xmlString = strFromU8(xmlData);
 
   return parse(xmlString);
-}
-
-/**
- * Serialize a Score to compressed MusicXML (.mxl) format
- * @param score - The Score to serialize
- * @param options - Serialization options
- * @returns The compressed file data as Uint8Array
- */
-export function serializeCompressed(
-  score: Score,
-  options: SerializeOptions = {}
-): Uint8Array {
-  const xmlString = serialize(score, options);
-  const rootFileName = 'score.xml';
-
-  // Create container.xml
-  const containerXml = `<?xml version="1.0" encoding="UTF-8"?>
-<container>
-  <rootfiles>
-    <rootfile full-path="${rootFileName}"/>
-  </rootfiles>
-</container>`;
-
-  // Create the zip file
-  const files: Record<string, Uint8Array> = {
-    'META-INF/container.xml': strToU8(containerXml),
-    [rootFileName]: strToU8(xmlString),
-  };
-
-  return zipSync(files, { level: 6 });
 }
 
 /**

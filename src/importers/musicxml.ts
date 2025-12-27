@@ -24,7 +24,7 @@ import type {
   Transpose,
   Barline,
   DynamicsValue,
-} from './types';
+} from '../types';
 
 // Parser with preserveOrder to maintain element order
 const xmlParser = new XMLParser({
