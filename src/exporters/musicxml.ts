@@ -1786,6 +1786,37 @@ function escapeXml(str: string): string {
     .replace(/'/g, '&apos;');
 }
 
+/**
+ * Build XML attributes from an object.
+ * Only includes attributes with defined values.
+ */
+type AttrValue = string | number | boolean | undefined;
+
+function buildAttrs(attrs: Record<string, AttrValue>): string {
+  let result = '';
+  for (const [key, value] of Object.entries(attrs)) {
+    if (value === undefined) continue;
+    if (typeof value === 'boolean') {
+      result += ` ${key}="${value ? 'yes' : 'no'}"`;
+    } else if (typeof value === 'number') {
+      result += ` ${key}="${value}"`;
+    } else {
+      result += ` ${key}="${escapeXml(value)}"`;
+    }
+  }
+  return result;
+}
+
+/**
+ * Push an optional XML element if value is defined
+ */
+function pushOptionalElement(lines: string[], indent: string, tag: string, value: string | number | undefined): void {
+  if (value !== undefined) {
+    const escaped = typeof value === 'string' ? escapeXml(value) : value;
+    lines.push(`${indent}<${tag}>${escaped}</${tag}>`);
+  }
+}
+
 // ============================================================
 // New Serialize Functions for Extended Support
 // ============================================================
@@ -1793,40 +1824,32 @@ function escapeXml(str: string): string {
 function serializeStaffDetails(sd: StaffDetails, indent: string): string[] {
   const lines: string[] = [];
 
-  let attrs = '';
-  if (sd.number !== undefined) attrs += ` number="${sd.number}"`;
-  if (sd.showFrets) attrs += ` show-frets="${sd.showFrets}"`;
-  if (sd.printObject !== undefined) attrs += ` print-object="${sd.printObject ? 'yes' : 'no'}"`;
+  const attrs = buildAttrs({
+    'number': sd.number,
+    'show-frets': sd.showFrets,
+    'print-object': sd.printObject,
+  });
   lines.push(`${indent}<staff-details${attrs}>`);
 
-  if (sd.staffType) {
-    lines.push(`${indent}  <staff-type>${sd.staffType}</staff-type>`);
-  }
+  pushOptionalElement(lines, `${indent}  `, 'staff-type', sd.staffType);
 
-  if (sd.staffLines !== undefined) {
-    lines.push(`${indent}  <staff-lines>${sd.staffLines}</staff-lines>`);
-  }
+  pushOptionalElement(lines, `${indent}  `, 'staff-lines', sd.staffLines);
 
   if (sd.staffTuning) {
     for (const tuning of sd.staffTuning) {
-      const tuningAttr = ` line="${tuning.line}"`;
-      lines.push(`${indent}  <staff-tuning${tuningAttr}>`);
+      lines.push(`${indent}  <staff-tuning${buildAttrs({ line: tuning.line })}>`);
       lines.push(`${indent}    <tuning-step>${tuning.tuningStep}</tuning-step>`);
-      if (tuning.tuningAlter !== undefined) {
-        lines.push(`${indent}    <tuning-alter>${tuning.tuningAlter}</tuning-alter>`);
-      }
+      pushOptionalElement(lines, `${indent}    `, 'tuning-alter', tuning.tuningAlter);
       lines.push(`${indent}    <tuning-octave>${tuning.tuningOctave}</tuning-octave>`);
       lines.push(`${indent}  </staff-tuning>`);
     }
   }
 
-  if (sd.capo !== undefined) {
-    lines.push(`${indent}  <capo>${sd.capo}</capo>`);
-  }
+  pushOptionalElement(lines, `${indent}  `, 'capo', sd.capo);
 
   if (sd.staffSize !== undefined) {
-    const scalingAttr = sd.staffSizeScaling !== undefined ? ` scaling="${sd.staffSizeScaling}"` : '';
-    lines.push(`${indent}  <staff-size${scalingAttr}>${sd.staffSize}</staff-size>`);
+    const attrs = buildAttrs({ scaling: sd.staffSizeScaling });
+    lines.push(`${indent}  <staff-size${attrs}>${sd.staffSize}</staff-size>`);
   }
 
   lines.push(`${indent}</staff-details>`);
@@ -1837,29 +1860,29 @@ function serializeStaffDetails(sd: StaffDetails, indent: string): string[] {
 function serializeMeasureStyle(ms: MeasureStyle, indent: string): string[] {
   const lines: string[] = [];
 
-  const attrs = ms.number !== undefined ? ` number="${ms.number}"` : '';
-  lines.push(`${indent}<measure-style${attrs}>`);
+  lines.push(`${indent}<measure-style${buildAttrs({ number: ms.number })}>`);
 
-  if (ms.multipleRest !== undefined) {
-    lines.push(`${indent}  <multiple-rest>${ms.multipleRest}</multiple-rest>`);
-  }
+  pushOptionalElement(lines, `${indent}  `, 'multiple-rest', ms.multipleRest);
 
   if (ms.measureRepeat) {
-    let mrAttrs = ` type="${ms.measureRepeat.type}"`;
-    if (ms.measureRepeat.slashes !== undefined) mrAttrs += ` slashes="${ms.measureRepeat.slashes}"`;
+    const mrAttrs = buildAttrs({
+      type: ms.measureRepeat.type,
+      slashes: ms.measureRepeat.slashes,
+    });
     lines.push(`${indent}  <measure-repeat${mrAttrs}/>`);
   }
 
   if (ms.beatRepeat) {
-    let brAttrs = ` type="${ms.beatRepeat.type}"`;
-    if (ms.beatRepeat.slashes !== undefined) brAttrs += ` slashes="${ms.beatRepeat.slashes}"`;
+    const brAttrs = buildAttrs({ type: ms.beatRepeat.type, slashes: ms.beatRepeat.slashes });
     lines.push(`${indent}  <beat-repeat${brAttrs}/>`);
   }
 
   if (ms.slash) {
-    let slAttrs = ` type="${ms.slash.type}"`;
-    if (ms.slash.useDots) slAttrs += ' use-dots="yes"';
-    if (ms.slash.useStems) slAttrs += ' use-stems="yes"';
+    const slAttrs = buildAttrs({
+      type: ms.slash.type,
+      'use-dots': ms.slash.useDots,
+      'use-stems': ms.slash.useStems,
+    });
     lines.push(`${indent}  <slash${slAttrs}/>`);
   }
 
@@ -1871,12 +1894,13 @@ function serializeMeasureStyle(ms: MeasureStyle, indent: string): string[] {
 function serializeHarmony(harmony: HarmonyEntry, indent: string): string[] {
   const lines: string[] = [];
 
-  let attrs = '';
-  if (harmony.placement) attrs += ` placement="${harmony.placement}"`;
-  if (harmony.printFrame !== undefined) attrs += ` print-frame="${harmony.printFrame ? 'yes' : 'no'}"`;
-  if (harmony.defaultY !== undefined) attrs += ` default-y="${harmony.defaultY}"`;
-  if (harmony.halign) attrs += ` halign="${escapeXml(harmony.halign)}"`;
-  if (harmony.fontSize) attrs += ` font-size="${escapeXml(harmony.fontSize)}"`;
+  const attrs = buildAttrs({
+    placement: harmony.placement,
+    'print-frame': harmony.printFrame,
+    'default-y': harmony.defaultY,
+    halign: harmony.halign,
+    'font-size': harmony.fontSize,
+  });
   lines.push(`${indent}<harmony${attrs}>`);
 
   // Root

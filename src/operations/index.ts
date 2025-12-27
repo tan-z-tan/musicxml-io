@@ -6,6 +6,7 @@ import type {
   KeySignature,
   TimeSignature,
 } from '../types';
+import { STEPS, STEP_SEMITONES, getMeasureEndPosition } from '../utils';
 
 /**
  * Deep clone a score
@@ -13,18 +14,6 @@ import type {
 function cloneScore(score: Score): Score {
   return JSON.parse(JSON.stringify(score));
 }
-
-/**
- * Step order for transposition
- */
-const STEPS: Pitch['step'][] = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
-
-/**
- * Semitone values for each step
- */
-const STEP_SEMITONES: Record<Pitch['step'], number> = {
-  'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11,
-};
 
 /**
  * Transpose a pitch by a number of semitones
@@ -117,17 +106,8 @@ export function addNote(score: Score, options: AddNoteOptions): Score {
     ...options.note,
   };
 
-  // Find the current position at the end of the measure
-  let currentPosition = 0;
-  for (const entry of measure.entries) {
-    if (entry.type === 'note' && !entry.chord) {
-      currentPosition += entry.duration;
-    } else if (entry.type === 'backup') {
-      currentPosition -= entry.duration;
-    } else if (entry.type === 'forward') {
-      currentPosition += entry.duration;
-    }
-  }
+  // Find the current position at the end of the measure using shared utility
+  const currentPosition = getMeasureEndPosition(measure);
 
   // Calculate backup/forward needed
   const positionDiff = options.position - currentPosition;

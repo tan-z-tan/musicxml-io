@@ -119,6 +119,26 @@ function getElementText(elements: OrderedElement[], tagName: string): string | u
   return '';
 }
 
+/**
+ * Get element text as integer with optional default value
+ */
+function getElementTextAsInt(elements: OrderedElement[], tagName: string, defaultValue?: number): number | undefined {
+  const text = getElementText(elements, tagName);
+  if (text === undefined || text === '') return defaultValue;
+  const value = parseInt(text, 10);
+  return isNaN(value) ? defaultValue : value;
+}
+
+/**
+ * Get element text as float with optional default value
+ */
+function getElementTextAsFloat(elements: OrderedElement[], tagName: string, defaultValue?: number): number | undefined {
+  const text = getElementText(elements, tagName);
+  if (text === undefined || text === '') return defaultValue;
+  const value = parseFloat(text);
+  return isNaN(value) ? defaultValue : value;
+}
+
 function getAttributes(element: OrderedElement): Record<string, string> {
   const attrs: Record<string, string> = {};
   const rawAttrs = element[':@'];
@@ -956,11 +976,11 @@ function parsePrint(elements: OrderedElement[], attrs: Record<string, string>): 
 function parseAttributes(elements: OrderedElement[]): MeasureAttributes {
   const attrs: MeasureAttributes = {};
 
-  const divisions = getElementText(elements, 'divisions');
-  if (divisions) attrs.divisions = parseInt(divisions, 10);
+  const divisions = getElementTextAsInt(elements, 'divisions');
+  if (divisions !== undefined) attrs.divisions = divisions;
 
-  const staves = getElementText(elements, 'staves');
-  if (staves) attrs.staves = parseInt(staves, 10);
+  const staves = getElementTextAsInt(elements, 'staves');
+  if (staves !== undefined) attrs.staves = staves;
 
   // Time signature
   const time = getElementContent(elements, 'time');
@@ -1183,26 +1203,23 @@ function parseClef(elements: OrderedElement[], attrs: Record<string, string>): C
     clef.staff = parseInt(attrs['number'], 10);
   }
 
-  const octaveChange = getElementText(elements, 'clef-octave-change');
-  if (octaveChange) {
-    clef.clefOctaveChange = parseInt(octaveChange, 10);
+  const octaveChange = getElementTextAsInt(elements, 'clef-octave-change');
+  if (octaveChange !== undefined) {
+    clef.clefOctaveChange = octaveChange;
   }
 
   return clef;
 }
 
 function parseTranspose(elements: OrderedElement[]): Transpose {
-  const diatonic = getElementText(elements, 'diatonic');
-  const chromatic = getElementText(elements, 'chromatic');
-  const octaveChange = getElementText(elements, 'octave-change');
-
   const transpose: Transpose = {
-    diatonic: parseInt(diatonic || '0', 10),
-    chromatic: parseInt(chromatic || '0', 10),
+    diatonic: getElementTextAsInt(elements, 'diatonic', 0)!,
+    chromatic: getElementTextAsInt(elements, 'chromatic', 0)!,
   };
 
-  if (octaveChange) {
-    transpose.octaveChange = parseInt(octaveChange, 10);
+  const octaveChange = getElementTextAsInt(elements, 'octave-change');
+  if (octaveChange !== undefined) {
+    transpose.octaveChange = octaveChange;
   }
 
   return transpose;
@@ -1211,8 +1228,8 @@ function parseTranspose(elements: OrderedElement[]): Transpose {
 function parseNote(elements: OrderedElement[], attrs: Record<string, string>): NoteEntry {
   const note: NoteEntry = {
     type: 'note',
-    duration: parseInt(getElementText(elements, 'duration') || '0', 10),
-    voice: parseInt(getElementText(elements, 'voice') || '1', 10),
+    duration: getElementTextAsInt(elements, 'duration', 0)!,
+    voice: getElementTextAsInt(elements, 'voice', 1)!,
   };
 
   // Layout attributes
@@ -1287,8 +1304,8 @@ function parseNote(elements: OrderedElement[], attrs: Record<string, string>): N
   }
 
   // Staff
-  const staff = getElementText(elements, 'staff');
-  if (staff) note.staff = parseInt(staff, 10);
+  const staff = getElementTextAsInt(elements, 'staff');
+  if (staff !== undefined) note.staff = staff;
 
   // Chord - check if chord element exists
   for (const el of elements) {
