@@ -183,12 +183,10 @@ export {
   changeTime,
   insertMeasure,
   deleteMeasure,
-  setDivisions,
   addChordNote,
   modifyNotePitch,
   modifyNoteDuration,
 } from './operations';
-export type { AddNoteOptions } from './operations';
 
 // File operations
 export { parseFile, serializeToFile, decodeBuffer } from './file';
