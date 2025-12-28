@@ -785,3 +785,196 @@ describe('Operations', () => {
     });
   });
 });
+
+// ============================================================
+// Tests with Real MusicXML Files
+// ============================================================
+
+const samplesPath = join(__dirname, 'fixtures/musicxml_samples');
+
+describe('Operations with Real MusicXML Files', () => {
+  describe('FaurReveSample (Fauré - Après un rêve)', () => {
+    it('should parse and transpose the score', () => {
+      const xml = readFileSync(join(samplesPath, 'FaurReveSample.musicxml'), 'utf-8');
+      const score = parse(xml);
+
+      expect(score.parts.length).toBeGreaterThan(0);
+      expect(score.parts[0].measures.length).toBeGreaterThan(0);
+
+      // Transpose up by 2 semitones
+      const result = transpose(score, 2);
+      expect(result.success).toBe(true);
+    });
+
+    it('should allow adding a part', () => {
+      const xml = readFileSync(join(samplesPath, 'FaurReveSample.musicxml'), 'utf-8');
+      const score = parse(xml);
+
+      const originalPartCount = score.parts.length;
+      const result = addPart(score, {
+        id: 'P-NEW',
+        name: 'New Instrument',
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.parts.length).toBe(originalPartCount + 1);
+      }
+    });
+  });
+
+  describe('MozartPianoSonata (Mozart K.331)', () => {
+    it('should parse piano score with 2 staves', () => {
+      const xml = readFileSync(join(samplesPath, 'MozartPianoSonata.musicxml'), 'utf-8');
+      const score = parse(xml);
+
+      expect(score.parts.length).toBe(1);
+      // Check first measure has staves attribute
+      const firstMeasure = score.parts[0].measures[0];
+      expect(firstMeasure.attributes?.staves).toBe(2);
+    });
+
+    it('should transpose piano score correctly', () => {
+      const xml = readFileSync(join(samplesPath, 'MozartPianoSonata.musicxml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = transpose(score, -2); // Transpose down 2 semitones
+      expect(result.success).toBe(true);
+      if (result.success) {
+        // Should have same structure
+        expect(result.data.parts.length).toBe(score.parts.length);
+        expect(result.data.parts[0].measures.length).toBe(score.parts[0].measures.length);
+      }
+    });
+
+    it('should allow setting staves on piano score', () => {
+      const xml = readFileSync(join(samplesPath, 'MozartPianoSonata.musicxml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = setStaves(score, {
+        partIndex: 0,
+        staves: 3, // Add a third staff
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.parts[0].measures[0].attributes?.staves).toBe(3);
+      }
+    });
+  });
+
+  describe('BeetAnGeSample (Beethoven - An die Geliebte)', () => {
+    it('should parse and validate structure', () => {
+      const xml = readFileSync(join(samplesPath, 'BeetAnGeSample.musicxml'), 'utf-8');
+      const score = parse(xml);
+
+      expect(score.parts.length).toBeGreaterThan(0);
+      // Beethoven song typically has voice + piano
+      expect(score.parts.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it('should allow duplicating a part', () => {
+      const xml = readFileSync(join(samplesPath, 'BeetAnGeSample.musicxml'), 'utf-8');
+      const score = parse(xml);
+
+      const firstPartId = score.parts[0].id;
+      const result = duplicatePart(score, {
+        sourcePartId: firstPartId,
+        newPartId: 'P-DUP',
+        newPartName: 'Duplicated Part',
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.parts.length).toBe(score.parts.length + 1);
+        const dupPart = result.data.parts.find(p => p.id === 'P-DUP');
+        expect(dupPart).toBeDefined();
+      }
+    });
+  });
+
+  describe('Dichterliebe01 (Schumann - Im wunderschönen Monat Mai)', () => {
+    it('should parse and maintain measure consistency', () => {
+      const xml = readFileSync(join(samplesPath, 'Dichterliebe01.musicxml'), 'utf-8');
+      const score = parse(xml);
+
+      // All parts should have same number of measures
+      const measureCount = score.parts[0].measures.length;
+      for (const part of score.parts) {
+        expect(part.measures.length).toBe(measureCount);
+      }
+    });
+
+    it('should allow removing a part if multiple exist', () => {
+      const xml = readFileSync(join(samplesPath, 'Dichterliebe01.musicxml'), 'utf-8');
+      const score = parse(xml);
+
+      if (score.parts.length > 1) {
+        const lastPartId = score.parts[score.parts.length - 1].id;
+        const result = removePart(score, lastPartId);
+
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect(result.data.parts.length).toBe(score.parts.length - 1);
+        }
+      }
+    });
+  });
+
+  describe('MozartTrio (Mozart Piano Trio)', () => {
+    it('should parse trio with multiple instruments', () => {
+      const xml = readFileSync(join(samplesPath, 'MozartTrio.musicxml'), 'utf-8');
+      const score = parse(xml);
+
+      // Trio should have 3 parts (typically violin, cello, piano)
+      expect(score.parts.length).toBeGreaterThanOrEqual(3);
+    });
+
+    it('should transpose all parts together', () => {
+      const xml = readFileSync(join(samplesPath, 'MozartTrio.musicxml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = transpose(score, 5); // Up a fourth
+      expect(result.success).toBe(true);
+
+      if (result.success) {
+        // All parts should still exist
+        expect(result.data.parts.length).toBe(score.parts.length);
+      }
+    });
+  });
+
+  describe('Chant (Gregorian Chant)', () => {
+    it('should handle chant notation', () => {
+      const xml = readFileSync(join(samplesPath, 'Chant.musicxml'), 'utf-8');
+      const score = parse(xml);
+
+      expect(score.parts.length).toBeGreaterThan(0);
+
+      // Transpose should work even on chant
+      const result = transpose(score, 3);
+      expect(result.success).toBe(true);
+    });
+  });
+
+  describe('Large File Performance', () => {
+    it('should handle ActorPreludeSample (large orchestral score)', () => {
+      const xml = readFileSync(join(samplesPath, 'ActorPreludeSample.musicxml'), 'utf-8');
+      const startTime = Date.now();
+      const score = parse(xml);
+      const parseTime = Date.now() - startTime;
+
+      // Should parse reasonably quickly (under 5 seconds)
+      expect(parseTime).toBeLessThan(5000);
+      expect(score.parts.length).toBeGreaterThan(0);
+
+      // Transpose should also be reasonably fast
+      const transposeStart = Date.now();
+      const result = transpose(score, 1);
+      const transposeTime = Date.now() - transposeStart;
+
+      expect(result.success).toBe(true);
+      expect(transposeTime).toBeLessThan(3000);
+    });
+  });
+});
