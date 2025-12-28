@@ -39,9 +39,11 @@ describe('Operations', () => {
       const score = parse(xml);
 
       // Transpose up by 2 semitones (C -> D)
-      const transposed = transpose(score, 2);
+      const result = transpose(score, 2);
+      expect(result.success).toBe(true);
+      if (!result.success) return;
 
-      const note = transposed.parts[0].measures[0].entries[0];
+      const note = result.data.parts[0].measures[0].entries[0];
       expect(note.type).toBe('note');
       if (note.type === 'note') {
         expect(note.pitch?.step).toBe('D');
@@ -54,9 +56,11 @@ describe('Operations', () => {
       const score = parse(xml);
 
       // Transpose up by 12 semitones (one octave)
-      const transposed = transpose(score, 12);
+      const result = transpose(score, 12);
+      expect(result.success).toBe(true);
+      if (!result.success) return;
 
-      const note = transposed.parts[0].measures[0].entries[0];
+      const note = result.data.parts[0].measures[0].entries[0];
       if (note.type === 'note') {
         expect(note.pitch?.step).toBe('C');
         expect(note.pitch?.octave).toBe(5);
@@ -68,9 +72,11 @@ describe('Operations', () => {
       const score = parse(xml);
 
       // Transpose up by 1 semitone (C -> C#)
-      const transposed = transpose(score, 1);
+      const result = transpose(score, 1);
+      expect(result.success).toBe(true);
+      if (!result.success) return;
 
-      const note = transposed.parts[0].measures[0].entries[0];
+      const note = result.data.parts[0].measures[0].entries[0];
       if (note.type === 'note') {
         expect(note.pitch?.step).toBe('C');
         expect(note.pitch?.alter).toBe(1);
@@ -96,7 +102,10 @@ describe('Operations', () => {
       const score = parse(xml);
 
       const result = transpose(score, 0);
-      expect(result).toBe(score);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data).toBe(score);
+      }
     });
   });
 
@@ -105,11 +114,12 @@ describe('Operations', () => {
       const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
       const score = parse(xml);
 
+      // Add in voice 2 at position 0 (parallel with existing note in voice 1)
       const updated = addNote(score, {
         partIndex: 0,
         measureIndex: 0,
-        voice: 1,
-        position: 4, // After the whole note
+        voice: 2,
+        position: 0,
         note: {
           pitch: { step: 'D', octave: 4 },
           duration: 4,
@@ -145,7 +155,7 @@ describe('Operations', () => {
   });
 
   describe('deleteNote', () => {
-    it('should delete a note from measure', () => {
+    it('should delete a note from measure (replaces with rest)', () => {
       const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
       const score = parse(xml);
 
@@ -156,12 +166,17 @@ describe('Operations', () => {
       });
 
       const measure = updated.parts[0].measures[0];
-      const notes = measure.entries.filter((e) => e.type === 'note');
-      expect(notes).toHaveLength(3);
+      const noteEntries = measure.entries.filter((e) => e.type === 'note');
+      // Piano Roll semantics: deleted note becomes rest, so still 4 note entries
+      expect(noteEntries).toHaveLength(4);
 
-      // Second note should now be first
-      if (notes[0].type === 'note') {
-        expect(notes[0].pitch?.step).toBe('D');
+      // First entry should now be a rest
+      if (noteEntries[0].type === 'note') {
+        expect(noteEntries[0].rest).toBeDefined();
+      }
+      // Second entry should be D (was the second note)
+      if (noteEntries[1].type === 'note') {
+        expect(noteEntries[1].pitch?.step).toBe('D');
       }
     });
   });
@@ -376,7 +391,7 @@ describe('Operations', () => {
   });
 
   describe('deleteNoteChecked', () => {
-    it('should delete a note and return success', () => {
+    it('should delete a note and return success (replaces with rest)', () => {
       const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
       const score = parse(xml);
 
@@ -388,8 +403,13 @@ describe('Operations', () => {
 
       expect(result.success).toBe(true);
       if (result.success) {
-        const notes = result.data.parts[0].measures[0].entries.filter(e => e.type === 'note');
-        expect(notes).toHaveLength(3);
+        const noteEntries = result.data.parts[0].measures[0].entries.filter(e => e.type === 'note');
+        // Piano Roll semantics: deleted note becomes rest, so still 4 note entries
+        expect(noteEntries).toHaveLength(4);
+        // First should be a rest
+        if (noteEntries[0].type === 'note') {
+          expect(noteEntries[0].rest).toBeDefined();
+        }
       }
     });
   });
@@ -697,7 +717,7 @@ describe('Operations', () => {
 
       expect(result.success).toBe(false);
       if (!result.success) {
-        expect(result.errors[0].code).toBe('INVALID_STAFF_NUMBER');
+        expect(result.errors[0].code).toBe('INVALID_STAFF');
       }
     });
   });
@@ -742,7 +762,7 @@ describe('Operations', () => {
 
       expect(result.success).toBe(false);
       if (!result.success) {
-        expect(result.errors[0].code).toBe('INVALID_STAFF_NUMBER');
+        expect(result.errors[0].code).toBe('INVALID_STAFF');
       }
     });
 

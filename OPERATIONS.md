@@ -1,17 +1,23 @@
-# Operations API Implementation Checklist
+# Operations API
 
 This document defines the Operations API for musicxml-io. All operations are designed to:
-1. Return a `Result` type (success with new score, or error with validation details)
+1. Return a `OperationResult<T>` type (success with new score, or error with validation details)
 2. Guarantee musical validity when successful (no musical inconsistencies)
 3. Use the Validator to ensure score integrity after mutation
 
 ## Design Principles
 
+### Piano Roll Semantics
+Operations follow "Piano Roll" semantics where measures are always **filled** (充足):
+- Measures always contain either notes or rests that fill the entire duration
+- When a note is removed, it's replaced with a rest of the same duration
+- When a note's duration changes, subsequent space is filled with rests or consumed from following notes/rests
+
 ### Result Type Pattern
 All operations return a `OperationResult<T>` type:
 ```typescript
 type OperationResult<T> =
-  | { success: true; data: T }
+  | { success: true; data: T; warnings?: ValidationError[] }
   | { success: false; errors: ValidationError[] };
 ```
 
@@ -30,26 +36,35 @@ This ensures:
 
 ## Phase 1: Note Operations ✅
 
-Basic note manipulation with validation.
+Piano Roll style note manipulation.
 
 | Operation | Description | Status |
 |-----------|-------------|--------|
-| `addNoteChecked` | Add a note with position/duration validation | ✅ |
-| `deleteNoteChecked` | Remove a note with validation | ✅ |
-| `modifyNotePitchChecked` | Change note pitch with validation | ✅ |
-| `modifyNoteDurationChecked` | Change note duration with validation | ✅ |
-| `addChordNoteChecked` | Add chord note with validation | ✅ |
-| `transposeChecked` | Transpose all notes with validation | ✅ |
+| `insertNote` | Insert note at position (replaces rests, errors on note conflict) | ✅ |
+| `removeNote` | Remove note and replace with rest | ✅ |
+| `addChord` | Add chord note to existing note | ✅ |
+| `setNotePitch` | Change note pitch | ✅ |
+| `changeNoteDuration` | Change duration (consumes/fills adjacent space) | ✅ |
+| `transpose` | Transpose all notes by semitones | ✅ |
 
 ### Note Operation Errors
-- `MEASURE_DURATION_OVERFLOW` - Note duration exceeds measure capacity
-- `INVALID_STAFF_NUMBER` - Staff number is invalid
-- `INVALID_VOICE_NUMBER` - Voice number is invalid
-- `NEGATIVE_POSITION` - Operation would create negative position
+- `NOTE_CONFLICT` - Cannot insert note: conflicts with existing note
+- `EXCEEDS_MEASURE` - Note duration would exceed measure capacity
+- `INVALID_POSITION` - Position is invalid (negative)
+- `INVALID_DURATION` - Duration is invalid (zero or negative)
+- `NOTE_NOT_FOUND` - Note index not found
 
 ---
 
-## Phase 2: Part Operations ✅
+## Phase 2: Voice Operations ✅
+
+| Operation | Description | Status |
+|-----------|-------------|--------|
+| `addVoice` | Add new voice to measure (filled with rest) | ✅ |
+
+---
+
+## Phase 3: Part Operations ✅
 
 Part-level manipulation.
 
@@ -60,13 +75,12 @@ Part-level manipulation.
 | `duplicatePart` | Duplicate an existing part | ✅ |
 
 ### Part Operation Errors
-- `PART_ID_NOT_IN_PART_LIST` - Part ID consistency error
+- `PART_NOT_FOUND` - Part not found
 - `DUPLICATE_PART_ID` - Part ID already exists
-- `PART_MEASURE_COUNT_MISMATCH` - Measure count doesn't match other parts
 
 ---
 
-## Phase 3: Staff Operations ✅
+## Phase 4: Staff Operations ✅
 
 Staff management within parts (e.g., piano grand staff).
 
@@ -76,60 +90,97 @@ Staff management within parts (e.g., piano grand staff).
 | `moveNoteToStaff` | Move a note to a different staff | ✅ |
 
 ### Staff Operation Errors
+- `INVALID_STAFF` - Staff number is invalid
 - `STAFF_EXCEEDS_STAVES` - Target staff number exceeds declared staves
-- `MISSING_CLEF_FOR_STAFF` - Clef not defined for target staff
 
 ---
 
-## Phase 4: Measure Operations (Existing - To Be Enhanced)
+## Phase 5: Measure Operations (Legacy)
 
-Existing measure operations to add validation.
-
-| Operation | Description | Status |
-|-----------|-------------|--------|
-| `insertMeasureChecked` | Insert measure with validation | 🔲 |
-| `deleteMeasureChecked` | Delete measure with validation | 🔲 |
-| `changeKeyChecked` | Change key with validation | 🔲 |
-| `changeTimeChecked` | Change time with validation | 🔲 |
-| `setDivisionsChecked` | Set divisions with validation | 🔲 |
-
----
-
-## Phase 5: Voice Operations
-
-Voice-level manipulation (future).
+These operations exist without Result pattern (for backwards compatibility).
 
 | Operation | Description | Status |
 |-----------|-------------|--------|
-| `mergeVoices` | Merge two voices into one | 🔲 |
-| `splitVoice` | Split a voice into two | 🔲 |
-| `moveToVoice` | Move notes to different voice | 🔲 |
+| `insertMeasure` | Insert measure after specified measure | ✅ |
+| `deleteMeasure` | Delete a measure | ✅ |
+| `changeKey` | Change key signature | ✅ |
+| `changeTime` | Change time signature | ✅ |
 
 ---
 
 ## API Usage Examples
 
-### Adding a Note with Validation
+### Inserting a Note
 ```typescript
-import { addNoteChecked } from 'musicxml-io/operations';
+import { insertNote } from 'musicxml-io/operations';
 
-const result = addNoteChecked(score, {
+const result = insertNote(score, {
   partIndex: 0,
   measureIndex: 0,
   voice: 1,
   position: 0,
-  note: {
-    pitch: { step: 'C', octave: 4 },
-    duration: 4,
-    noteType: 'quarter',
-  },
+  pitch: { step: 'C', octave: 4 },
+  duration: 4,
+  noteType: 'quarter',
 });
 
 if (result.success) {
-  console.log('Note added successfully');
+  console.log('Note inserted successfully');
   score = result.data;
 } else {
-  console.error('Failed to add note:', result.errors);
+  // Handle errors like NOTE_CONFLICT or EXCEEDS_MEASURE
+  console.error('Failed to insert note:', result.errors);
+}
+```
+
+### Adding a Chord Note
+```typescript
+import { addChord } from 'musicxml-io/operations';
+
+const result = addChord(score, {
+  partIndex: 0,
+  measureIndex: 0,
+  noteIndex: 0,  // Add chord to first note
+  pitch: { step: 'E', octave: 4 },
+});
+
+if (result.success) {
+  score = result.data;
+}
+```
+
+### Changing Note Duration
+```typescript
+import { changeNoteDuration } from 'musicxml-io/operations';
+
+// Extend a quarter note to half note
+// Automatically consumes following rests/notes
+const result = changeNoteDuration(score, {
+  partIndex: 0,
+  measureIndex: 0,
+  noteIndex: 0,
+  newDuration: 8,  // Half note
+  noteType: 'half',
+});
+
+if (result.success) {
+  score = result.data;
+}
+```
+
+### Adding a Voice
+```typescript
+import { addVoice } from 'musicxml-io/operations';
+
+// Add voice 2 to measure (filled with whole-measure rest)
+const result = addVoice(score, {
+  partIndex: 0,
+  measureIndex: 0,
+  voice: 2,
+});
+
+if (result.success) {
+  score = result.data;
 }
 ```
 
@@ -207,3 +258,15 @@ interface ValidationError {
 ```
 
 Only `level: 'error'` blocks operations. Warnings and infos are allowed.
+
+---
+
+## Legacy API (Deprecated)
+
+For backwards compatibility, these legacy functions are still exported but deprecated:
+- `addNote` → Use `insertNote`
+- `deleteNote` → Use `removeNote`
+- `addChordNote` → Use `addChord`
+- `modifyNotePitch` → Use `setNotePitch`
+- `modifyNoteDuration` → Use `changeNoteDuration`
+- `*Checked` variants → Use the new main API (all operations now return `OperationResult`)
