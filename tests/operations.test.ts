@@ -37,6 +37,9 @@ import {
   addDynamics,
   removeDynamics,
   insertClefChange,
+  // Key-aware pitch operations
+  setNotePitchBySemitone,
+  shiftNotePitch,
   type OperationResult,
 } from '../src/operations';
 
@@ -1497,6 +1500,264 @@ describe('Notation Operations', () => {
       expect(result.success).toBe(false);
       if (!result.success) {
         expect(result.errors[0].code).toBe('INVALID_CLEF');
+      }
+    });
+  });
+});
+
+// ============================================================
+// Key-Aware Pitch Operations Tests
+// ============================================================
+
+describe('Key-Aware Pitch Operations', () => {
+  describe('setNotePitchBySemitone', () => {
+    it('should set pitch by semitone in C major', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // Set to D4 (semitone 50 - C4 is 48)
+      const result = setNotePitchBySemitone(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        semitone: 50, // D4
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const note = result.data.parts[0].measures[0].entries[0];
+        if (note.type === 'note') {
+          expect(note.pitch?.step).toBe('D');
+          expect(note.pitch?.octave).toBe(4);
+          expect(note.pitch?.alter).toBeUndefined();
+        }
+      }
+    });
+
+    it('should use sharp spelling in sharp key (G major)', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/g-major-scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // Set to F#4 (semitone 54) - should be F# in G major
+      const result = setNotePitchBySemitone(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        semitone: 54, // F#4
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const note = result.data.parts[0].measures[0].entries[0];
+        if (note.type === 'note') {
+          expect(note.pitch?.step).toBe('F');
+          expect(note.pitch?.alter).toBe(1);
+          // No accidental needed because F# is in G major
+          expect(note.accidental).toBeUndefined();
+        }
+      }
+    });
+
+    it('should add accidental when note differs from key signature', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/g-major-scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // Set to F natural (semitone 53) - needs natural accidental in G major
+      const result = setNotePitchBySemitone(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        semitone: 53, // F4 natural
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const note = result.data.parts[0].measures[0].entries[0];
+        if (note.type === 'note') {
+          expect(note.pitch?.step).toBe('F');
+          expect(note.pitch?.alter).toBeUndefined();
+          // Natural accidental needed because F natural is not in G major
+          expect(note.accidental?.value).toBe('natural');
+        }
+      }
+    });
+
+    it('should handle octave changes correctly', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // Set to C5 (semitone 60)
+      const result = setNotePitchBySemitone(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        semitone: 60, // C5
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const note = result.data.parts[0].measures[0].entries[0];
+        if (note.type === 'note') {
+          expect(note.pitch?.step).toBe('C');
+          expect(note.pitch?.octave).toBe(5);
+        }
+      }
+    });
+
+    it('should respect preferSharp option', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // Set to C#/Db (semitone 49) with preferSharp = false
+      const result = setNotePitchBySemitone(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        semitone: 49, // C#4 or Db4
+        preferSharp: false,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const note = result.data.parts[0].measures[0].entries[0];
+        if (note.type === 'note') {
+          expect(note.pitch?.step).toBe('D');
+          expect(note.pitch?.alter).toBe(-1); // Db
+        }
+      }
+    });
+  });
+
+  describe('shiftNotePitch', () => {
+    it('should shift pitch up by semitones', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // C4 + 2 semitones = D4
+      const result = shiftNotePitch(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        semitones: 2,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const note = result.data.parts[0].measures[0].entries[0];
+        if (note.type === 'note') {
+          expect(note.pitch?.step).toBe('D');
+          expect(note.pitch?.octave).toBe(4);
+        }
+      }
+    });
+
+    it('should shift pitch down by semitones', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // C4 - 2 semitones = A#3 (sharp preferred in C major/neutral key)
+      const result = shiftNotePitch(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        semitones: -2,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const note = result.data.parts[0].measures[0].entries[0];
+        if (note.type === 'note') {
+          expect(note.pitch?.step).toBe('A');
+          expect(note.pitch?.alter).toBe(1); // A#
+          expect(note.pitch?.octave).toBe(3);
+        }
+      }
+    });
+
+    it('should shift pitch down with flat preference', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // C4 - 2 semitones = Bb3 (with preferSharp = false)
+      const result = shiftNotePitch(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        semitones: -2,
+        preferSharp: false,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const note = result.data.parts[0].measures[0].entries[0];
+        if (note.type === 'note') {
+          expect(note.pitch?.step).toBe('B');
+          expect(note.pitch?.alter).toBe(-1); // Bb
+          expect(note.pitch?.octave).toBe(3);
+        }
+      }
+    });
+
+    it('should return original score when semitones is 0', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = shiftNotePitch(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        semitones: 0,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data).toBe(score); // Should be same reference
+      }
+    });
+
+    it('should handle octave crossing', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // C4 + 12 semitones = C5
+      const result = shiftNotePitch(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        semitones: 12,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const note = result.data.parts[0].measures[0].entries[0];
+        if (note.type === 'note') {
+          expect(note.pitch?.step).toBe('C');
+          expect(note.pitch?.octave).toBe(5);
+        }
+      }
+    });
+
+    it('should consider key signature when shifting in G major', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/g-major-scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // First note is G4. Shift down 2 semitones to F4
+      // In G major, F is naturally F#, so F natural needs an accidental
+      const result = shiftNotePitch(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        semitones: -2, // G4 -> F4
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const note = result.data.parts[0].measures[0].entries[0];
+        if (note.type === 'note') {
+          expect(note.pitch?.step).toBe('F');
+          expect(note.pitch?.alter).toBeUndefined();
+          expect(note.accidental?.value).toBe('natural');
+        }
       }
     });
   });

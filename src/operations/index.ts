@@ -17,13 +17,23 @@ import type {
   DirectionEntry,
   AttributesEntry,
 } from '../types';
-import { STEPS, STEP_SEMITONES, getMeasureEndPosition } from '../utils';
+import {
+  STEPS,
+  STEP_SEMITONES,
+  getMeasureEndPosition,
+  pitchToSemitone,
+  semitoneToKeyAwarePitch,
+  getAccidentalsInMeasure,
+  determineAccidental,
+  getAbsolutePositionForNote,
+} from '../utils';
 import {
   validate,
   validateMeasureLocal,
   getMeasureContext,
   type ValidationError,
 } from '../validator';
+import { getAttributesAtMeasure } from '../query';
 
 // ============================================================
 // Result Type
@@ -763,6 +773,144 @@ export function setNotePitch(
   }
 
   return failure([operationError('NOTE_NOT_FOUND', `Note index ${options.noteIndex} not found`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+}
+
+// ============================================================
+// Key-Aware Pitch Operations
+// ============================================================
+
+export interface SetNotePitchBySemitoneOptions {
+  partIndex: number;
+  measureIndex: number;
+  noteIndex: number;
+  /** MIDI-like semitone value (C4 = 48, C#4 = 49, etc.) */
+  semitone: number;
+  /** Prefer sharp spelling over flat (defaults to key signature preference) */
+  preferSharp?: boolean;
+}
+
+/**
+ * Set note pitch by semitone value, considering key signature and accidentals.
+ * Automatically determines the appropriate enharmonic spelling and sets the accidental if needed.
+ */
+export function setNotePitchBySemitone(
+  score: Score,
+  options: SetNotePitchBySemitoneOptions
+): OperationResult<Score> {
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  if (options.measureIndex < 0 || options.measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const measure = result.parts[options.partIndex].measures[options.measureIndex];
+
+  // Get key signature from measure attributes
+  const measureNumber = measure.number ?? String(options.measureIndex + 1);
+  const attrs = getAttributesAtMeasure(result, { part: options.partIndex, measure: measureNumber });
+  const keySignature = attrs.key ?? { fifths: 0 };
+
+  // Find the note
+  let noteCount = 0;
+  for (const entry of measure.entries) {
+    if (entry.type === 'note' && !entry.rest) {
+      if (noteCount === options.noteIndex) {
+        // Get position of this note for accidental tracking
+        const notePosition = getAbsolutePositionForNote(entry, measure);
+
+        // Get accidentals used earlier in the measure
+        const accidentalsInMeasure = getAccidentalsInMeasure(measure, notePosition, entry.voice);
+
+        // Convert semitone to pitch with key-aware spelling
+        const newPitch = semitoneToKeyAwarePitch(options.semitone, keySignature, {
+          preferSharp: options.preferSharp,
+        });
+
+        // Determine if we need to show an accidental
+        const accidental = determineAccidental(newPitch, keySignature, accidentalsInMeasure);
+
+        // Update the note
+        entry.pitch = newPitch;
+        if (accidental) {
+          entry.accidental = { value: accidental };
+        } else {
+          delete entry.accidental;
+        }
+
+        return success(result);
+      }
+      noteCount++;
+    }
+  }
+
+  return failure([operationError('NOTE_NOT_FOUND', `Note index ${options.noteIndex} not found`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+}
+
+export interface ShiftNotePitchOptions {
+  partIndex: number;
+  measureIndex: number;
+  noteIndex: number;
+  /** Number of semitones to shift (positive = up, negative = down) */
+  semitones: number;
+  /** Prefer sharp spelling over flat (defaults to key signature preference) */
+  preferSharp?: boolean;
+}
+
+/**
+ * Shift note pitch by a number of semitones, considering key signature and accidentals.
+ * Automatically determines the appropriate enharmonic spelling and sets the accidental if needed.
+ */
+export function shiftNotePitch(
+  score: Score,
+  options: ShiftNotePitchOptions
+): OperationResult<Score> {
+  if (options.semitones === 0) {
+    return success(score);
+  }
+
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  if (options.measureIndex < 0 || options.measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  // Find the note and get its current semitone
+  const measure = part.measures[options.measureIndex];
+  let noteCount = 0;
+  let currentSemitone: number | null = null;
+
+  for (const entry of measure.entries) {
+    if (entry.type === 'note' && !entry.rest) {
+      if (noteCount === options.noteIndex) {
+        if (!entry.pitch) {
+          return failure([operationError('NOTE_NOT_FOUND', 'Note has no pitch', { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+        }
+        currentSemitone = pitchToSemitone(entry.pitch);
+        break;
+      }
+      noteCount++;
+    }
+  }
+
+  if (currentSemitone === null) {
+    return failure([operationError('NOTE_NOT_FOUND', `Note index ${options.noteIndex} not found`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  // Calculate new semitone and delegate to setNotePitchBySemitone
+  return setNotePitchBySemitone(score, {
+    partIndex: options.partIndex,
+    measureIndex: options.measureIndex,
+    noteIndex: options.noteIndex,
+    semitone: currentSemitone + options.semitones,
+    preferSharp: options.preferSharp,
+  });
 }
 
 // ============================================================
