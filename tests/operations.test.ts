@@ -69,6 +69,30 @@ import {
   removePedal,
   addTextDirection,
   addRehearsalMark,
+  // Phase 1: Repeat and Structure operations
+  addRepeatBarline,
+  removeRepeatBarline,
+  addEnding,
+  removeEnding,
+  changeBarline,
+  addSegno,
+  addCoda,
+  addDaCapo,
+  addDalSegno,
+  addFine,
+  addToCoda,
+  // Phase 2: Grace note operations
+  addGraceNote,
+  removeGraceNote,
+  convertToGrace,
+  // Phase 3: Lyric operations
+  addLyric,
+  removeLyric,
+  updateLyric,
+  // Phase 4: Harmony operations
+  addHarmony,
+  removeHarmony,
+  updateHarmony,
   type OperationResult,
   type NoteSelection,
 } from '../src/operations';
@@ -3248,6 +3272,739 @@ describe('Expression/Performance Operations', () => {
       });
 
       expect(result.success).toBe(true);
+    });
+  });
+
+  // ============================================================
+  // Phase 1: Repeat and Structure Operations Tests
+  // ============================================================
+  describe('addRepeatBarline', () => {
+    it('should add a forward repeat barline', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = addRepeatBarline(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        direction: 'forward',
+      });
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      const measure = result.data.parts[0].measures[0];
+      expect(measure.barlines).toBeDefined();
+      const leftBarline = measure.barlines?.find(b => b.location === 'left');
+      expect(leftBarline).toBeDefined();
+      expect(leftBarline?.repeat?.direction).toBe('forward');
+      expect(leftBarline?.barStyle).toBe('heavy-light');
+    });
+
+    it('should add a backward repeat barline', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = addRepeatBarline(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        direction: 'backward',
+        times: 2,
+      });
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      const measure = result.data.parts[0].measures[0];
+      const rightBarline = measure.barlines?.find(b => b.location === 'right');
+      expect(rightBarline).toBeDefined();
+      expect(rightBarline?.repeat?.direction).toBe('backward');
+      expect(rightBarline?.repeat?.times).toBe(2);
+    });
+
+    it('should fail if repeat already exists', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result1 = addRepeatBarline(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        direction: 'forward',
+      });
+      expect(result1.success).toBe(true);
+      if (!result1.success) return;
+
+      const result2 = addRepeatBarline(result1.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        direction: 'forward',
+      });
+      expect(result2.success).toBe(false);
+    });
+  });
+
+  describe('removeRepeatBarline', () => {
+    it('should remove a repeat barline', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // First add a repeat
+      const addResult = addRepeatBarline(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        direction: 'forward',
+      });
+      expect(addResult.success).toBe(true);
+      if (!addResult.success) return;
+
+      // Then remove it
+      const removeResult = removeRepeatBarline(addResult.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        location: 'left',
+      });
+      expect(removeResult.success).toBe(true);
+      if (!removeResult.success) return;
+
+      const measure = removeResult.data.parts[0].measures[0];
+      expect(measure.barlines).toBeUndefined();
+    });
+  });
+
+  describe('addEnding', () => {
+    it('should add a volta bracket (ending)', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = addEnding(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        number: '1',
+        type: 'start',
+      });
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      const measure = result.data.parts[0].measures[0];
+      const leftBarline = measure.barlines?.find(b => b.location === 'left');
+      expect(leftBarline?.ending).toBeDefined();
+      expect(leftBarline?.ending?.number).toBe('1');
+      expect(leftBarline?.ending?.type).toBe('start');
+    });
+  });
+
+  describe('removeEnding', () => {
+    it('should remove a volta bracket', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // Add then remove
+      const addResult = addEnding(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        number: '1',
+        type: 'start',
+      });
+      expect(addResult.success).toBe(true);
+      if (!addResult.success) return;
+
+      const removeResult = removeEnding(addResult.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        location: 'left',
+      });
+      expect(removeResult.success).toBe(true);
+    });
+  });
+
+  describe('changeBarline', () => {
+    it('should change barline style', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = changeBarline(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        location: 'right',
+        barStyle: 'light-heavy',
+      });
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      const measure = result.data.parts[0].measures[0];
+      const rightBarline = measure.barlines?.find(b => b.location === 'right');
+      expect(rightBarline?.barStyle).toBe('light-heavy');
+    });
+  });
+
+  describe('addSegno', () => {
+    it('should add a segno sign', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = addSegno(score, {
+        partIndex: 0,
+        measureIndex: 0,
+      });
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      const measure = result.data.parts[0].measures[0];
+      const segnoDirection = measure.entries.find(
+        e => e.type === 'direction' && e.directionTypes.some(dt => dt.kind === 'segno')
+      );
+      expect(segnoDirection).toBeDefined();
+    });
+  });
+
+  describe('addCoda', () => {
+    it('should add a coda sign', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = addCoda(score, {
+        partIndex: 0,
+        measureIndex: 0,
+      });
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      const measure = result.data.parts[0].measures[0];
+      const codaDirection = measure.entries.find(
+        e => e.type === 'direction' && e.directionTypes.some(dt => dt.kind === 'coda')
+      );
+      expect(codaDirection).toBeDefined();
+    });
+  });
+
+  describe('addDaCapo', () => {
+    it('should add D.C. marking with sound element', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = addDaCapo(score, {
+        partIndex: 0,
+        measureIndex: 0,
+      });
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      const measure = result.data.parts[0].measures[0];
+      const dcDirection = measure.entries.find(
+        e => e.type === 'direction' && e.directionTypes.some(dt => dt.kind === 'words' && dt.text === 'D.C.')
+      );
+      expect(dcDirection).toBeDefined();
+
+      const soundEntry = measure.entries.find(e => e.type === 'sound' && e.dacapo === true);
+      expect(soundEntry).toBeDefined();
+    });
+  });
+
+  describe('addDalSegno', () => {
+    it('should add D.S. marking with sound element', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = addDalSegno(score, {
+        partIndex: 0,
+        measureIndex: 0,
+      });
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      const measure = result.data.parts[0].measures[0];
+      const soundEntry = measure.entries.find(e => e.type === 'sound' && e.dalsegno);
+      expect(soundEntry).toBeDefined();
+    });
+  });
+
+  describe('addFine', () => {
+    it('should add Fine marking with sound element', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = addFine(score, {
+        partIndex: 0,
+        measureIndex: 0,
+      });
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      const measure = result.data.parts[0].measures[0];
+      const soundEntry = measure.entries.find(e => e.type === 'sound' && e.fine === true);
+      expect(soundEntry).toBeDefined();
+    });
+  });
+
+  describe('addToCoda', () => {
+    it('should add To Coda marking with sound element', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = addToCoda(score, {
+        partIndex: 0,
+        measureIndex: 0,
+      });
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      const measure = result.data.parts[0].measures[0];
+      const soundEntry = measure.entries.find(e => e.type === 'sound' && e.tocoda);
+      expect(soundEntry).toBeDefined();
+    });
+  });
+
+  // ============================================================
+  // Phase 2: Grace Note Operations Tests
+  // ============================================================
+  describe('addGraceNote', () => {
+    it('should add a grace note before target note', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = addGraceNote(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        targetNoteIndex: 0,
+        pitch: { step: 'D', octave: 4 },
+        slash: true,
+      });
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      const measure = result.data.parts[0].measures[0];
+      const graceNote = measure.entries.find(e => e.type === 'note' && e.grace);
+      expect(graceNote).toBeDefined();
+      if (graceNote?.type === 'note') {
+        expect(graceNote.pitch?.step).toBe('D');
+        expect(graceNote.grace?.slash).toBe(true);
+        expect(graceNote.duration).toBe(0);
+      }
+    });
+
+    it('should fail for invalid note index', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = addGraceNote(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        targetNoteIndex: 99,
+        pitch: { step: 'D', octave: 4 },
+      });
+
+      expect(result.success).toBe(false);
+    });
+  });
+
+  describe('removeGraceNote', () => {
+    it('should remove a grace note', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // Add then remove
+      const addResult = addGraceNote(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        targetNoteIndex: 0,
+        pitch: { step: 'D', octave: 4 },
+      });
+      expect(addResult.success).toBe(true);
+      if (!addResult.success) return;
+
+      const removeResult = removeGraceNote(addResult.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        graceNoteIndex: 0,
+      });
+      expect(removeResult.success).toBe(true);
+      if (!removeResult.success) return;
+
+      const measure = removeResult.data.parts[0].measures[0];
+      const graceNote = measure.entries.find(e => e.type === 'note' && e.grace);
+      expect(graceNote).toBeUndefined();
+    });
+  });
+
+  describe('convertToGrace', () => {
+    it('should convert a regular note to grace note', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = convertToGrace(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        slash: false,
+      });
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      const measure = result.data.parts[0].measures[0];
+      const firstNote = measure.entries.find(e => e.type === 'note');
+      if (firstNote?.type === 'note') {
+        expect(firstNote.grace).toBeDefined();
+        expect(firstNote.grace?.slash).toBe(false);
+        expect(firstNote.duration).toBe(0);
+      }
+    });
+  });
+
+  // ============================================================
+  // Phase 3: Lyric Operations Tests
+  // ============================================================
+  describe('addLyric', () => {
+    it('should add a lyric to a note', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = addLyric(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        text: 'La',
+        syllabic: 'single',
+        verse: 1,
+      });
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      const measure = result.data.parts[0].measures[0];
+      const note = measure.entries.find(e => e.type === 'note' && !e.rest);
+      if (note?.type === 'note') {
+        expect(note.lyrics).toBeDefined();
+        expect(note.lyrics?.[0].text).toBe('La');
+        expect(note.lyrics?.[0].syllabic).toBe('single');
+        expect(note.lyrics?.[0].number).toBe(1);
+      }
+    });
+
+    it('should fail if lyric already exists for verse', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result1 = addLyric(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        text: 'La',
+        verse: 1,
+      });
+      expect(result1.success).toBe(true);
+      if (!result1.success) return;
+
+      const result2 = addLyric(result1.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        text: 'Ti',
+        verse: 1,
+      });
+      expect(result2.success).toBe(false);
+    });
+
+    it('should allow multiple verses on same note', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result1 = addLyric(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        text: 'First',
+        verse: 1,
+      });
+      expect(result1.success).toBe(true);
+      if (!result1.success) return;
+
+      const result2 = addLyric(result1.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        text: 'Second',
+        verse: 2,
+      });
+      expect(result2.success).toBe(true);
+      if (!result2.success) return;
+
+      const measure = result2.data.parts[0].measures[0];
+      const note = measure.entries.find(e => e.type === 'note' && !e.rest);
+      if (note?.type === 'note') {
+        expect(note.lyrics?.length).toBe(2);
+      }
+    });
+  });
+
+  describe('removeLyric', () => {
+    it('should remove a lyric from a note', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // Add then remove
+      const addResult = addLyric(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        text: 'La',
+        verse: 1,
+      });
+      expect(addResult.success).toBe(true);
+      if (!addResult.success) return;
+
+      const removeResult = removeLyric(addResult.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        verse: 1,
+      });
+      expect(removeResult.success).toBe(true);
+      if (!removeResult.success) return;
+
+      const measure = removeResult.data.parts[0].measures[0];
+      const note = measure.entries.find(e => e.type === 'note' && !e.rest);
+      if (note?.type === 'note') {
+        expect(note.lyrics).toBeUndefined();
+      }
+    });
+  });
+
+  describe('updateLyric', () => {
+    it('should update an existing lyric', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // Add first
+      const addResult = addLyric(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        text: 'La',
+        syllabic: 'single',
+        verse: 1,
+      });
+      expect(addResult.success).toBe(true);
+      if (!addResult.success) return;
+
+      // Update
+      const updateResult = updateLyric(addResult.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        verse: 1,
+        text: 'Fa',
+        syllabic: 'begin',
+      });
+      expect(updateResult.success).toBe(true);
+      if (!updateResult.success) return;
+
+      const measure = updateResult.data.parts[0].measures[0];
+      const note = measure.entries.find(e => e.type === 'note' && !e.rest);
+      if (note?.type === 'note') {
+        expect(note.lyrics?.[0].text).toBe('Fa');
+        expect(note.lyrics?.[0].syllabic).toBe('begin');
+      }
+    });
+  });
+
+  // ============================================================
+  // Phase 4: Harmony Operations Tests
+  // ============================================================
+  describe('addHarmony', () => {
+    it('should add a harmony (chord symbol)', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = addHarmony(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        position: 0,
+        root: { step: 'C' },
+        kind: 'major',
+      });
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      const measure = result.data.parts[0].measures[0];
+      const harmony = measure.entries.find(e => e.type === 'harmony');
+      expect(harmony).toBeDefined();
+      if (harmony?.type === 'harmony') {
+        expect(harmony.root.rootStep).toBe('C');
+        expect(harmony.kind).toBe('major');
+      }
+    });
+
+    it('should add harmony with bass note', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = addHarmony(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        position: 0,
+        root: { step: 'C' },
+        kind: 'major',
+        bass: { step: 'E' },
+      });
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      const measure = result.data.parts[0].measures[0];
+      const harmony = measure.entries.find(e => e.type === 'harmony');
+      if (harmony?.type === 'harmony') {
+        expect(harmony.bass?.bassStep).toBe('E');
+      }
+    });
+
+    it('should add harmony with alterations', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = addHarmony(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        position: 0,
+        root: { step: 'C', alter: 1 }, // C#
+        kind: 'minor-seventh',
+        degrees: [{ value: 9, alter: 0, type: 'add' }],
+      });
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      const measure = result.data.parts[0].measures[0];
+      const harmony = measure.entries.find(e => e.type === 'harmony');
+      if (harmony?.type === 'harmony') {
+        expect(harmony.root.rootAlter).toBe(1);
+        expect(harmony.kind).toBe('minor-seventh');
+        expect(harmony.degrees?.[0].degreeValue).toBe(9);
+      }
+    });
+
+    it('should fail for invalid root step', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = addHarmony(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        position: 0,
+        root: { step: 'X' },
+        kind: 'major',
+      });
+
+      expect(result.success).toBe(false);
+    });
+  });
+
+  describe('removeHarmony', () => {
+    it('should remove a harmony', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // Add then remove
+      const addResult = addHarmony(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        position: 0,
+        root: { step: 'C' },
+        kind: 'major',
+      });
+      expect(addResult.success).toBe(true);
+      if (!addResult.success) return;
+
+      const removeResult = removeHarmony(addResult.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        harmonyIndex: 0,
+      });
+      expect(removeResult.success).toBe(true);
+      if (!removeResult.success) return;
+
+      const measure = removeResult.data.parts[0].measures[0];
+      const harmony = measure.entries.find(e => e.type === 'harmony');
+      expect(harmony).toBeUndefined();
+    });
+  });
+
+  describe('updateHarmony', () => {
+    it('should update an existing harmony', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // Add first
+      const addResult = addHarmony(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        position: 0,
+        root: { step: 'C' },
+        kind: 'major',
+      });
+      expect(addResult.success).toBe(true);
+      if (!addResult.success) return;
+
+      // Update to Cm7
+      const updateResult = updateHarmony(addResult.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        harmonyIndex: 0,
+        kind: 'minor-seventh',
+        bass: { step: 'G' },
+      });
+      expect(updateResult.success).toBe(true);
+      if (!updateResult.success) return;
+
+      const measure = updateResult.data.parts[0].measures[0];
+      const harmony = measure.entries.find(e => e.type === 'harmony');
+      if (harmony?.type === 'harmony') {
+        expect(harmony.root.rootStep).toBe('C'); // unchanged
+        expect(harmony.kind).toBe('minor-seventh');
+        expect(harmony.bass?.bassStep).toBe('G');
+      }
+    });
+
+    it('should remove bass with null', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // Add with bass
+      const addResult = addHarmony(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        position: 0,
+        root: { step: 'C' },
+        kind: 'major',
+        bass: { step: 'E' },
+      });
+      expect(addResult.success).toBe(true);
+      if (!addResult.success) return;
+
+      // Remove bass
+      const updateResult = updateHarmony(addResult.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        harmonyIndex: 0,
+        bass: null,
+      });
+      expect(updateResult.success).toBe(true);
+      if (!updateResult.success) return;
+
+      const measure = updateResult.data.parts[0].measures[0];
+      const harmony = measure.entries.find(e => e.type === 'harmony');
+      if (harmony?.type === 'harmony') {
+        expect(harmony.bass).toBeUndefined();
+      }
     });
   });
 });

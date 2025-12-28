@@ -19,6 +19,10 @@ import type {
   AttributesEntry,
   FermataNotation,
   OrnamentNotation,
+  Lyric,
+  HarmonyEntry,
+  SoundEntry,
+  NoteType,
 } from '../types';
 import {
   STEPS,
@@ -88,7 +92,20 @@ export type OperationErrorCode =
   | 'DYNAMICS_ALREADY_EXISTS'
   | 'DYNAMICS_NOT_FOUND'
   | 'INVALID_CLEF'
-  | 'ACCIDENTAL_OUT_OF_BOUNDS';
+  | 'ACCIDENTAL_OUT_OF_BOUNDS'
+  | 'BARLINE_NOT_FOUND'
+  | 'BARLINE_ALREADY_EXISTS'
+  | 'ENDING_NOT_FOUND'
+  | 'ENDING_ALREADY_EXISTS'
+  | 'REPEAT_NOT_FOUND'
+  | 'REPEAT_ALREADY_EXISTS'
+  | 'GRACE_NOTE_NOT_FOUND'
+  | 'INVALID_GRACE_NOTE'
+  | 'LYRIC_NOT_FOUND'
+  | 'LYRIC_ALREADY_EXISTS'
+  | 'HARMONY_NOT_FOUND'
+  | 'HARMONY_ALREADY_EXISTS'
+  | 'INVALID_HARMONY';
 
 function operationError(
   code: OperationErrorCode,
@@ -4156,6 +4173,1232 @@ function insertDirectionAtPosition(measure: Measure, direction: DirectionEntry, 
   }
 
   measure.entries.splice(insertIndex, 0, direction);
+}
+
+// ============================================================
+// Phase 1: Repeat and Structure Operations
+// ============================================================
+
+export type BarStyle = 'regular' | 'dotted' | 'dashed' | 'heavy' | 'light-light' | 'light-heavy' | 'heavy-light' | 'heavy-heavy' | 'tick' | 'short' | 'none';
+
+export interface AddRepeatBarlineOptions {
+  partIndex: number;
+  measureIndex: number;
+  direction: 'forward' | 'backward';
+  times?: number;
+}
+
+/**
+ * Add a repeat barline to a measure.
+ * Forward repeats go on the left, backward repeats go on the right.
+ * This operation applies to all parts at the specified measure index.
+ */
+export function addRepeatBarline(
+  score: Score,
+  options: AddRepeatBarlineOptions
+): OperationResult<Score> {
+  const { partIndex, measureIndex, direction, times } = options;
+
+  if (partIndex < 0 || partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${partIndex} out of bounds`, { partIndex })]);
+  }
+
+  const part = score.parts[partIndex];
+  if (measureIndex < 0 || measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${measureIndex} out of bounds`, { partIndex, measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const location: 'left' | 'right' = direction === 'forward' ? 'left' : 'right';
+  const barStyle: BarStyle = direction === 'forward' ? 'heavy-light' : 'light-heavy';
+
+  // Apply to all parts at this measure index
+  for (const p of result.parts) {
+    if (measureIndex >= p.measures.length) continue;
+
+    const measure = p.measures[measureIndex];
+    if (!measure.barlines) {
+      measure.barlines = [];
+    }
+
+    // Check if repeat already exists at this location
+    const existingIndex = measure.barlines.findIndex(b => b.location === location && b.repeat);
+    if (existingIndex >= 0) {
+      return failure([operationError('REPEAT_ALREADY_EXISTS', `Repeat barline already exists at ${location} of measure ${measureIndex}`, { partIndex, measureIndex })]);
+    }
+
+    // Remove any existing barline at this location (without repeat)
+    const nonRepeatIndex = measure.barlines.findIndex(b => b.location === location && !b.repeat);
+    if (nonRepeatIndex >= 0) {
+      measure.barlines.splice(nonRepeatIndex, 1);
+    }
+
+    measure.barlines.push({
+      location,
+      barStyle,
+      repeat: {
+        direction,
+        times,
+      },
+    });
+  }
+
+  return success(result);
+}
+
+export interface RemoveRepeatBarlineOptions {
+  partIndex: number;
+  measureIndex: number;
+  location: 'left' | 'right';
+}
+
+/**
+ * Remove a repeat barline from a measure.
+ * This operation applies to all parts at the specified measure index.
+ */
+export function removeRepeatBarline(
+  score: Score,
+  options: RemoveRepeatBarlineOptions
+): OperationResult<Score> {
+  const { partIndex, measureIndex, location } = options;
+
+  if (partIndex < 0 || partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${partIndex} out of bounds`, { partIndex })]);
+  }
+
+  const part = score.parts[partIndex];
+  if (measureIndex < 0 || measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${measureIndex} out of bounds`, { partIndex, measureIndex })]);
+  }
+
+  const measure = part.measures[measureIndex];
+  if (!measure.barlines) {
+    return failure([operationError('REPEAT_NOT_FOUND', `No repeat barline found at ${location} of measure ${measureIndex}`, { partIndex, measureIndex })]);
+  }
+
+  const existingIndex = measure.barlines.findIndex(b => b.location === location && b.repeat);
+  if (existingIndex < 0) {
+    return failure([operationError('REPEAT_NOT_FOUND', `No repeat barline found at ${location} of measure ${measureIndex}`, { partIndex, measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+
+  // Apply to all parts at this measure index
+  for (const p of result.parts) {
+    if (measureIndex >= p.measures.length) continue;
+
+    const m = p.measures[measureIndex];
+    if (m.barlines) {
+      const idx = m.barlines.findIndex(b => b.location === location && b.repeat);
+      if (idx >= 0) {
+        m.barlines.splice(idx, 1);
+      }
+      if (m.barlines.length === 0) {
+        delete m.barlines;
+      }
+    }
+  }
+
+  return success(result);
+}
+
+export interface AddEndingOptions {
+  partIndex: number;
+  measureIndex: number;
+  number: string; // "1", "2", "1, 2", etc.
+  type: 'start' | 'stop' | 'discontinue';
+}
+
+/**
+ * Add an ending (volta bracket) to a measure.
+ * Start endings go on the left barline, stop/discontinue on the right.
+ * This operation applies to all parts at the specified measure index.
+ */
+export function addEnding(
+  score: Score,
+  options: AddEndingOptions
+): OperationResult<Score> {
+  const { partIndex, measureIndex, number, type } = options;
+
+  if (partIndex < 0 || partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${partIndex} out of bounds`, { partIndex })]);
+  }
+
+  const part = score.parts[partIndex];
+  if (measureIndex < 0 || measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${measureIndex} out of bounds`, { partIndex, measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const location: 'left' | 'right' = type === 'start' ? 'left' : 'right';
+
+  // Apply to all parts at this measure index
+  for (const p of result.parts) {
+    if (measureIndex >= p.measures.length) continue;
+
+    const measure = p.measures[measureIndex];
+    if (!measure.barlines) {
+      measure.barlines = [];
+    }
+
+    // Find or create barline at this location
+    let barline = measure.barlines.find(b => b.location === location);
+    if (!barline) {
+      barline = { location };
+      measure.barlines.push(barline);
+    }
+
+    if (barline.ending) {
+      return failure([operationError('ENDING_ALREADY_EXISTS', `Ending already exists at ${location} of measure ${measureIndex}`, { partIndex, measureIndex })]);
+    }
+
+    barline.ending = { number, type };
+  }
+
+  return success(result);
+}
+
+export interface RemoveEndingOptions {
+  partIndex: number;
+  measureIndex: number;
+  location: 'left' | 'right';
+}
+
+/**
+ * Remove an ending (volta bracket) from a measure.
+ * This operation applies to all parts at the specified measure index.
+ */
+export function removeEnding(
+  score: Score,
+  options: RemoveEndingOptions
+): OperationResult<Score> {
+  const { partIndex, measureIndex, location } = options;
+
+  if (partIndex < 0 || partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${partIndex} out of bounds`, { partIndex })]);
+  }
+
+  const part = score.parts[partIndex];
+  if (measureIndex < 0 || measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${measureIndex} out of bounds`, { partIndex, measureIndex })]);
+  }
+
+  const measure = part.measures[measureIndex];
+  const barline = measure.barlines?.find(b => b.location === location && b.ending);
+  if (!barline) {
+    return failure([operationError('ENDING_NOT_FOUND', `No ending found at ${location} of measure ${measureIndex}`, { partIndex, measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+
+  // Apply to all parts at this measure index
+  for (const p of result.parts) {
+    if (measureIndex >= p.measures.length) continue;
+
+    const m = p.measures[measureIndex];
+    if (m.barlines) {
+      const bl = m.barlines.find(b => b.location === location);
+      if (bl) {
+        delete bl.ending;
+        // Clean up empty barline
+        if (!bl.barStyle && !bl.repeat && !bl.ending) {
+          const idx = m.barlines.indexOf(bl);
+          m.barlines.splice(idx, 1);
+        }
+      }
+      if (m.barlines.length === 0) {
+        delete m.barlines;
+      }
+    }
+  }
+
+  return success(result);
+}
+
+export interface ChangeBarlineOptions {
+  partIndex: number;
+  measureIndex: number;
+  location: 'left' | 'right' | 'middle';
+  barStyle: BarStyle;
+}
+
+/**
+ * Change the barline style at a specific location in a measure.
+ * This operation applies to all parts at the specified measure index.
+ */
+export function changeBarline(
+  score: Score,
+  options: ChangeBarlineOptions
+): OperationResult<Score> {
+  const { partIndex, measureIndex, location, barStyle } = options;
+
+  if (partIndex < 0 || partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${partIndex} out of bounds`, { partIndex })]);
+  }
+
+  const part = score.parts[partIndex];
+  if (measureIndex < 0 || measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${measureIndex} out of bounds`, { partIndex, measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+
+  // Apply to all parts at this measure index
+  for (const p of result.parts) {
+    if (measureIndex >= p.measures.length) continue;
+
+    const measure = p.measures[measureIndex];
+    if (!measure.barlines) {
+      measure.barlines = [];
+    }
+
+    // Find or create barline at this location
+    let barline = measure.barlines.find(b => b.location === location);
+    if (!barline) {
+      barline = { location };
+      measure.barlines.push(barline);
+    }
+
+    barline.barStyle = barStyle;
+  }
+
+  return success(result);
+}
+
+export interface AddSegnoOptions {
+  partIndex: number;
+  measureIndex: number;
+  position?: number;
+}
+
+/**
+ * Add a segno sign to a measure.
+ */
+export function addSegno(
+  score: Score,
+  options: AddSegnoOptions
+): OperationResult<Score> {
+  const { partIndex, measureIndex, position = 0 } = options;
+
+  if (partIndex < 0 || partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${partIndex} out of bounds`, { partIndex })]);
+  }
+
+  const part = score.parts[partIndex];
+  if (measureIndex < 0 || measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${measureIndex} out of bounds`, { partIndex, measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const measure = result.parts[partIndex].measures[measureIndex];
+
+  const direction: DirectionEntry = {
+    type: 'direction',
+    directionTypes: [{ kind: 'segno' }],
+    placement: 'above',
+  };
+
+  insertDirectionAtPosition(measure, direction, position);
+
+  return success(result);
+}
+
+export interface AddCodaOptions {
+  partIndex: number;
+  measureIndex: number;
+  position?: number;
+}
+
+/**
+ * Add a coda sign to a measure.
+ */
+export function addCoda(
+  score: Score,
+  options: AddCodaOptions
+): OperationResult<Score> {
+  const { partIndex, measureIndex, position = 0 } = options;
+
+  if (partIndex < 0 || partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${partIndex} out of bounds`, { partIndex })]);
+  }
+
+  const part = score.parts[partIndex];
+  if (measureIndex < 0 || measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${measureIndex} out of bounds`, { partIndex, measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const measure = result.parts[partIndex].measures[measureIndex];
+
+  const direction: DirectionEntry = {
+    type: 'direction',
+    directionTypes: [{ kind: 'coda' }],
+    placement: 'above',
+  };
+
+  insertDirectionAtPosition(measure, direction, position);
+
+  return success(result);
+}
+
+export interface AddNavigationOptions {
+  partIndex: number;
+  measureIndex: number;
+  position?: number;
+}
+
+/**
+ * Add a D.C. (Da Capo) marking to a measure.
+ * This adds both the text direction and the sound element.
+ */
+export function addDaCapo(
+  score: Score,
+  options: AddNavigationOptions
+): OperationResult<Score> {
+  const { partIndex, measureIndex, position } = options;
+
+  if (partIndex < 0 || partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${partIndex} out of bounds`, { partIndex })]);
+  }
+
+  const part = score.parts[partIndex];
+  if (measureIndex < 0 || measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${measureIndex} out of bounds`, { partIndex, measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const measure = result.parts[partIndex].measures[measureIndex];
+  const attrs = getAttributesAtMeasure(result, { part: partIndex, measure: measureIndex });
+  const measureDuration = getMeasureDuration(attrs.divisions ?? 1, attrs.time ?? { beats: '4', beatType: 4 });
+  const insertPos = position ?? measureDuration;
+
+  const direction: DirectionEntry = {
+    type: 'direction',
+    directionTypes: [{ kind: 'words', text: 'D.C.' }],
+    placement: 'above',
+  };
+
+  insertDirectionAtPosition(measure, direction, insertPos);
+
+  // Add sound element
+  const sound: SoundEntry = {
+    type: 'sound',
+    dacapo: true,
+  };
+  measure.entries.push(sound);
+
+  return success(result);
+}
+
+/**
+ * Add a D.S. (Dal Segno) marking to a measure.
+ */
+export function addDalSegno(
+  score: Score,
+  options: AddNavigationOptions
+): OperationResult<Score> {
+  const { partIndex, measureIndex, position } = options;
+
+  if (partIndex < 0 || partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${partIndex} out of bounds`, { partIndex })]);
+  }
+
+  const part = score.parts[partIndex];
+  if (measureIndex < 0 || measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${measureIndex} out of bounds`, { partIndex, measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const measure = result.parts[partIndex].measures[measureIndex];
+  const attrs = getAttributesAtMeasure(result, { part: partIndex, measure: measureIndex });
+  const measureDuration = getMeasureDuration(attrs.divisions ?? 1, attrs.time ?? { beats: '4', beatType: 4 });
+  const insertPos = position ?? measureDuration;
+
+  const direction: DirectionEntry = {
+    type: 'direction',
+    directionTypes: [{ kind: 'words', text: 'D.S.' }],
+    placement: 'above',
+  };
+
+  insertDirectionAtPosition(measure, direction, insertPos);
+
+  // Add sound element
+  const sound: SoundEntry = {
+    type: 'sound',
+    dalsegno: 'segno',
+  };
+  measure.entries.push(sound);
+
+  return success(result);
+}
+
+/**
+ * Add a Fine marking to a measure.
+ */
+export function addFine(
+  score: Score,
+  options: AddNavigationOptions
+): OperationResult<Score> {
+  const { partIndex, measureIndex, position } = options;
+
+  if (partIndex < 0 || partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${partIndex} out of bounds`, { partIndex })]);
+  }
+
+  const part = score.parts[partIndex];
+  if (measureIndex < 0 || measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${measureIndex} out of bounds`, { partIndex, measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const measure = result.parts[partIndex].measures[measureIndex];
+  const attrs = getAttributesAtMeasure(result, { part: partIndex, measure: measureIndex });
+  const measureDuration = getMeasureDuration(attrs.divisions ?? 1, attrs.time ?? { beats: '4', beatType: 4 });
+  const insertPos = position ?? measureDuration;
+
+  const direction: DirectionEntry = {
+    type: 'direction',
+    directionTypes: [{ kind: 'words', text: 'Fine' }],
+    placement: 'above',
+  };
+
+  insertDirectionAtPosition(measure, direction, insertPos);
+
+  // Add sound element
+  const sound: SoundEntry = {
+    type: 'sound',
+    fine: true,
+  };
+  measure.entries.push(sound);
+
+  return success(result);
+}
+
+/**
+ * Add a To Coda marking to a measure.
+ */
+export function addToCoda(
+  score: Score,
+  options: AddNavigationOptions
+): OperationResult<Score> {
+  const { partIndex, measureIndex, position } = options;
+
+  if (partIndex < 0 || partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${partIndex} out of bounds`, { partIndex })]);
+  }
+
+  const part = score.parts[partIndex];
+  if (measureIndex < 0 || measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${measureIndex} out of bounds`, { partIndex, measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const measure = result.parts[partIndex].measures[measureIndex];
+  const attrs = getAttributesAtMeasure(result, { part: partIndex, measure: measureIndex });
+  const measureDuration = getMeasureDuration(attrs.divisions ?? 1, attrs.time ?? { beats: '4', beatType: 4 });
+  const insertPos = position ?? measureDuration;
+
+  const direction: DirectionEntry = {
+    type: 'direction',
+    directionTypes: [{ kind: 'words', text: 'To Coda' }],
+    placement: 'above',
+  };
+
+  insertDirectionAtPosition(measure, direction, insertPos);
+
+  // Add sound element
+  const sound: SoundEntry = {
+    type: 'sound',
+    tocoda: 'coda',
+  };
+  measure.entries.push(sound);
+
+  return success(result);
+}
+
+// ============================================================
+// Phase 2: Grace Note Operations
+// ============================================================
+
+export interface AddGraceNoteOptions {
+  partIndex: number;
+  measureIndex: number;
+  targetNoteIndex: number; // Index of the note to attach grace note to
+  pitch: Pitch;
+  noteType?: NoteType;
+  slash?: boolean;
+  voice?: number;
+  staff?: number;
+}
+
+/**
+ * Add a grace note before a target note.
+ * Grace notes do not have duration in MusicXML.
+ */
+export function addGraceNote(
+  score: Score,
+  options: AddGraceNoteOptions
+): OperationResult<Score> {
+  const { partIndex, measureIndex, targetNoteIndex, pitch, noteType = 'eighth', slash = true, voice, staff } = options;
+
+  if (partIndex < 0 || partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${partIndex} out of bounds`, { partIndex })]);
+  }
+
+  const part = score.parts[partIndex];
+  if (measureIndex < 0 || measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${measureIndex} out of bounds`, { partIndex, measureIndex })]);
+  }
+
+  const measure = part.measures[measureIndex];
+
+  // Find the target note
+  let noteCount = 0;
+  let targetEntryIndex = -1;
+  let targetNote: NoteEntry | null = null;
+
+  for (let i = 0; i < measure.entries.length; i++) {
+    const entry = measure.entries[i];
+    if (entry.type === 'note' && !entry.chord) {
+      if (noteCount === targetNoteIndex) {
+        targetEntryIndex = i;
+        targetNote = entry;
+        break;
+      }
+      noteCount++;
+    }
+  }
+
+  if (targetEntryIndex < 0 || !targetNote) {
+    return failure([operationError('NOTE_NOT_FOUND', `Note at index ${targetNoteIndex} not found`, { partIndex, measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const resultMeasure = result.parts[partIndex].measures[measureIndex];
+
+  const graceNote: NoteEntry = {
+    type: 'note',
+    pitch,
+    duration: 0, // Grace notes have no duration
+    voice: voice ?? targetNote.voice,
+    staff: staff ?? targetNote.staff,
+    noteType,
+    grace: {
+      slash,
+    },
+  };
+
+  // Insert grace note before the target note
+  resultMeasure.entries.splice(targetEntryIndex, 0, graceNote);
+
+  return success(result);
+}
+
+export interface RemoveGraceNoteOptions {
+  partIndex: number;
+  measureIndex: number;
+  graceNoteIndex: number; // Index among all grace notes in the measure
+}
+
+/**
+ * Remove a grace note from a measure.
+ */
+export function removeGraceNote(
+  score: Score,
+  options: RemoveGraceNoteOptions
+): OperationResult<Score> {
+  const { partIndex, measureIndex, graceNoteIndex } = options;
+
+  if (partIndex < 0 || partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${partIndex} out of bounds`, { partIndex })]);
+  }
+
+  const part = score.parts[partIndex];
+  if (measureIndex < 0 || measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${measureIndex} out of bounds`, { partIndex, measureIndex })]);
+  }
+
+  const measure = part.measures[measureIndex];
+
+  // Find the grace note by index
+  let graceCount = 0;
+  let targetEntryIndex = -1;
+
+  for (let i = 0; i < measure.entries.length; i++) {
+    const entry = measure.entries[i];
+    if (entry.type === 'note' && entry.grace) {
+      if (graceCount === graceNoteIndex) {
+        targetEntryIndex = i;
+        break;
+      }
+      graceCount++;
+    }
+  }
+
+  if (targetEntryIndex < 0) {
+    return failure([operationError('GRACE_NOTE_NOT_FOUND', `Grace note at index ${graceNoteIndex} not found`, { partIndex, measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  result.parts[partIndex].measures[measureIndex].entries.splice(targetEntryIndex, 1);
+
+  return success(result);
+}
+
+export interface ConvertToGraceOptions {
+  partIndex: number;
+  measureIndex: number;
+  noteIndex: number;
+  slash?: boolean;
+}
+
+/**
+ * Convert a regular note to a grace note.
+ * The note's duration will be removed.
+ */
+export function convertToGrace(
+  score: Score,
+  options: ConvertToGraceOptions
+): OperationResult<Score> {
+  const { partIndex, measureIndex, noteIndex, slash = true } = options;
+
+  if (partIndex < 0 || partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${partIndex} out of bounds`, { partIndex })]);
+  }
+
+  const part = score.parts[partIndex];
+  if (measureIndex < 0 || measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${measureIndex} out of bounds`, { partIndex, measureIndex })]);
+  }
+
+  const measure = part.measures[measureIndex];
+
+  // Find the target note
+  let noteCount = 0;
+  let targetEntryIndex = -1;
+
+  for (let i = 0; i < measure.entries.length; i++) {
+    const entry = measure.entries[i];
+    if (entry.type === 'note' && !entry.chord) {
+      if (noteCount === noteIndex) {
+        targetEntryIndex = i;
+        break;
+      }
+      noteCount++;
+    }
+  }
+
+  if (targetEntryIndex < 0) {
+    return failure([operationError('NOTE_NOT_FOUND', `Note at index ${noteIndex} not found`, { partIndex, measureIndex })]);
+  }
+
+  const targetEntry = measure.entries[targetEntryIndex];
+  if (targetEntry.type !== 'note') {
+    return failure([operationError('NOTE_NOT_FOUND', `Entry at index is not a note`, { partIndex, measureIndex })]);
+  }
+
+  if (targetEntry.grace) {
+    return failure([operationError('INVALID_GRACE_NOTE', `Note is already a grace note`, { partIndex, measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const resultNote = result.parts[partIndex].measures[measureIndex].entries[targetEntryIndex] as NoteEntry;
+
+  resultNote.grace = { slash };
+  resultNote.duration = 0;
+
+  return success(result);
+}
+
+// ============================================================
+// Phase 3: Lyric Operations
+// ============================================================
+
+export interface AddLyricOptions {
+  partIndex: number;
+  measureIndex: number;
+  noteIndex: number;
+  text: string;
+  syllabic?: 'single' | 'begin' | 'middle' | 'end';
+  verse?: number; // Lyric number/verse (1, 2, 3, etc.)
+  extend?: boolean;
+}
+
+/**
+ * Add a lyric to a note.
+ */
+export function addLyric(
+  score: Score,
+  options: AddLyricOptions
+): OperationResult<Score> {
+  const { partIndex, measureIndex, noteIndex, text, syllabic = 'single', verse = 1, extend = false } = options;
+
+  if (partIndex < 0 || partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${partIndex} out of bounds`, { partIndex })]);
+  }
+
+  const part = score.parts[partIndex];
+  if (measureIndex < 0 || measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${measureIndex} out of bounds`, { partIndex, measureIndex })]);
+  }
+
+  const measure = part.measures[measureIndex];
+
+  // Find the target note
+  let noteCount = 0;
+  let targetEntryIndex = -1;
+
+  for (let i = 0; i < measure.entries.length; i++) {
+    const entry = measure.entries[i];
+    if (entry.type === 'note' && !entry.chord && !entry.rest) {
+      if (noteCount === noteIndex) {
+        targetEntryIndex = i;
+        break;
+      }
+      noteCount++;
+    }
+  }
+
+  if (targetEntryIndex < 0) {
+    return failure([operationError('NOTE_NOT_FOUND', `Note at index ${noteIndex} not found`, { partIndex, measureIndex })]);
+  }
+
+  const targetEntry = measure.entries[targetEntryIndex];
+  if (targetEntry.type !== 'note') {
+    return failure([operationError('NOTE_NOT_FOUND', `Entry is not a note`, { partIndex, measureIndex })]);
+  }
+
+  // Check if lyric already exists for this verse
+  if (targetEntry.lyrics?.some(l => l.number === verse)) {
+    return failure([operationError('LYRIC_ALREADY_EXISTS', `Lyric for verse ${verse} already exists on this note`, { partIndex, measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const resultNote = result.parts[partIndex].measures[measureIndex].entries[targetEntryIndex] as NoteEntry;
+
+  if (!resultNote.lyrics) {
+    resultNote.lyrics = [];
+  }
+
+  const lyric: Lyric = {
+    number: verse,
+    syllabic,
+    text,
+    extend,
+  };
+
+  resultNote.lyrics.push(lyric);
+
+  return success(result);
+}
+
+export interface RemoveLyricOptions {
+  partIndex: number;
+  measureIndex: number;
+  noteIndex: number;
+  verse?: number; // If not specified, removes all lyrics
+}
+
+/**
+ * Remove a lyric from a note.
+ */
+export function removeLyric(
+  score: Score,
+  options: RemoveLyricOptions
+): OperationResult<Score> {
+  const { partIndex, measureIndex, noteIndex, verse } = options;
+
+  if (partIndex < 0 || partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${partIndex} out of bounds`, { partIndex })]);
+  }
+
+  const part = score.parts[partIndex];
+  if (measureIndex < 0 || measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${measureIndex} out of bounds`, { partIndex, measureIndex })]);
+  }
+
+  const measure = part.measures[measureIndex];
+
+  // Find the target note
+  let noteCount = 0;
+  let targetEntryIndex = -1;
+
+  for (let i = 0; i < measure.entries.length; i++) {
+    const entry = measure.entries[i];
+    if (entry.type === 'note' && !entry.chord && !entry.rest) {
+      if (noteCount === noteIndex) {
+        targetEntryIndex = i;
+        break;
+      }
+      noteCount++;
+    }
+  }
+
+  if (targetEntryIndex < 0) {
+    return failure([operationError('NOTE_NOT_FOUND', `Note at index ${noteIndex} not found`, { partIndex, measureIndex })]);
+  }
+
+  const targetEntry = measure.entries[targetEntryIndex];
+  if (targetEntry.type !== 'note' || !targetEntry.lyrics || targetEntry.lyrics.length === 0) {
+    return failure([operationError('LYRIC_NOT_FOUND', `No lyrics found on note`, { partIndex, measureIndex })]);
+  }
+
+  if (verse !== undefined) {
+    const lyricIndex = targetEntry.lyrics.findIndex(l => l.number === verse);
+    if (lyricIndex < 0) {
+      return failure([operationError('LYRIC_NOT_FOUND', `Lyric for verse ${verse} not found on note`, { partIndex, measureIndex })]);
+    }
+  }
+
+  const result = cloneScore(score);
+  const resultNote = result.parts[partIndex].measures[measureIndex].entries[targetEntryIndex] as NoteEntry;
+
+  if (verse !== undefined) {
+    resultNote.lyrics = resultNote.lyrics!.filter(l => l.number !== verse);
+  } else {
+    delete resultNote.lyrics;
+  }
+
+  if (resultNote.lyrics && resultNote.lyrics.length === 0) {
+    delete resultNote.lyrics;
+  }
+
+  return success(result);
+}
+
+export interface UpdateLyricOptions {
+  partIndex: number;
+  measureIndex: number;
+  noteIndex: number;
+  verse?: number;
+  text?: string;
+  syllabic?: 'single' | 'begin' | 'middle' | 'end';
+  extend?: boolean;
+}
+
+/**
+ * Update an existing lyric on a note.
+ */
+export function updateLyric(
+  score: Score,
+  options: UpdateLyricOptions
+): OperationResult<Score> {
+  const { partIndex, measureIndex, noteIndex, verse = 1, text, syllabic, extend } = options;
+
+  if (partIndex < 0 || partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${partIndex} out of bounds`, { partIndex })]);
+  }
+
+  const part = score.parts[partIndex];
+  if (measureIndex < 0 || measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${measureIndex} out of bounds`, { partIndex, measureIndex })]);
+  }
+
+  const measure = part.measures[measureIndex];
+
+  // Find the target note
+  let noteCount = 0;
+  let targetEntryIndex = -1;
+
+  for (let i = 0; i < measure.entries.length; i++) {
+    const entry = measure.entries[i];
+    if (entry.type === 'note' && !entry.chord && !entry.rest) {
+      if (noteCount === noteIndex) {
+        targetEntryIndex = i;
+        break;
+      }
+      noteCount++;
+    }
+  }
+
+  if (targetEntryIndex < 0) {
+    return failure([operationError('NOTE_NOT_FOUND', `Note at index ${noteIndex} not found`, { partIndex, measureIndex })]);
+  }
+
+  const targetEntry = measure.entries[targetEntryIndex];
+  if (targetEntry.type !== 'note' || !targetEntry.lyrics) {
+    return failure([operationError('LYRIC_NOT_FOUND', `No lyrics found on note`, { partIndex, measureIndex })]);
+  }
+
+  const lyricIndex = targetEntry.lyrics.findIndex(l => l.number === verse);
+  if (lyricIndex < 0) {
+    return failure([operationError('LYRIC_NOT_FOUND', `Lyric for verse ${verse} not found on note`, { partIndex, measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const resultNote = result.parts[partIndex].measures[measureIndex].entries[targetEntryIndex] as NoteEntry;
+  const lyric = resultNote.lyrics![lyricIndex];
+
+  if (text !== undefined) {
+    lyric.text = text;
+  }
+  if (syllabic !== undefined) {
+    lyric.syllabic = syllabic;
+  }
+  if (extend !== undefined) {
+    lyric.extend = extend;
+  }
+
+  return success(result);
+}
+
+// ============================================================
+// Phase 4: Harmony Operations
+// ============================================================
+
+export type HarmonyKind =
+  | 'major' | 'minor' | 'augmented' | 'diminished'
+  | 'dominant' | 'major-seventh' | 'minor-seventh' | 'diminished-seventh'
+  | 'augmented-seventh' | 'half-diminished' | 'major-minor'
+  | 'major-sixth' | 'minor-sixth' | 'dominant-ninth' | 'major-ninth' | 'minor-ninth'
+  | 'dominant-11th' | 'major-11th' | 'minor-11th'
+  | 'dominant-13th' | 'major-13th' | 'minor-13th'
+  | 'suspended-second' | 'suspended-fourth'
+  | 'Neapolitan' | 'Italian' | 'French' | 'German'
+  | 'pedal' | 'power' | 'Tristan'
+  | 'other' | 'none';
+
+export interface AddHarmonyOptions {
+  partIndex: number;
+  measureIndex: number;
+  position: number;
+  root: { step: string; alter?: number };
+  kind: HarmonyKind;
+  kindText?: string; // Display text (e.g., "m7" for minor-seventh)
+  bass?: { step: string; alter?: number };
+  degrees?: { value: number; alter?: number; type: 'add' | 'alter' | 'subtract' }[];
+  staff?: number;
+  placement?: 'above' | 'below';
+}
+
+/**
+ * Add a harmony (chord symbol) to a measure.
+ */
+export function addHarmony(
+  score: Score,
+  options: AddHarmonyOptions
+): OperationResult<Score> {
+  const { partIndex, measureIndex, position, root, kind, kindText, bass, degrees, staff, placement = 'above' } = options;
+
+  if (partIndex < 0 || partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${partIndex} out of bounds`, { partIndex })]);
+  }
+
+  const part = score.parts[partIndex];
+  if (measureIndex < 0 || measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${measureIndex} out of bounds`, { partIndex, measureIndex })]);
+  }
+
+  // Validate root step
+  const validSteps = ['A', 'B', 'C', 'D', 'E', 'F', 'G'];
+  if (!validSteps.includes(root.step.toUpperCase())) {
+    return failure([operationError('INVALID_HARMONY', `Invalid root step: ${root.step}`, { partIndex, measureIndex })]);
+  }
+
+  if (bass && !validSteps.includes(bass.step.toUpperCase())) {
+    return failure([operationError('INVALID_HARMONY', `Invalid bass step: ${bass.step}`, { partIndex, measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const measure = result.parts[partIndex].measures[measureIndex];
+
+  const harmony: HarmonyEntry = {
+    type: 'harmony',
+    root: {
+      rootStep: root.step.toUpperCase(),
+      rootAlter: root.alter,
+    },
+    kind,
+    kindText,
+    bass: bass ? {
+      bassStep: bass.step.toUpperCase(),
+      bassAlter: bass.alter,
+    } : undefined,
+    degrees: degrees?.map(d => ({
+      degreeValue: d.value,
+      degreeAlter: d.alter,
+      degreeType: d.type,
+    })),
+    staff,
+    placement,
+  };
+
+  // Insert harmony at the correct position
+  let currentPosition = 0;
+  let insertIndex = 0;
+
+  for (let i = 0; i < measure.entries.length; i++) {
+    const entry = measure.entries[i];
+
+    if (currentPosition >= position) {
+      insertIndex = i;
+      break;
+    }
+
+    if (entry.type === 'note' && !entry.chord) {
+      currentPosition += entry.duration;
+    } else if (entry.type === 'forward') {
+      currentPosition += entry.duration;
+    } else if (entry.type === 'backup') {
+      currentPosition -= entry.duration;
+    }
+
+    insertIndex = i + 1;
+  }
+
+  measure.entries.splice(insertIndex, 0, harmony);
+
+  return success(result);
+}
+
+export interface RemoveHarmonyOptions {
+  partIndex: number;
+  measureIndex: number;
+  harmonyIndex: number; // Index among all harmonies in the measure
+}
+
+/**
+ * Remove a harmony from a measure.
+ */
+export function removeHarmony(
+  score: Score,
+  options: RemoveHarmonyOptions
+): OperationResult<Score> {
+  const { partIndex, measureIndex, harmonyIndex } = options;
+
+  if (partIndex < 0 || partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${partIndex} out of bounds`, { partIndex })]);
+  }
+
+  const part = score.parts[partIndex];
+  if (measureIndex < 0 || measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${measureIndex} out of bounds`, { partIndex, measureIndex })]);
+  }
+
+  const measure = part.measures[measureIndex];
+
+  // Find the harmony by index
+  let harmonyCount = 0;
+  let targetEntryIndex = -1;
+
+  for (let i = 0; i < measure.entries.length; i++) {
+    const entry = measure.entries[i];
+    if (entry.type === 'harmony') {
+      if (harmonyCount === harmonyIndex) {
+        targetEntryIndex = i;
+        break;
+      }
+      harmonyCount++;
+    }
+  }
+
+  if (targetEntryIndex < 0) {
+    return failure([operationError('HARMONY_NOT_FOUND', `Harmony at index ${harmonyIndex} not found`, { partIndex, measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  result.parts[partIndex].measures[measureIndex].entries.splice(targetEntryIndex, 1);
+
+  return success(result);
+}
+
+export interface UpdateHarmonyOptions {
+  partIndex: number;
+  measureIndex: number;
+  harmonyIndex: number;
+  root?: { step: string; alter?: number };
+  kind?: HarmonyKind;
+  kindText?: string;
+  bass?: { step: string; alter?: number } | null; // null to remove bass
+  degrees?: { value: number; alter?: number; type: 'add' | 'alter' | 'subtract' }[] | null;
+}
+
+/**
+ * Update an existing harmony in a measure.
+ */
+export function updateHarmony(
+  score: Score,
+  options: UpdateHarmonyOptions
+): OperationResult<Score> {
+  const { partIndex, measureIndex, harmonyIndex, root, kind, kindText, bass, degrees } = options;
+
+  if (partIndex < 0 || partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${partIndex} out of bounds`, { partIndex })]);
+  }
+
+  const part = score.parts[partIndex];
+  if (measureIndex < 0 || measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${measureIndex} out of bounds`, { partIndex, measureIndex })]);
+  }
+
+  const measure = part.measures[measureIndex];
+
+  // Find the harmony by index
+  let harmonyCount = 0;
+  let targetEntryIndex = -1;
+
+  for (let i = 0; i < measure.entries.length; i++) {
+    const entry = measure.entries[i];
+    if (entry.type === 'harmony') {
+      if (harmonyCount === harmonyIndex) {
+        targetEntryIndex = i;
+        break;
+      }
+      harmonyCount++;
+    }
+  }
+
+  if (targetEntryIndex < 0) {
+    return failure([operationError('HARMONY_NOT_FOUND', `Harmony at index ${harmonyIndex} not found`, { partIndex, measureIndex })]);
+  }
+
+  // Validate inputs
+  const validSteps = ['A', 'B', 'C', 'D', 'E', 'F', 'G'];
+  if (root && !validSteps.includes(root.step.toUpperCase())) {
+    return failure([operationError('INVALID_HARMONY', `Invalid root step: ${root.step}`, { partIndex, measureIndex })]);
+  }
+  if (bass && !validSteps.includes(bass.step.toUpperCase())) {
+    return failure([operationError('INVALID_HARMONY', `Invalid bass step: ${bass.step}`, { partIndex, measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const harmony = result.parts[partIndex].measures[measureIndex].entries[targetEntryIndex] as HarmonyEntry;
+
+  if (root) {
+    harmony.root = {
+      rootStep: root.step.toUpperCase(),
+      rootAlter: root.alter,
+    };
+  }
+  if (kind !== undefined) {
+    harmony.kind = kind;
+  }
+  if (kindText !== undefined) {
+    harmony.kindText = kindText;
+  }
+  if (bass !== undefined) {
+    if (bass === null) {
+      delete harmony.bass;
+    } else {
+      harmony.bass = {
+        bassStep: bass.step.toUpperCase(),
+        bassAlter: bass.alter,
+      };
+    }
+  }
+  if (degrees !== undefined) {
+    if (degrees === null) {
+      delete harmony.degrees;
+    } else {
+      harmony.degrees = degrees.map(d => ({
+        degreeValue: d.value,
+        degreeAlter: d.alter,
+        degreeType: d.type,
+      }));
+    }
+  }
+
+  return success(result);
 }
 
 // Re-exports
