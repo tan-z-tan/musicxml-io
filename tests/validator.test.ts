@@ -9,6 +9,7 @@ import {
   assertValid,
   validateDivisions,
   validateMeasureDuration,
+  validateMeasureFullness,
   validateBackupForward,
   validateTies,
   validateBeams,
@@ -247,6 +248,61 @@ describe('Validator', () => {
         { measureNumber: '1' }
       );
       expect(errors).toHaveLength(0);
+    });
+  });
+
+  describe('validateMeasureFullness', () => {
+    it('should pass when voice fills entire measure', () => {
+      const score = createMinimalScore();
+      score.parts[0].measures[0].entries = [
+        createNote({ duration: 4, voice: 1 }), // 4 beats fill 4/4 time
+      ];
+
+      const result = validate(score, { checkMeasureFullness: true });
+      const fullnessErrors = result.warnings.filter(e =>
+        e.code === 'VOICE_INCOMPLETE' || e.code === 'VOICE_GAP'
+      );
+      expect(fullnessErrors).toHaveLength(0);
+    });
+
+    it('should warn when voice is incomplete', () => {
+      const score = createMinimalScore();
+      score.parts[0].measures[0].entries = [
+        createNote({ duration: 2, voice: 1 }), // Only 2 beats in 4/4 time
+      ];
+
+      const result = validate(score, { checkMeasureFullness: true });
+      const incompleteErrors = result.warnings.filter(e => e.code === 'VOICE_INCOMPLETE');
+      expect(incompleteErrors).toHaveLength(1);
+      expect(incompleteErrors[0].details?.missing).toBe(2);
+    });
+
+    it('should warn when voice has gap', () => {
+      const score = createMinimalScore();
+      score.parts[0].measures[0].entries = [
+        createNote({ duration: 1, voice: 1 }),
+        { type: 'forward', duration: 1, voice: 1 }, // Gap filled by forward, not note
+        createNote({ duration: 2, voice: 1 }),
+      ];
+
+      // No gap with forward entries - they count as filling
+      const result = validate(score, { checkMeasureFullness: true });
+      const gapErrors = result.warnings.filter(e => e.code === 'VOICE_GAP');
+      expect(gapErrors).toHaveLength(0);
+    });
+
+    it('should not check fullness by default', () => {
+      const score = createMinimalScore();
+      score.parts[0].measures[0].entries = [
+        createNote({ duration: 1, voice: 1 }), // Only 1 beat
+      ];
+
+      // Default: checkMeasureFullness is false
+      const result = validate(score);
+      const fullnessErrors = [...result.errors, ...result.warnings].filter(e =>
+        e.code === 'VOICE_INCOMPLETE' || e.code === 'VOICE_GAP'
+      );
+      expect(fullnessErrors).toHaveLength(0);
     });
   });
 

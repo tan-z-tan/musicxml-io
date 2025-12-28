@@ -16,7 +16,6 @@ import {
   validateMeasureLocal,
   getMeasureContext,
   type ValidationError,
-  type LocalValidateOptions,
 } from '../validator';
 
 // ============================================================
@@ -53,7 +52,6 @@ export type OperationErrorCode =
   | 'EXCEEDS_MEASURE'
   | 'INVALID_POSITION'
   | 'NOTE_NOT_FOUND'
-  | 'VOICE_NOT_FOUND'
   | 'PART_NOT_FOUND'
   | 'MEASURE_NOT_FOUND'
   | 'INVALID_DURATION'
