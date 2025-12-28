@@ -19,6 +19,7 @@ import type {
   AttributesEntry,
   FermataNotation,
   OrnamentNotation,
+  OrnamentType,
   Lyric,
   HarmonyEntry,
   SoundEntry,
@@ -105,7 +106,16 @@ export type OperationErrorCode =
   | 'LYRIC_ALREADY_EXISTS'
   | 'HARMONY_NOT_FOUND'
   | 'HARMONY_ALREADY_EXISTS'
-  | 'INVALID_HARMONY';
+  | 'INVALID_HARMONY'
+  | 'TEMPO_NOT_FOUND'
+  | 'INVALID_RANGE'
+  | 'WEDGE_NOT_FOUND'
+  | 'FERMATA_ALREADY_EXISTS'
+  | 'FERMATA_NOT_FOUND'
+  | 'ORNAMENT_ALREADY_EXISTS'
+  | 'ORNAMENT_NOT_FOUND'
+  | 'PEDAL_NOT_FOUND'
+  | 'INVALID_TEXT';
 
 function operationError(
   code: OperationErrorCode,
@@ -2300,11 +2310,14 @@ export function createTuplet(
     return failure([operationError('NOTE_NOT_FOUND', `Could not find ${options.noteCount} notes starting at index ${options.startNoteIndex}`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
   }
 
-  // Check that all notes have the same voice
+  // Check that all notes have the same voice and staff
   const voice = notes[0].note.voice;
   const staff = notes[0].note.staff;
   if (!notes.every(n => n.note.voice === voice)) {
     return failure([operationError('NOTE_CONFLICT', 'All notes in a tuplet must be in the same voice', { partIndex: options.partIndex, measureIndex: options.measureIndex, voice })]);
+  }
+  if (!notes.every(n => n.note.staff === staff)) {
+    return failure([operationError('NOTE_CONFLICT', 'All notes in a tuplet must be on the same staff', { partIndex: options.partIndex, measureIndex: options.measureIndex, staff })]);
   }
 
   // Apply tuplet modifications to each note
@@ -2420,7 +2433,7 @@ export function removeTuplet(
 
   const tupletNotes: NoteEntry[] = [];
   let inTuplet = false;
-  let tupletNumber: number | undefined;
+  let currentTupletNumber: number | undefined;
 
   for (const entry of measure.entries) {
     if (entry.type !== 'note' || entry.rest) continue;
@@ -2430,28 +2443,27 @@ export function removeTuplet(
       entry.timeModification?.actualNotes === actualNotes &&
       entry.timeModification?.normalNotes === normalNotes;
 
-    // Check for tuplet start
-    const hasTupletStart = entry.notations?.some(
+    // Check for tuplet start and get its number
+    const tupletStart = entry.notations?.find(
       n => n.type === 'tuplet' && n.tupletType === 'start'
     );
 
-    // Check for tuplet stop
-    const hasTupletStop = entry.notations?.some(
-      n => n.type === 'tuplet' && n.tupletType === 'stop'
+    // Check for tuplet stop with matching number
+    const tupletStop = entry.notations?.find(
+      n => n.type === 'tuplet' && n.tupletType === 'stop' &&
+        (currentTupletNumber === undefined || n.number === currentTupletNumber)
     );
 
-    if (hasTupletStart) {
+    if (tupletStart && tupletStart.type === 'tuplet') {
       inTuplet = true;
-      tupletNumber = entry.notations?.find(
-        n => n.type === 'tuplet' && n.tupletType === 'start'
-      )?.number;
+      currentTupletNumber = tupletStart.number;
     }
 
     if (inTuplet && hasSameTimeModification) {
       tupletNotes.push(entry);
     }
 
-    if (hasTupletStop && inTuplet) {
+    if (tupletStop && inTuplet) {
       // Check if this tuplet contains our target note
       if (tupletNotes.includes(targetNote)) {
         break;
@@ -2459,7 +2471,7 @@ export function removeTuplet(
         // Reset and continue looking
         tupletNotes.length = 0;
         inTuplet = false;
-        tupletNumber = undefined;
+        currentTupletNumber = undefined;
       }
     }
   }
@@ -2697,19 +2709,6 @@ export function removeBeam(
 
   return success(result);
 }
-
-/**
- * Note type to division mapping for auto-beaming
- */
-const NOTE_TYPE_DIVISIONS: Record<string, number> = {
-  'whole': 16,
-  'half': 8,
-  'quarter': 4,
-  'eighth': 2,
-  '16th': 1,
-  '32nd': 0.5,
-  '64th': 0.25,
-};
 
 export interface AutoBeamOptions {
   partIndex: number;
@@ -3474,8 +3473,8 @@ export interface AddTempoOptions {
   bpm: number;
   /** Beat unit (e.g., 'quarter', 'half', 'eighth') */
   beatUnit?: 'whole' | 'half' | 'quarter' | 'eighth' | '16th';
-  /** Beat unit dots */
-  beatUnitDots?: number;
+  /** Whether beat unit has a dot */
+  beatUnitDot?: boolean;
   /** Text description (e.g., 'Allegro', 'Andante') */
   text?: string;
   /** Placement (above/below staff) */
@@ -3511,7 +3510,7 @@ export function addTempo(
   directionTypes.push({
     kind: 'metronome',
     beatUnit: options.beatUnit ?? 'quarter',
-    beatUnitDots: options.beatUnitDots,
+    beatUnitDot: options.beatUnitDot,
     perMinute: options.bpm,
   });
 
@@ -3774,7 +3773,7 @@ export function addFermata(
 
   // Check if fermata already exists
   if (note.notations?.some(n => n.type === 'fermata')) {
-    return failure([operationError('FERMATA_ALREADY_EXISTS', 'Note already has a fermata', { partIndex: options.partIndex, measureIndex: options.measureIndex, noteIndex: options.noteIndex })]);
+    return failure([operationError('FERMATA_ALREADY_EXISTS', 'Note already has a fermata', { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
   }
 
   // Add fermata
@@ -3828,7 +3827,7 @@ export function removeFermata(
 
   const fermataIndex = note.notations?.findIndex(n => n.type === 'fermata');
   if (fermataIndex === undefined || fermataIndex === -1) {
-    return failure([operationError('FERMATA_NOT_FOUND', 'Note does not have a fermata', { partIndex: options.partIndex, measureIndex: options.measureIndex, noteIndex: options.noteIndex })]);
+    return failure([operationError('FERMATA_NOT_FOUND', 'Note does not have a fermata', { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
   }
 
   note.notations!.splice(fermataIndex, 1);
@@ -3839,16 +3838,12 @@ export function removeFermata(
   return success(result);
 }
 
-export type OrnamentKind = 'trill-mark' | 'turn' | 'delayed-turn' | 'inverted-turn' | 'delayed-inverted-turn' |
-  'vertical-turn' | 'inverted-vertical-turn' | 'shake' | 'wavy-line' | 'mordent' | 'inverted-mordent' |
-  'schleifer' | 'tremolo' | 'haydn' | 'other-ornament';
-
 export interface AddOrnamentOptions {
   partIndex: number;
   measureIndex: number;
   noteIndex: number;
   /** Ornament type */
-  ornament: OrnamentKind;
+  ornament: OrnamentType;
   /** Placement */
   placement?: 'above' | 'below';
   /** Accidental mark for the ornament */
@@ -3883,7 +3878,7 @@ export function addOrnament(
 
   // Check if same ornament already exists
   if (note.notations?.some(n => n.type === 'ornament' && n.ornament === options.ornament)) {
-    return failure([operationError('ORNAMENT_ALREADY_EXISTS', `Note already has ornament: ${options.ornament}`, { partIndex: options.partIndex, measureIndex: options.measureIndex, noteIndex: options.noteIndex })]);
+    return failure([operationError('ORNAMENT_ALREADY_EXISTS', `Note already has ornament: ${options.ornament}`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
   }
 
   if (!note.notations) {
@@ -3907,7 +3902,7 @@ export interface RemoveOrnamentOptions {
   measureIndex: number;
   noteIndex: number;
   /** Specific ornament to remove (removes first ornament if not specified) */
-  ornament?: OrnamentKind;
+  ornament?: OrnamentType;
 }
 
 /**
@@ -3941,7 +3936,7 @@ export function removeOrnament(
     : note.notations?.findIndex(n => n.type === 'ornament');
 
   if (ornamentIndex === undefined || ornamentIndex === -1) {
-    return failure([operationError('ORNAMENT_NOT_FOUND', 'Note does not have the specified ornament', { partIndex: options.partIndex, measureIndex: options.measureIndex, noteIndex: options.noteIndex })]);
+    return failure([operationError('ORNAMENT_NOT_FOUND', 'Note does not have the specified ornament', { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
   }
 
   note.notations!.splice(ornamentIndex, 1);
