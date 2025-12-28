@@ -52,6 +52,16 @@ export type {
   PedalWithContext,
   WedgeWithContext,
   OctaveShiftWithContext,
+  // Phase 5: Groups and Spans
+  TiedNoteGroup,
+  SlurSpan,
+  TupletGroup,
+  BeamGroup,
+  NotationType,
+  // Phase 6: Harmony and Lyrics
+  HarmonyWithContext,
+  LyricWithContext,
+  AssembledLyrics,
 } from './types';
 
 // Importers
@@ -109,6 +119,19 @@ export {
   getPedalMarkings,
   getWedges,
   getOctaveShifts,
+  // Phase 5: Groups and Spans
+  getTiedNoteGroups,
+  getSlurSpans,
+  getTupletGroups,
+  getBeamGroups,
+  findNotesWithNotation,
+  // Phase 6: Harmony and Lyrics
+  getHarmonies,
+  getHarmonyAtPosition,
+  getChordProgression,
+  getLyrics,
+  getLyricText,
+  getVerseCount,
 } from './accessors';
 export type { VoiceFilter, NormalizedPositionOptions } from './accessors';
 

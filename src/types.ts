@@ -1012,3 +1012,92 @@ export interface OctaveShiftWithContext {
   measureIndex: number;
   position: number;
 }
+
+// ============================================================
+// Phase 5: Groups and Spans Types
+// ============================================================
+
+/**
+ * A group of tied notes (notes connected by ties)
+ */
+export interface TiedNoteGroup {
+  notes: NoteWithContext[];
+  /** Total duration of all tied notes */
+  totalDuration: number;
+}
+
+/**
+ * A slur span from start to stop
+ */
+export interface SlurSpan {
+  number: number;
+  startNote: NoteWithContext;
+  endNote: NoteWithContext;
+  /** Notes covered by the slur (including start and end) */
+  notes: NoteWithContext[];
+}
+
+/**
+ * A tuplet group
+ */
+export interface TupletGroup {
+  number: number;
+  notes: NoteWithContext[];
+  /** Actual notes (numerator of time modification) */
+  actualNotes: number;
+  /** Normal notes (denominator of time modification) */
+  normalNotes: number;
+}
+
+/**
+ * A beam group (notes connected by beams)
+ */
+export interface BeamGroup {
+  notes: NoteWithContext[];
+  /** Beam level (1 for eighth notes, 2 for sixteenth, etc.) */
+  beamLevel: number;
+}
+
+/**
+ * Filter for finding notes with specific notations
+ */
+export type NotationType = Notation['type'];
+
+// ============================================================
+// Phase 6: Harmony and Lyrics Types
+// ============================================================
+
+/**
+ * Harmony entry with context
+ */
+export interface HarmonyWithContext {
+  harmony: HarmonyEntry;
+  part: Part;
+  partIndex: number;
+  measure: Measure;
+  measureIndex: number;
+  position: number;
+}
+
+/**
+ * Lyric entry with context
+ */
+export interface LyricWithContext {
+  lyric: Lyric;
+  note: NoteEntry;
+  part: Part;
+  partIndex: number;
+  measure: Measure;
+  measureIndex: number;
+  position: number;
+  verse: number;
+}
+
+/**
+ * Assembled lyrics for a verse
+ */
+export interface AssembledLyrics {
+  verse: number;
+  text: string;
+  syllables: { text: string; position: number; measureIndex: number }[];
+}

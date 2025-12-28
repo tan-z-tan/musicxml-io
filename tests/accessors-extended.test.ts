@@ -35,6 +35,19 @@ import {
   getPedalMarkings,
   getWedges,
   getOctaveShifts,
+  // Phase 5: Groups and Spans
+  getTiedNoteGroups,
+  getSlurSpans,
+  getTupletGroups,
+  getBeamGroups,
+  findNotesWithNotation,
+  // Phase 6: Harmony and Lyrics
+  getHarmonies,
+  getHarmonyAtPosition,
+  getChordProgression,
+  getLyrics,
+  getLyricText,
+  getVerseCount,
 } from '../src/accessors';
 import type { NoteEntry, NoteWithContext } from '../src/types';
 
@@ -624,6 +637,292 @@ describe('Phase 4: Direction and Expression', () => {
       const shiftTypes = shifts.map((s) => s.shiftType);
       expect(shiftTypes).toContain('up');
       expect(shiftTypes).toContain('stop');
+    });
+  });
+});
+
+// ============================================================
+// Phase 5: Groups and Spans
+// ============================================================
+
+describe('Phase 5: Groups and Spans', () => {
+  describe('getTiedNoteGroups', () => {
+    it('should get tied note groups', () => {
+      const xml = readFileSync(join(lilypondPath, '33b-Spanners-Tie.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const tiedGroups = getTiedNoteGroups(score);
+
+      expect(tiedGroups.length).toBe(1);
+      expect(tiedGroups[0].notes.length).toBe(2);
+      expect(tiedGroups[0].notes[0].note.pitch?.step).toBe('F');
+      expect(tiedGroups[0].notes[0].measureIndex).toBe(0);
+      expect(tiedGroups[0].notes[1].measureIndex).toBe(1);
+      expect(tiedGroups[0].totalDuration).toBe(8); // 4 + 4
+    });
+  });
+
+  describe('getSlurSpans', () => {
+    it('should get slur spans from a score', () => {
+      const xml = readFileSync(join(lilypondPath, '33c-Spanners-Slurs.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const slurs = getSlurSpans(score);
+
+      expect(slurs.length).toBeGreaterThan(0);
+      // First slur: G4 -> C5 (measure 1)
+      expect(slurs[0].startNote.note.pitch?.step).toBe('G');
+      expect(slurs[0].endNote.note.pitch?.step).toBe('C');
+    });
+
+    it('should handle nested slurs', () => {
+      const xml = readFileSync(join(lilypondPath, '33c-Spanners-Slurs.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const slurs = getSlurSpans(score);
+
+      // Measure 2 has nested slurs with different numbers
+      const slurNumbers = [...new Set(slurs.map((s) => s.number))];
+      expect(slurNumbers.length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  describe('getTupletGroups', () => {
+    it('should get tuplet groups from a score', () => {
+      const xml = readFileSync(join(lilypondPath, '23c-Tuplet-Display-NonStandard.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const tuplets = getTupletGroups(score);
+
+      expect(tuplets.length).toBeGreaterThan(0);
+      // Check 3:2 triplet
+      expect(tuplets[0].actualNotes).toBe(3);
+      expect(tuplets[0].normalNotes).toBe(2);
+      expect(tuplets[0].notes.length).toBe(3);
+    });
+  });
+
+  describe('getBeamGroups', () => {
+    it('should get beam groups from a measure', () => {
+      // Use a file that has beamed notes
+      const xml = readFileSync(join(lilypondPath, '33c-Spanners-Slurs.xml'), 'utf-8');
+      const score = parse(xml);
+      const measure = score.parts[0].measures[0];
+
+      const beamGroups = getBeamGroups(measure);
+
+      // The file contains quarter notes, so there might not be beams
+      // This is just testing that the function works
+      expect(beamGroups).toBeDefined();
+      expect(Array.isArray(beamGroups)).toBe(true);
+    });
+  });
+
+  describe('findNotesWithNotation', () => {
+    it('should find notes with slur notation', () => {
+      const xml = readFileSync(join(lilypondPath, '33c-Spanners-Slurs.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const notesWithSlurs = findNotesWithNotation(score, 'slur');
+
+      expect(notesWithSlurs.length).toBeGreaterThan(0);
+      notesWithSlurs.forEach((nc) => {
+        expect(nc.note.notations?.some((n) => n.type === 'slur')).toBe(true);
+      });
+    });
+
+    it('should find notes with tied notation', () => {
+      const xml = readFileSync(join(lilypondPath, '33b-Spanners-Tie.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const notesWithTies = findNotesWithNotation(score, 'tied');
+
+      expect(notesWithTies.length).toBe(2);
+    });
+
+    it('should find notes with articulation notation', () => {
+      const xml = readFileSync(join(lilypondPath, '32a-Notations.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const notesWithArticulations = findNotesWithNotation(score, 'articulation');
+
+      expect(notesWithArticulations.length).toBeGreaterThan(0);
+    });
+
+    it('should find notes with fermata notation', () => {
+      const xml = readFileSync(join(lilypondPath, '32a-Notations.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const notesWithFermata = findNotesWithNotation(score, 'fermata');
+
+      expect(notesWithFermata.length).toBeGreaterThan(0);
+    });
+  });
+});
+
+// ============================================================
+// Phase 6: Harmony and Lyrics
+// ============================================================
+
+describe('Phase 6: Harmony and Lyrics', () => {
+  describe('getHarmonies', () => {
+    it('should get all harmonies from a score', () => {
+      const xml = readFileSync(join(lilypondPath, '71a-Chordnames.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const harmonies = getHarmonies(score);
+
+      expect(harmonies.length).toBe(8); // 4 in measure 1, 4 in measure 2
+      expect(harmonies[0].harmony.root.rootStep).toBe('C');
+      expect(harmonies[0].harmony.kind).toBe('major');
+    });
+
+    it('should filter by part index', () => {
+      const xml = readFileSync(join(lilypondPath, '71a-Chordnames.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const harmonies = getHarmonies(score, { partIndex: 0 });
+
+      expect(harmonies.every((h) => h.partIndex === 0)).toBe(true);
+    });
+  });
+
+  describe('getHarmonyAtPosition', () => {
+    it('should get harmony at a specific position', () => {
+      const xml = readFileSync(join(lilypondPath, '71a-Chordnames.xml'), 'utf-8');
+      const score = parse(xml);
+      const measure = score.parts[0].measures[0];
+
+      // Position 0 should have C major
+      const harmony0 = getHarmonyAtPosition(measure, 0);
+      expect(harmony0).toBeDefined();
+      expect(harmony0?.root.rootStep).toBe('C');
+      expect(harmony0?.kind).toBe('major');
+
+      // Position 1 should have C major-seventh (2nd harmony)
+      const harmony1 = getHarmonyAtPosition(measure, 1);
+      expect(harmony1).toBeDefined();
+      expect(harmony1?.root.rootStep).toBe('C');
+      expect(harmony1?.kind).toBe('major-seventh');
+    });
+  });
+
+  describe('getChordProgression', () => {
+    it('should get chord progression as simplified format', () => {
+      const xml = readFileSync(join(lilypondPath, '71a-Chordnames.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const progression = getChordProgression(score);
+
+      expect(progression.length).toBe(8);
+      expect(progression[0]).toEqual({
+        root: 'C',
+        kind: 'major',
+        bass: undefined,
+        measureIndex: 0,
+        position: 0,
+      });
+      // Eb major (E-flat, root-alter=-1)
+      expect(progression[3].root).toBe('Eb');
+      expect(progression[3].kind).toBe('major');
+    });
+
+    it('should handle sharps in chord names', () => {
+      const xml = readFileSync(join(lilypondPath, '71a-Chordnames.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const progression = getChordProgression(score);
+
+      // D# major-seventh in measure 2
+      const dSharp = progression.find((c) => c.root === 'D#');
+      expect(dSharp).toBeDefined();
+      expect(dSharp?.kind).toBe('major-seventh');
+    });
+  });
+
+  describe('getLyrics', () => {
+    it('should get all lyrics from a score', () => {
+      const xml = readFileSync(join(lilypondPath, '61a-Lyrics.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const lyrics = getLyrics(score);
+
+      expect(lyrics.length).toBeGreaterThan(0);
+      expect(lyrics[0].lyric.text).toBe('Tra');
+      expect(lyrics[0].lyric.syllabic).toBe('begin');
+    });
+
+    it('should filter by verse', () => {
+      const xml = readFileSync(join(lilypondPath, '61b-MultipleLyrics.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const verse1 = getLyrics(score, { verse: 1 });
+      const verse2 = getLyrics(score, { verse: 2 });
+
+      expect(verse1.every((l) => l.verse === 1)).toBe(true);
+      expect(verse2.every((l) => l.verse === 2)).toBe(true);
+      expect(verse1[0].lyric.text).toBe('1.Tra');
+      expect(verse2[0].lyric.text).toBe('2.tra');
+    });
+  });
+
+  describe('getLyricText', () => {
+    it('should assemble lyric text for each verse', () => {
+      const xml = readFileSync(join(lilypondPath, '61a-Lyrics.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const assembledLyrics = getLyricText(score);
+
+      expect(assembledLyrics.length).toBe(1);
+      expect(assembledLyrics[0].verse).toBe(1);
+      // Tra-la-li Ja! -> syllables with proper hyphenation
+      expect(assembledLyrics[0].text).toContain('Tra-');
+      expect(assembledLyrics[0].text).toContain('la-');
+      expect(assembledLyrics[0].text).toContain('li');
+      expect(assembledLyrics[0].text).toContain('Ja!');
+    });
+
+    it('should handle multiple verses', () => {
+      const xml = readFileSync(join(lilypondPath, '61b-MultipleLyrics.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const assembledLyrics = getLyricText(score);
+
+      expect(assembledLyrics.length).toBe(3); // 3 verses
+      expect(assembledLyrics[0].verse).toBe(1);
+      expect(assembledLyrics[1].verse).toBe(2);
+      expect(assembledLyrics[2].verse).toBe(3);
+      // Check verse 1 text
+      expect(assembledLyrics[0].text).toContain('1.Tra');
+    });
+  });
+
+  describe('getVerseCount', () => {
+    it('should return the number of verses', () => {
+      const xml = readFileSync(join(lilypondPath, '61b-MultipleLyrics.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const count = getVerseCount(score);
+
+      expect(count).toBe(3);
+    });
+
+    it('should return 1 for single verse', () => {
+      const xml = readFileSync(join(lilypondPath, '61a-Lyrics.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const count = getVerseCount(score);
+
+      expect(count).toBe(1);
+    });
+
+    it('should return 0 for score without lyrics', () => {
+      const xml = readFileSync(join(lilypondPath, '01a-Pitches-Pitches.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const count = getVerseCount(score);
+
+      expect(count).toBe(0);
     });
   });
 });

@@ -5,6 +5,7 @@ import type {
   MeasureEntry,
   NoteEntry,
   DirectionEntry,
+  HarmonyEntry,
   Clef,
   VoiceGroup,
   StaffGroup,
@@ -26,6 +27,14 @@ import type {
   PedalWithContext,
   WedgeWithContext,
   OctaveShiftWithContext,
+  TiedNoteGroup,
+  SlurSpan,
+  TupletGroup,
+  BeamGroup,
+  NotationType,
+  HarmonyWithContext,
+  LyricWithContext,
+  AssembledLyrics,
 } from '../types';
 import { getAbsolutePositionForNote, createPositionState, updatePositionForEntry } from '../utils';
 
@@ -1164,4 +1173,566 @@ export function getOctaveShifts(
   }
 
   return results;
+}
+
+// ============================================================
+// Phase 5: Groups and Spans
+// ============================================================
+
+/**
+ * Get all groups of tied notes in a score
+ * Each group represents notes connected by ties
+ */
+export function getTiedNoteGroups(
+  score: Score,
+  options?: { partIndex?: number }
+): TiedNoteGroup[] {
+  const results: TiedNoteGroup[] = [];
+
+  const startPart = options?.partIndex ?? 0;
+  const endPart = options?.partIndex !== undefined ? options.partIndex + 1 : score.parts.length;
+
+  for (let partIndex = startPart; partIndex < endPart; partIndex++) {
+    const part = score.parts[partIndex];
+    if (!part) continue;
+
+    // Track pending ties by pitch key (step + octave + voice)
+    const pendingTies = new Map<string, NoteWithContext[]>();
+
+    for (let measureIndex = 0; measureIndex < part.measures.length; measureIndex++) {
+      const measure = part.measures[measureIndex];
+      const state = createPositionState();
+
+      for (const entry of measure.entries) {
+        if (entry.type === 'note' && entry.pitch) {
+          const position = entry.chord ? state.lastNonChordPosition : state.position;
+          const pitchKey = `${entry.pitch.step}${entry.pitch.octave}-${entry.voice}`;
+          const context: NoteWithContext = {
+            note: entry,
+            part,
+            partIndex,
+            measure,
+            measureIndex,
+            position,
+          };
+
+          // Check for tie start
+          const hasTieStart = entry.tie?.type === 'start' ||
+            entry.ties?.some(t => t.type === 'start') ||
+            entry.notations?.some(n => n.type === 'tied' && n.tiedType === 'start');
+
+          // Check for tie stop
+          const hasTieStop = entry.tie?.type === 'stop' ||
+            entry.ties?.some(t => t.type === 'stop') ||
+            entry.notations?.some(n => n.type === 'tied' && n.tiedType === 'stop');
+
+          if (hasTieStop && pendingTies.has(pitchKey)) {
+            // End of a tie group
+            const group = pendingTies.get(pitchKey)!;
+            group.push(context);
+
+            if (!hasTieStart) {
+              // This is the final note, finalize the group
+              const totalDuration = group.reduce((sum, nc) => sum + nc.note.duration, 0);
+              results.push({ notes: group, totalDuration });
+              pendingTies.delete(pitchKey);
+            }
+          } else if (hasTieStart) {
+            // Start of a new tie group
+            pendingTies.set(pitchKey, [context]);
+          }
+        }
+        updatePositionForEntry(state, entry);
+      }
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Get all slur spans in a score
+ * Each span represents a slur from start to stop
+ */
+export function getSlurSpans(
+  score: Score,
+  options?: { partIndex?: number }
+): SlurSpan[] {
+  const results: SlurSpan[] = [];
+
+  const startPart = options?.partIndex ?? 0;
+  const endPart = options?.partIndex !== undefined ? options.partIndex + 1 : score.parts.length;
+
+  for (let partIndex = startPart; partIndex < endPart; partIndex++) {
+    const part = score.parts[partIndex];
+    if (!part) continue;
+
+    // Track pending slurs by slur number
+    const pendingSlurs = new Map<number, { startNote: NoteWithContext; notes: NoteWithContext[] }>();
+
+    for (let measureIndex = 0; measureIndex < part.measures.length; measureIndex++) {
+      const measure = part.measures[measureIndex];
+      const state = createPositionState();
+
+      for (const entry of measure.entries) {
+        if (entry.type === 'note') {
+          const position = entry.chord ? state.lastNonChordPosition : state.position;
+          const context: NoteWithContext = {
+            note: entry,
+            part,
+            partIndex,
+            measure,
+            measureIndex,
+            position,
+          };
+
+          // Check for slur notations
+          if (entry.notations) {
+            for (const notation of entry.notations) {
+              if (notation.type === 'slur') {
+                const slurNumber = notation.number ?? 1;
+
+                if (notation.slurType === 'start') {
+                  pendingSlurs.set(slurNumber, { startNote: context, notes: [context] });
+                } else if (notation.slurType === 'stop' && pendingSlurs.has(slurNumber)) {
+                  const pending = pendingSlurs.get(slurNumber)!;
+                  pending.notes.push(context);
+                  results.push({
+                    number: slurNumber,
+                    startNote: pending.startNote,
+                    endNote: context,
+                    notes: pending.notes,
+                  });
+                  pendingSlurs.delete(slurNumber);
+                } else if (notation.slurType === 'continue' && pendingSlurs.has(slurNumber)) {
+                  pendingSlurs.get(slurNumber)!.notes.push(context);
+                }
+              }
+            }
+          }
+
+          // Add note to any active slurs (if not already added)
+          for (const [, pending] of pendingSlurs) {
+            const lastNote = pending.notes[pending.notes.length - 1];
+            if (lastNote !== context) {
+              pending.notes.push(context);
+            }
+          }
+        }
+        updatePositionForEntry(state, entry);
+      }
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Get all tuplet groups in a score
+ */
+export function getTupletGroups(
+  score: Score,
+  options?: { partIndex?: number }
+): TupletGroup[] {
+  const results: TupletGroup[] = [];
+
+  const startPart = options?.partIndex ?? 0;
+  const endPart = options?.partIndex !== undefined ? options.partIndex + 1 : score.parts.length;
+
+  for (let partIndex = startPart; partIndex < endPart; partIndex++) {
+    const part = score.parts[partIndex];
+    if (!part) continue;
+
+    // Track pending tuplets by tuplet number
+    const pendingTuplets = new Map<number, { notes: NoteWithContext[]; actualNotes: number; normalNotes: number }>();
+
+    for (let measureIndex = 0; measureIndex < part.measures.length; measureIndex++) {
+      const measure = part.measures[measureIndex];
+      const state = createPositionState();
+
+      for (const entry of measure.entries) {
+        if (entry.type === 'note') {
+          const position = entry.chord ? state.lastNonChordPosition : state.position;
+          const context: NoteWithContext = {
+            note: entry,
+            part,
+            partIndex,
+            measure,
+            measureIndex,
+            position,
+          };
+
+          // Check for tuplet notations
+          if (entry.notations) {
+            for (const notation of entry.notations) {
+              if (notation.type === 'tuplet') {
+                const tupletNumber = notation.number ?? 1;
+
+                if (notation.tupletType === 'start') {
+                  const actualNotes = entry.timeModification?.actualNotes ?? 3;
+                  const normalNotes = entry.timeModification?.normalNotes ?? 2;
+                  pendingTuplets.set(tupletNumber, {
+                    notes: [context],
+                    actualNotes,
+                    normalNotes,
+                  });
+                } else if (notation.tupletType === 'stop' && pendingTuplets.has(tupletNumber)) {
+                  const pending = pendingTuplets.get(tupletNumber)!;
+                  pending.notes.push(context);
+                  results.push({
+                    number: tupletNumber,
+                    notes: pending.notes,
+                    actualNotes: pending.actualNotes,
+                    normalNotes: pending.normalNotes,
+                  });
+                  pendingTuplets.delete(tupletNumber);
+                }
+              }
+            }
+          }
+
+          // Add notes with timeModification to pending tuplets
+          if (entry.timeModification && !entry.notations?.some(n => n.type === 'tuplet')) {
+            for (const [, pending] of pendingTuplets) {
+              if (entry.timeModification.actualNotes === pending.actualNotes &&
+                  entry.timeModification.normalNotes === pending.normalNotes) {
+                pending.notes.push(context);
+              }
+            }
+          }
+        }
+        updatePositionForEntry(state, entry);
+      }
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Get all beam groups in a measure
+ * Returns groups of notes connected by beams
+ */
+export function getBeamGroups(measure: Measure): BeamGroup[] {
+  const results: BeamGroup[] = [];
+  const state = createPositionState();
+
+  // Track pending beams by beam number
+  const pendingBeams = new Map<number, NoteWithContext[]>();
+
+  for (const entry of measure.entries) {
+    if (entry.type === 'note' && entry.beam) {
+      const position = entry.chord ? state.lastNonChordPosition : state.position;
+      const context: NoteWithContext = {
+        note: entry,
+        part: {} as Part, // Will be set by caller if needed
+        partIndex: 0,
+        measure,
+        measureIndex: 0,
+        position,
+      };
+
+      for (const beam of entry.beam) {
+        const beamNumber = beam.number;
+
+        if (beam.type === 'begin') {
+          pendingBeams.set(beamNumber, [context]);
+        } else if (beam.type === 'continue' && pendingBeams.has(beamNumber)) {
+          pendingBeams.get(beamNumber)!.push(context);
+        } else if (beam.type === 'end' && pendingBeams.has(beamNumber)) {
+          const group = pendingBeams.get(beamNumber)!;
+          group.push(context);
+          results.push({
+            notes: group,
+            beamLevel: beamNumber,
+          });
+          pendingBeams.delete(beamNumber);
+        }
+      }
+    }
+    updatePositionForEntry(state, entry);
+  }
+
+  return results;
+}
+
+/**
+ * Find all notes with a specific notation type
+ */
+export function findNotesWithNotation(
+  score: Score,
+  notationType: NotationType,
+  options?: { partIndex?: number }
+): NoteWithContext[] {
+  const results: NoteWithContext[] = [];
+
+  const startPart = options?.partIndex ?? 0;
+  const endPart = options?.partIndex !== undefined ? options.partIndex + 1 : score.parts.length;
+
+  for (let partIndex = startPart; partIndex < endPart; partIndex++) {
+    const part = score.parts[partIndex];
+    if (!part) continue;
+
+    for (let measureIndex = 0; measureIndex < part.measures.length; measureIndex++) {
+      const measure = part.measures[measureIndex];
+      const state = createPositionState();
+
+      for (const entry of measure.entries) {
+        if (entry.type === 'note') {
+          const position = entry.chord ? state.lastNonChordPosition : state.position;
+
+          if (entry.notations?.some(n => n.type === notationType)) {
+            results.push({
+              note: entry,
+              part,
+              partIndex,
+              measure,
+              measureIndex,
+              position,
+            });
+          }
+        }
+        updatePositionForEntry(state, entry);
+      }
+    }
+  }
+
+  return results;
+}
+
+// ============================================================
+// Phase 6: Harmony and Lyrics
+// ============================================================
+
+/**
+ * Get all harmonies from a score
+ */
+export function getHarmonies(
+  score: Score,
+  options?: { partIndex?: number }
+): HarmonyWithContext[] {
+  const results: HarmonyWithContext[] = [];
+
+  const startPart = options?.partIndex ?? 0;
+  const endPart = options?.partIndex !== undefined ? options.partIndex + 1 : score.parts.length;
+
+  for (let partIndex = startPart; partIndex < endPart; partIndex++) {
+    const part = score.parts[partIndex];
+    if (!part) continue;
+
+    for (let measureIndex = 0; measureIndex < part.measures.length; measureIndex++) {
+      const measure = part.measures[measureIndex];
+      const state = createPositionState();
+
+      for (const entry of measure.entries) {
+        if (entry.type === 'harmony') {
+          results.push({
+            harmony: entry,
+            part,
+            partIndex,
+            measure,
+            measureIndex,
+            position: state.position,
+          });
+        }
+        updatePositionForEntry(state, entry);
+      }
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Get harmony at a specific position in a measure
+ */
+export function getHarmonyAtPosition(
+  measure: Measure,
+  position: number
+): HarmonyEntry | undefined {
+  const state = createPositionState();
+  let lastHarmony: HarmonyEntry | undefined;
+
+  for (const entry of measure.entries) {
+    if (entry.type === 'harmony') {
+      if (state.position <= position) {
+        lastHarmony = entry;
+      }
+    }
+    updatePositionForEntry(state, entry);
+    if (state.position > position && lastHarmony) {
+      break;
+    }
+  }
+
+  return lastHarmony;
+}
+
+/**
+ * Get chord progression (all harmonies in order)
+ * Returns a simplified representation of the chord progression
+ */
+export function getChordProgression(
+  score: Score,
+  options?: { partIndex?: number }
+): { root: string; kind: string; bass?: string; measureIndex: number; position: number }[] {
+  const harmonies = getHarmonies(score, options);
+
+  return harmonies.map(h => {
+    const rootAlter = h.harmony.root.rootAlter ?? 0;
+    const rootAccidental = rootAlter > 0 ? '#'.repeat(rootAlter) : 'b'.repeat(-rootAlter);
+    const root = h.harmony.root.rootStep + rootAccidental;
+
+    let bass: string | undefined;
+    if (h.harmony.bass) {
+      const bassAlter = h.harmony.bass.bassAlter ?? 0;
+      const bassAccidental = bassAlter > 0 ? '#'.repeat(bassAlter) : 'b'.repeat(-bassAlter);
+      bass = h.harmony.bass.bassStep + bassAccidental;
+    }
+
+    return {
+      root,
+      kind: h.harmony.kind,
+      bass,
+      measureIndex: h.measureIndex,
+      position: h.position,
+    };
+  });
+}
+
+/**
+ * Get all lyrics from a score
+ */
+export function getLyrics(
+  score: Score,
+  options?: { partIndex?: number; verse?: number }
+): LyricWithContext[] {
+  const results: LyricWithContext[] = [];
+
+  const startPart = options?.partIndex ?? 0;
+  const endPart = options?.partIndex !== undefined ? options.partIndex + 1 : score.parts.length;
+
+  for (let partIndex = startPart; partIndex < endPart; partIndex++) {
+    const part = score.parts[partIndex];
+    if (!part) continue;
+
+    for (let measureIndex = 0; measureIndex < part.measures.length; measureIndex++) {
+      const measure = part.measures[measureIndex];
+      const state = createPositionState();
+
+      for (const entry of measure.entries) {
+        if (entry.type === 'note' && entry.lyrics) {
+          const position = entry.chord ? state.lastNonChordPosition : state.position;
+
+          for (const lyric of entry.lyrics) {
+            const verse = lyric.number ?? 1;
+
+            if (options?.verse !== undefined && verse !== options.verse) {
+              continue;
+            }
+
+            results.push({
+              lyric,
+              note: entry,
+              part,
+              partIndex,
+              measure,
+              measureIndex,
+              position,
+              verse,
+            });
+          }
+        }
+        updatePositionForEntry(state, entry);
+      }
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Get assembled lyric text for a specific verse
+ * Joins syllables with proper hyphenation
+ */
+export function getLyricText(
+  score: Score,
+  options?: { partIndex?: number; verse?: number }
+): AssembledLyrics[] {
+  const lyrics = getLyrics(score, options);
+
+  // Group by verse
+  const verseMap = new Map<number, LyricWithContext[]>();
+  for (const lyric of lyrics) {
+    if (!verseMap.has(lyric.verse)) {
+      verseMap.set(lyric.verse, []);
+    }
+    verseMap.get(lyric.verse)!.push(lyric);
+  }
+
+  const results: AssembledLyrics[] = [];
+
+  for (const [verse, verseLyrics] of verseMap) {
+    const syllables: { text: string; position: number; measureIndex: number }[] = [];
+    const textParts: string[] = [];
+
+    for (const lyric of verseLyrics) {
+      const text = lyric.lyric.text;
+      syllables.push({
+        text,
+        position: lyric.position,
+        measureIndex: lyric.measureIndex,
+      });
+
+      // Handle syllabic joining
+      const syllabic = lyric.lyric.syllabic;
+      if (syllabic === 'begin' || syllabic === 'middle') {
+        textParts.push(text + '-');
+      } else if (syllabic === 'end') {
+        textParts.push(text + ' ');
+      } else {
+        // 'single' or undefined
+        textParts.push(text + ' ');
+      }
+    }
+
+    results.push({
+      verse,
+      text: textParts.join('').trim(),
+      syllables,
+    });
+  }
+
+  // Sort by verse number
+  return results.sort((a, b) => a.verse - b.verse);
+}
+
+/**
+ * Get the number of verses in a score
+ */
+export function getVerseCount(
+  score: Score,
+  options?: { partIndex?: number }
+): number {
+  const verses = new Set<number>();
+
+  const startPart = options?.partIndex ?? 0;
+  const endPart = options?.partIndex !== undefined ? options.partIndex + 1 : score.parts.length;
+
+  for (let partIndex = startPart; partIndex < endPart; partIndex++) {
+    const part = score.parts[partIndex];
+    if (!part) continue;
+
+    for (const measure of part.measures) {
+      for (const entry of measure.entries) {
+        if (entry.type === 'note' && entry.lyrics) {
+          for (const lyric of entry.lyrics) {
+            verses.add(lyric.number ?? 1);
+          }
+        }
+      }
+    }
+  }
+
+  return verses.size;
 }

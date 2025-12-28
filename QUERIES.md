@@ -138,7 +138,7 @@ MusicXMLのStaff構造を正しく扱うための関数群。
 | `countNotes(score)` | Note数をカウント | ✅ |
 | `hasNotes(measure)` | Noteが存在するか | ✅ |
 | `isRestMeasure(measure)` | 全休符か判定 | ✅ |
-| `findNotesWithNotation(score, notationType)` | 特定Notation付きNoteを検索 | ⬜ |
+| `findNotesWithNotation(score, notationType)` | 特定Notation付きNoteを検索 | ✅ |
 
 ### 6.3 ナビゲーション ⭐ Phase 3 ✅
 
@@ -150,15 +150,15 @@ MusicXMLのStaff構造を正しく扱うための関数群。
 
 ---
 
-## 7. 和音・グループ
+## 7. 和音・グループ ⭐ Phase 5 ✅
 
 | 関数 | 説明 | 実装 |
 |------|------|:----:|
 | `getChords(measure, filter?)` | 和音グループを取得 | ✅ |
-| `getTiedNoteGroups(score, {part?})` | タイで繋がった音符群 | ⬜ |
-| `getSlurSpans(score, {part?})` | スラー区間（開始〜終了ペア） | ⬜ |
-| `getTupletGroups(measure)` | 連符グループ | ⬜ |
-| `getBeamGroups(measure)` | 連桁グループ | ⬜ |
+| `getTiedNoteGroups(score, {part?})` | タイで繋がった音符群 | ✅ |
+| `getSlurSpans(score, {part?})` | スラー区間（開始〜終了ペア） | ✅ |
+| `getTupletGroups(score, {part?})` | 連符グループ | ✅ |
+| `getBeamGroups(measure)` | 連桁グループ | ✅ |
 
 ---
 
@@ -184,27 +184,27 @@ MusicXMLのStaff構造を正しく扱うための関数群。
 
 ---
 
-## 9. Harmony・Lyrics ⭐ Phase 5
+## 9. Harmony・Lyrics ⭐ Phase 6 ✅
 
 ### 9.1 Harmony（コード記号）
 
 | 関数 | 説明 | 実装 |
 |------|------|:----:|
-| `getHarmonies(score, {part?})` | HarmonyEntryを取得 | ⬜ |
-| `getHarmonyAtPosition(measure, position)` | 特定位置のHarmonyを取得 | ⬜ |
-| `getChordProgression(score)` | コード進行をシンプルな形式で | ⬜ |
+| `getHarmonies(score, {part?})` | HarmonyEntryを取得 | ✅ |
+| `getHarmonyAtPosition(measure, position)` | 特定位置のHarmonyを取得 | ✅ |
+| `getChordProgression(score)` | コード進行をシンプルな形式で | ✅ |
 
 ### 9.2 Lyrics（歌詞）
 
 | 関数 | 説明 | 実装 |
 |------|------|:----:|
-| `getLyrics(score, {part?, verse?})` | 歌詞を取得 | ⬜ |
-| `getLyricText(score, {part?, verse?})` | 歌詞テキストを連結 | ⬜ |
-| `getVerseCount(score, partIndex?)` | 歌詞行数を取得 | ⬜ |
+| `getLyrics(score, {part?, verse?})` | 歌詞を取得 | ✅ |
+| `getLyricText(score, {part?, verse?})` | 歌詞テキストを連結 | ✅ |
+| `getVerseCount(score, partIndex?)` | 歌詞行数を取得 | ✅ |
 
 ---
 
-## 10. 構造・ナビゲーション ⭐ Phase 6
+## 10. 構造・ナビゲーション ⭐ Phase 7
 
 ### 10.1 繰り返し構造
 
@@ -281,20 +281,20 @@ MusicXMLのStaff構造を正しく扱うための関数群。
 - [x] `getWedges`
 - [x] `getOctaveShifts`
 
-### Phase 5: グループ・スパン
-- [ ] `getTiedNoteGroups`
-- [ ] `getSlurSpans`
-- [ ] `getTupletGroups`
-- [ ] `getBeamGroups`
-- [ ] `findNotesWithNotation`
+### Phase 5: グループ・スパン ✅
+- [x] `getTiedNoteGroups`
+- [x] `getSlurSpans`
+- [x] `getTupletGroups`
+- [x] `getBeamGroups`
+- [x] `findNotesWithNotation`
 
-### Phase 6: Harmony・Lyrics
-- [ ] `getHarmonies`
-- [ ] `getHarmonyAtPosition`
-- [ ] `getChordProgression`
-- [ ] `getLyrics`
-- [ ] `getLyricText`
-- [ ] `getVerseCount`
+### Phase 6: Harmony・Lyrics ✅
+- [x] `getHarmonies`
+- [x] `getHarmonyAtPosition`
+- [x] `getChordProgression`
+- [x] `getLyrics`
+- [x] `getLyricText`
+- [x] `getVerseCount`
 
 ### Phase 7: 構造
 - [ ] `getRepeatStructure`
@@ -435,6 +435,70 @@ interface OctaveShiftWithContext {
   partIndex: number;
   measureIndex: number;
   position: number;
+}
+
+// Phase 5: Groups and Spans
+
+// Tied note group
+interface TiedNoteGroup {
+  notes: NoteWithContext[];
+  totalDuration: number;
+}
+
+// Slur span
+interface SlurSpan {
+  number: number;
+  startNote: NoteWithContext;
+  endNote: NoteWithContext;
+  notes: NoteWithContext[];
+}
+
+// Tuplet group
+interface TupletGroup {
+  number: number;
+  notes: NoteWithContext[];
+  actualNotes: number;
+  normalNotes: number;
+}
+
+// Beam group
+interface BeamGroup {
+  notes: NoteWithContext[];
+  beamLevel: number;
+}
+
+// Notation type filter
+type NotationType = Notation['type'];
+
+// Phase 6: Harmony and Lyrics
+
+// Harmony with context
+interface HarmonyWithContext {
+  harmony: HarmonyEntry;
+  part: Part;
+  partIndex: number;
+  measure: Measure;
+  measureIndex: number;
+  position: number;
+}
+
+// Lyric with context
+interface LyricWithContext {
+  lyric: Lyric;
+  note: NoteEntry;
+  part: Part;
+  partIndex: number;
+  measure: Measure;
+  measureIndex: number;
+  position: number;
+  verse: number;
+}
+
+// Assembled lyrics
+interface AssembledLyrics {
+  verse: number;
+  text: string;
+  syllables: { text: string; position: number; measureIndex: number }[];
 }
 ```
 
