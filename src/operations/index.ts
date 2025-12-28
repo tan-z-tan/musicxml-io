@@ -2310,10 +2310,14 @@ export function createTuplet(
     return failure([operationError('NOTE_NOT_FOUND', `Could not find ${options.noteCount} notes starting at index ${options.startNoteIndex}`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
   }
 
-  // Check that all notes have the same voice
+  // Check that all notes have the same voice and staff
   const voice = notes[0].note.voice;
+  const staff = notes[0].note.staff;
   if (!notes.every(n => n.note.voice === voice)) {
     return failure([operationError('NOTE_CONFLICT', 'All notes in a tuplet must be in the same voice', { partIndex: options.partIndex, measureIndex: options.measureIndex, voice })]);
+  }
+  if (!notes.every(n => n.note.staff === staff)) {
+    return failure([operationError('NOTE_CONFLICT', 'All notes in a tuplet must be on the same staff', { partIndex: options.partIndex, measureIndex: options.measureIndex, staff })]);
   }
 
   // Apply tuplet modifications to each note
@@ -2429,6 +2433,7 @@ export function removeTuplet(
 
   const tupletNotes: NoteEntry[] = [];
   let inTuplet = false;
+  let currentTupletNumber: number | undefined;
 
   for (const entry of measure.entries) {
     if (entry.type !== 'note' || entry.rest) continue;
@@ -2438,25 +2443,27 @@ export function removeTuplet(
       entry.timeModification?.actualNotes === actualNotes &&
       entry.timeModification?.normalNotes === normalNotes;
 
-    // Check for tuplet start
-    const hasTupletStart = entry.notations?.some(
+    // Check for tuplet start and get its number
+    const tupletStart = entry.notations?.find(
       n => n.type === 'tuplet' && n.tupletType === 'start'
     );
 
-    // Check for tuplet stop
-    const hasTupletStop = entry.notations?.some(
-      n => n.type === 'tuplet' && n.tupletType === 'stop'
+    // Check for tuplet stop with matching number
+    const tupletStop = entry.notations?.find(
+      n => n.type === 'tuplet' && n.tupletType === 'stop' &&
+        (currentTupletNumber === undefined || n.number === currentTupletNumber)
     );
 
-    if (hasTupletStart) {
+    if (tupletStart && tupletStart.type === 'tuplet') {
       inTuplet = true;
+      currentTupletNumber = tupletStart.number;
     }
 
     if (inTuplet && hasSameTimeModification) {
       tupletNotes.push(entry);
     }
 
-    if (hasTupletStop && inTuplet) {
+    if (tupletStop && inTuplet) {
       // Check if this tuplet contains our target note
       if (tupletNotes.includes(targetNote)) {
         break;
@@ -2464,6 +2471,7 @@ export function removeTuplet(
         // Reset and continue looking
         tupletNotes.length = 0;
         inTuplet = false;
+        currentTupletNumber = undefined;
       }
     }
   }

@@ -642,8 +642,8 @@ export interface OrnamentNotation extends BaseNotation {
 
 export type OrnamentType =
   | 'trill-mark' | 'mordent' | 'inverted-mordent' | 'turn' | 'inverted-turn'
-  | 'delayed-turn' | 'delayed-inverted-turn' | 'vertical-turn' | 'shake'
-  | 'wavy-line' | 'schleifer' | 'tremolo' | 'haydn';
+  | 'delayed-turn' | 'delayed-inverted-turn' | 'vertical-turn' | 'inverted-vertical-turn'
+  | 'shake' | 'wavy-line' | 'schleifer' | 'tremolo' | 'haydn' | 'other-ornament';
 
 export interface TechnicalNotation extends BaseNotation {
   type: 'technical';
