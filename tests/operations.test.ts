@@ -40,6 +40,9 @@ import {
   // Key-aware pitch operations
   setNotePitchBySemitone,
   shiftNotePitch,
+  // Accidental operations
+  raiseAccidental,
+  lowerAccidental,
   type OperationResult,
 } from '../src/operations';
 
@@ -1757,6 +1760,375 @@ describe('Key-Aware Pitch Operations', () => {
           expect(note.pitch?.step).toBe('F');
           expect(note.pitch?.alter).toBeUndefined();
           expect(note.accidental?.value).toBe('natural');
+        }
+      }
+    });
+  });
+});
+
+// ============================================================
+// Accidental Operations Tests
+// ============================================================
+
+describe('Accidental Operations', () => {
+  describe('raiseAccidental', () => {
+    it('should raise C to C#', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = raiseAccidental(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const note = result.data.parts[0].measures[0].entries[0];
+        if (note.type === 'note') {
+          expect(note.pitch?.step).toBe('C'); // Step stays same
+          expect(note.pitch?.alter).toBe(1);  // Now sharp
+          expect(note.accidental?.value).toBe('sharp');
+        }
+      }
+    });
+
+    it('should raise C# to C##', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // First raise to C#
+      const withSharp = raiseAccidental(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+      expect(withSharp.success).toBe(true);
+      if (!withSharp.success) return;
+
+      // Then raise again to C##
+      const result = raiseAccidental(withSharp.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const note = result.data.parts[0].measures[0].entries[0];
+        if (note.type === 'note') {
+          expect(note.pitch?.step).toBe('C');
+          expect(note.pitch?.alter).toBe(2); // Double sharp
+          expect(note.accidental?.value).toBe('double-sharp');
+        }
+      }
+    });
+
+    it('should fail when raising beyond double-sharp', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // Raise twice to get to C##
+      let current = score;
+      for (let i = 0; i < 2; i++) {
+        const result = raiseAccidental(current, {
+          partIndex: 0,
+          measureIndex: 0,
+          noteIndex: 0,
+        });
+        expect(result.success).toBe(true);
+        if (result.success) {
+          current = result.data;
+        }
+      }
+
+      // Third raise should fail
+      const result = raiseAccidental(current, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.errors[0].code).toBe('ACCIDENTAL_OUT_OF_BOUNDS');
+      }
+    });
+
+    it('should raise Db to D natural', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // First lower to Cb (C flat)
+      const withFlat = lowerAccidental(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+      expect(withFlat.success).toBe(true);
+      if (!withFlat.success) return;
+
+      // Now raise back to C natural
+      const result = raiseAccidental(withFlat.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const note = result.data.parts[0].measures[0].entries[0];
+        if (note.type === 'note') {
+          expect(note.pitch?.step).toBe('C');
+          expect(note.pitch?.alter).toBeUndefined(); // Natural
+        }
+      }
+    });
+
+    it('should handle F# in G major (no accidental needed)', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/g-major-scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // First note is G4. We need a note that is F natural first.
+      // Let's use setNotePitchBySemitone to set it to F natural (53)
+      const withF = setNotePitchBySemitone(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        semitone: 53, // F4 natural
+      });
+      expect(withF.success).toBe(true);
+      if (!withF.success) return;
+
+      // Now raise F to F# - in G major this should NOT need an accidental
+      const result = raiseAccidental(withF.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const note = result.data.parts[0].measures[0].entries[0];
+        if (note.type === 'note') {
+          expect(note.pitch?.step).toBe('F');
+          expect(note.pitch?.alter).toBe(1);
+          // F# is in G major, so no accidental display needed
+          expect(note.accidental).toBeUndefined();
+        }
+      }
+    });
+  });
+
+  describe('lowerAccidental', () => {
+    it('should lower C to Cb', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = lowerAccidental(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const note = result.data.parts[0].measures[0].entries[0];
+        if (note.type === 'note') {
+          expect(note.pitch?.step).toBe('C'); // Step stays same
+          expect(note.pitch?.alter).toBe(-1); // Now flat
+          expect(note.accidental?.value).toBe('flat');
+        }
+      }
+    });
+
+    it('should lower Cb to Cbb', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // First lower to Cb
+      const withFlat = lowerAccidental(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+      expect(withFlat.success).toBe(true);
+      if (!withFlat.success) return;
+
+      // Then lower again to Cbb
+      const result = lowerAccidental(withFlat.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const note = result.data.parts[0].measures[0].entries[0];
+        if (note.type === 'note') {
+          expect(note.pitch?.step).toBe('C');
+          expect(note.pitch?.alter).toBe(-2); // Double flat
+          expect(note.accidental?.value).toBe('double-flat');
+        }
+      }
+    });
+
+    it('should fail when lowering beyond double-flat', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // Lower twice to get to Cbb
+      let current = score;
+      for (let i = 0; i < 2; i++) {
+        const result = lowerAccidental(current, {
+          partIndex: 0,
+          measureIndex: 0,
+          noteIndex: 0,
+        });
+        expect(result.success).toBe(true);
+        if (result.success) {
+          current = result.data;
+        }
+      }
+
+      // Third lower should fail
+      const result = lowerAccidental(current, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.errors[0].code).toBe('ACCIDENTAL_OUT_OF_BOUNDS');
+      }
+    });
+
+    it('should lower C# to C natural', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // First raise to C#
+      const withSharp = raiseAccidental(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+      expect(withSharp.success).toBe(true);
+      if (!withSharp.success) return;
+
+      // Now lower back to C natural
+      const result = lowerAccidental(withSharp.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const note = result.data.parts[0].measures[0].entries[0];
+        if (note.type === 'note') {
+          expect(note.pitch?.step).toBe('C');
+          expect(note.pitch?.alter).toBeUndefined(); // Natural
+        }
+      }
+    });
+
+    it('should lower F# to F natural in G major (needs natural accidental)', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/g-major-scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // First set to F#4 (semitone 54)
+      const withFSharp = setNotePitchBySemitone(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        semitone: 54, // F#4
+      });
+      expect(withFSharp.success).toBe(true);
+      if (!withFSharp.success) return;
+
+      // Lower F# to F natural
+      const result = lowerAccidental(withFSharp.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const note = result.data.parts[0].measures[0].entries[0];
+        if (note.type === 'note') {
+          expect(note.pitch?.step).toBe('F');
+          expect(note.pitch?.alter).toBeUndefined();
+          // F natural is NOT in G major, so needs natural accidental
+          expect(note.accidental?.value).toBe('natural');
+        }
+      }
+    });
+  });
+
+  describe('raiseAccidental and lowerAccidental combined', () => {
+    it('should be reversible: raise then lower returns to original', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // Get original pitch
+      const originalNote = score.parts[0].measures[0].entries[0];
+      const originalAlter = originalNote.type === 'note' ? originalNote.pitch?.alter : undefined;
+
+      // Raise
+      const raised = raiseAccidental(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+      expect(raised.success).toBe(true);
+      if (!raised.success) return;
+
+      // Then lower
+      const result = lowerAccidental(raised.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const note = result.data.parts[0].measures[0].entries[0];
+        if (note.type === 'note') {
+          expect(note.pitch?.step).toBe('C');
+          expect(note.pitch?.alter).toBe(originalAlter); // Back to original
+        }
+      }
+    });
+
+    it('should be reversible: lower then raise returns to original', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // Lower
+      const lowered = lowerAccidental(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+      expect(lowered.success).toBe(true);
+      if (!lowered.success) return;
+
+      // Then raise
+      const result = raiseAccidental(lowered.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const note = result.data.parts[0].measures[0].entries[0];
+        if (note.type === 'note') {
+          expect(note.pitch?.step).toBe('C');
+          expect(note.pitch?.alter).toBeUndefined(); // Back to natural
         }
       }
     });

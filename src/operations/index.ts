@@ -84,7 +84,8 @@ export type OperationErrorCode =
   | 'ARTICULATION_NOT_FOUND'
   | 'DYNAMICS_ALREADY_EXISTS'
   | 'DYNAMICS_NOT_FOUND'
-  | 'INVALID_CLEF';
+  | 'INVALID_CLEF'
+  | 'ACCIDENTAL_OUT_OF_BOUNDS';
 
 function operationError(
   code: OperationErrorCode,
@@ -911,6 +912,158 @@ export function shiftNotePitch(
     semitone: currentSemitone + options.semitones,
     preferSharp: options.preferSharp,
   });
+}
+
+// ============================================================
+// Accidental Operations
+// ============================================================
+
+export interface RaiseAccidentalOptions {
+  partIndex: number;
+  measureIndex: number;
+  noteIndex: number;
+}
+
+/**
+ * Raise the accidental of a note by one step.
+ * C → C#, C# → C##, Db → D, etc.
+ * Keeps the note's step (letter name) and increments alter by 1.
+ * Returns error if alter would exceed +2.
+ */
+export function raiseAccidental(
+  score: Score,
+  options: RaiseAccidentalOptions
+): OperationResult<Score> {
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  if (options.measureIndex < 0 || options.measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const measure = result.parts[options.partIndex].measures[options.measureIndex];
+
+  // Get key signature for accidental display
+  const measureNumber = measure.number ?? String(options.measureIndex + 1);
+  const attrs = getAttributesAtMeasure(result, { part: options.partIndex, measure: measureNumber });
+  const keySignature = attrs.key ?? { fifths: 0 };
+
+  // Find the note
+  let noteCount = 0;
+  for (const entry of measure.entries) {
+    if (entry.type === 'note' && !entry.rest) {
+      if (noteCount === options.noteIndex) {
+        if (!entry.pitch) {
+          return failure([operationError('NOTE_NOT_FOUND', 'Note has no pitch', { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+        }
+
+        const currentAlter = entry.pitch.alter ?? 0;
+        const newAlter = currentAlter + 1;
+
+        // Check bounds
+        if (newAlter > 2) {
+          return failure([operationError('ACCIDENTAL_OUT_OF_BOUNDS', `Cannot raise accidental beyond double-sharp (current: ${currentAlter})`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+        }
+
+        // Update pitch
+        entry.pitch.alter = newAlter === 0 ? undefined : newAlter;
+
+        // Get position for accidental tracking
+        const notePosition = getAbsolutePositionForNote(entry, measure);
+        const accidentalsInMeasure = getAccidentalsInMeasure(measure, notePosition, entry.voice);
+
+        // Determine accidental to display
+        const accidental = determineAccidental(entry.pitch, keySignature, accidentalsInMeasure);
+        if (accidental) {
+          entry.accidental = { value: accidental };
+        } else {
+          delete entry.accidental;
+        }
+
+        return success(result);
+      }
+      noteCount++;
+    }
+  }
+
+  return failure([operationError('NOTE_NOT_FOUND', `Note index ${options.noteIndex} not found`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+}
+
+export interface LowerAccidentalOptions {
+  partIndex: number;
+  measureIndex: number;
+  noteIndex: number;
+}
+
+/**
+ * Lower the accidental of a note by one step.
+ * C# → C, C## → C#, D → Db, Db → Dbb, etc.
+ * Keeps the note's step (letter name) and decrements alter by 1.
+ * Returns error if alter would go below -2.
+ */
+export function lowerAccidental(
+  score: Score,
+  options: LowerAccidentalOptions
+): OperationResult<Score> {
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  if (options.measureIndex < 0 || options.measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const measure = result.parts[options.partIndex].measures[options.measureIndex];
+
+  // Get key signature for accidental display
+  const measureNumber = measure.number ?? String(options.measureIndex + 1);
+  const attrs = getAttributesAtMeasure(result, { part: options.partIndex, measure: measureNumber });
+  const keySignature = attrs.key ?? { fifths: 0 };
+
+  // Find the note
+  let noteCount = 0;
+  for (const entry of measure.entries) {
+    if (entry.type === 'note' && !entry.rest) {
+      if (noteCount === options.noteIndex) {
+        if (!entry.pitch) {
+          return failure([operationError('NOTE_NOT_FOUND', 'Note has no pitch', { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+        }
+
+        const currentAlter = entry.pitch.alter ?? 0;
+        const newAlter = currentAlter - 1;
+
+        // Check bounds
+        if (newAlter < -2) {
+          return failure([operationError('ACCIDENTAL_OUT_OF_BOUNDS', `Cannot lower accidental beyond double-flat (current: ${currentAlter})`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+        }
+
+        // Update pitch
+        entry.pitch.alter = newAlter === 0 ? undefined : newAlter;
+
+        // Get position for accidental tracking
+        const notePosition = getAbsolutePositionForNote(entry, measure);
+        const accidentalsInMeasure = getAccidentalsInMeasure(measure, notePosition, entry.voice);
+
+        // Determine accidental to display
+        const accidental = determineAccidental(entry.pitch, keySignature, accidentalsInMeasure);
+        if (accidental) {
+          entry.accidental = { value: accidental };
+        } else {
+          delete entry.accidental;
+        }
+
+        return success(result);
+      }
+      noteCount++;
+    }
+  }
+
+  return failure([operationError('NOTE_NOT_FOUND', `Note index ${options.noteIndex} not found`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
 }
 
 // ============================================================
