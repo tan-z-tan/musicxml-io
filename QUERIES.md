@@ -29,9 +29,9 @@ Query/Accessorは読み取り専用で、Scoreを変更しない純粋関数。
 |------|------|:----:|
 | `getPartById(score, id)` | IDでPartを取得 | ✅ |
 | `getPartIndex(score, id)` | IDからPartインデックスを取得 | ✅ |
-| `getPartByIndex(score, index)` | インデックスでPartを取得 | ⬜ |
-| `getPartCount(score)` | Part数を取得 | ⬜ |
-| `getPartIds(score)` | 全PartのIDリストを取得 | ⬜ |
+| `getPartByIndex(score, index)` | インデックスでPartを取得 | ✅ |
+| `getPartCount(score)` | Part数を取得 | ✅ |
+| `getPartIds(score)` | 全PartのIDリストを取得 | ✅ |
 
 ---
 
@@ -204,24 +204,24 @@ MusicXMLのStaff構造を正しく扱うための関数群。
 
 ---
 
-## 10. 構造・ナビゲーション ⭐ Phase 7
+## 10. 構造・ナビゲーション ⭐ Phase 7 ✅
 
 ### 10.1 繰り返し構造
 
 | 関数 | 説明 | 実装 |
 |------|------|:----:|
-| `getRepeatStructure(score)` | 繰り返し構造を取得 | ⬜ |
-| `findBarlines(score, {style?, repeat?})` | 特定barlineの位置 | ⬜ |
-| `getEndings(score)` | 1番括弧、2番括弧を取得 | ⬜ |
+| `getRepeatStructure(score)` | 繰り返し構造を取得 | ✅ |
+| `findBarlines(score, {style?, repeat?})` | 特定barlineの位置 | ✅ |
+| `getEndings(score)` | 1番括弧、2番括弧を取得 | ✅ |
 
 ### 10.2 構造変化点
 
 | 関数 | 説明 | 実装 |
 |------|------|:----:|
-| `getKeyChanges(score)` | 調号変更点を取得 | ⬜ |
-| `getTimeChanges(score)` | 拍子変更点を取得 | ⬜ |
-| `getClefChanges(score, {part?, staff?})` | 音部記号変更点を取得 | ⬜ |
-| `getStructuralChanges(score)` | 全構造変化点をまとめて取得 | ⬜ |
+| `getKeyChanges(score)` | 調号変更点を取得 | ✅ |
+| `getTimeChanges(score)` | 拍子変更点を取得 | ✅ |
+| `getClefChanges(score, {part?, staff?})` | 音部記号変更点を取得 | ✅ |
+| `getStructuralChanges(score)` | 全構造変化点をまとめて取得 | ✅ |
 
 ---
 
@@ -296,19 +296,19 @@ MusicXMLのStaff構造を正しく扱うための関数群。
 - [x] `getLyricText`
 - [x] `getVerseCount`
 
-### Phase 7: 構造
-- [ ] `getRepeatStructure`
-- [ ] `findBarlines`
-- [ ] `getEndings`
-- [ ] `getKeyChanges`
-- [ ] `getTimeChanges`
-- [ ] `getClefChanges`
-- [ ] `getStructuralChanges`
+### Phase 7: 構造 ✅
+- [x] `getRepeatStructure`
+- [x] `findBarlines`
+- [x] `getEndings`
+- [x] `getKeyChanges`
+- [x] `getTimeChanges`
+- [x] `getClefChanges`
+- [x] `getStructuralChanges`
 
-### Phase 8: 細かい追加
-- [ ] `getPartByIndex`
-- [ ] `getPartCount`
-- [ ] `getPartIds`
+### Phase 8: 細かい追加 ✅
+- [x] `getPartByIndex`
+- [x] `getPartCount`
+- [x] `getPartIds`
 
 ---
 
@@ -499,6 +499,67 @@ interface AssembledLyrics {
   verse: number;
   text: string;
   syllables: { text: string; position: number; measureIndex: number }[];
+}
+
+// Phase 7: Structure
+
+// Barline with context
+interface BarlineWithContext {
+  barline: Barline;
+  partIndex: number;
+  measureIndex: number;
+  measureNumber: string;
+}
+
+// Repeat info
+interface RepeatInfo {
+  type: 'forward' | 'backward';
+  times?: number;
+  measureIndex: number;
+  measureNumber: string;
+}
+
+// Ending info
+interface EndingInfo {
+  number: string;
+  type: 'start' | 'stop' | 'discontinue';
+  partIndex: number;
+  measureIndex: number;
+  measureNumber: string;
+}
+
+// Key change info
+interface KeyChangeInfo {
+  key: KeySignature;
+  partIndex: number;
+  measureIndex: number;
+  measureNumber: string;
+  position: number;
+}
+
+// Time change info
+interface TimeChangeInfo {
+  time: TimeSignature;
+  partIndex: number;
+  measureIndex: number;
+  measureNumber: string;
+}
+
+// Clef change info
+interface ClefChangeInfo {
+  clef: Clef;
+  staff: number;
+  partIndex: number;
+  measureIndex: number;
+  measureNumber: string;
+  position: number;
+}
+
+// Structural changes
+interface StructuralChanges {
+  keyChanges: KeyChangeInfo[];
+  timeChanges: TimeChangeInfo[];
+  clefChanges: ClefChangeInfo[];
 }
 ```
 

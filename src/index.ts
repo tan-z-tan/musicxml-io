@@ -62,6 +62,14 @@ export type {
   HarmonyWithContext,
   LyricWithContext,
   AssembledLyrics,
+  // Phase 7: Structure
+  BarlineWithContext,
+  RepeatInfo,
+  EndingInfo,
+  KeyChangeInfo,
+  TimeChangeInfo,
+  ClefChangeInfo,
+  StructuralChanges,
 } from './types';
 
 // Importers
@@ -132,6 +140,18 @@ export {
   getLyrics,
   getLyricText,
   getVerseCount,
+  // Phase 7: Structure
+  getRepeatStructure,
+  findBarlines,
+  getEndings,
+  getKeyChanges,
+  getTimeChanges,
+  getClefChanges,
+  getStructuralChanges,
+  // Phase 8: Additional Utilities
+  getPartByIndex,
+  getPartCount,
+  getPartIds,
 } from './accessors';
 export type { VoiceFilter, NormalizedPositionOptions } from './accessors';
 

@@ -1101,3 +1101,80 @@ export interface AssembledLyrics {
   text: string;
   syllables: { text: string; position: number; measureIndex: number }[];
 }
+
+// ============================================================
+// Phase 7: Structure Types
+// ============================================================
+
+/**
+ * Barline information with context
+ */
+export interface BarlineWithContext {
+  barline: Barline;
+  partIndex: number;
+  measureIndex: number;
+  measureNumber: string;
+}
+
+/**
+ * Repeat structure information
+ */
+export interface RepeatInfo {
+  type: 'forward' | 'backward';
+  times?: number;
+  measureIndex: number;
+  measureNumber: string;
+}
+
+/**
+ * Ending (volta bracket) information
+ */
+export interface EndingInfo {
+  number: string;
+  type: 'start' | 'stop' | 'discontinue';
+  partIndex: number;
+  measureIndex: number;
+  measureNumber: string;
+}
+
+/**
+ * Key change information
+ */
+export interface KeyChangeInfo {
+  key: KeySignature;
+  partIndex: number;
+  measureIndex: number;
+  measureNumber: string;
+  position: number;
+}
+
+/**
+ * Time signature change information
+ */
+export interface TimeChangeInfo {
+  time: TimeSignature;
+  partIndex: number;
+  measureIndex: number;
+  measureNumber: string;
+}
+
+/**
+ * Clef change information
+ */
+export interface ClefChangeInfo {
+  clef: Clef;
+  staff: number;
+  partIndex: number;
+  measureIndex: number;
+  measureNumber: string;
+  position: number;
+}
+
+/**
+ * All structural changes combined
+ */
+export interface StructuralChanges {
+  keyChanges: KeyChangeInfo[];
+  timeChanges: TimeChangeInfo[];
+  clefChanges: ClefChangeInfo[];
+}

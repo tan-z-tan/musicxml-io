@@ -7,6 +7,8 @@ import type {
   DirectionEntry,
   HarmonyEntry,
   Clef,
+  KeySignature,
+  TimeSignature,
   VoiceGroup,
   StaffGroup,
   NoteWithPosition,
@@ -35,6 +37,13 @@ import type {
   HarmonyWithContext,
   LyricWithContext,
   AssembledLyrics,
+  BarlineWithContext,
+  RepeatInfo,
+  EndingInfo,
+  KeyChangeInfo,
+  TimeChangeInfo,
+  ClefChangeInfo,
+  StructuralChanges,
 } from '../types';
 import { getAbsolutePositionForNote, createPositionState, updatePositionForEntry } from '../utils';
 
@@ -1735,4 +1744,384 @@ export function getVerseCount(
   }
 
   return verses.size;
+}
+
+// ============================================================
+// Phase 7: Structure and Navigation
+// ============================================================
+
+/**
+ * Get repeat structure from a score
+ * Returns forward and backward repeat markers
+ */
+export function getRepeatStructure(
+  score: Score,
+  options?: { partIndex?: number }
+): RepeatInfo[] {
+  const results: RepeatInfo[] = [];
+  const partIndex = options?.partIndex ?? 0;
+  const part = score.parts[partIndex];
+  if (!part) return results;
+
+  for (let measureIndex = 0; measureIndex < part.measures.length; measureIndex++) {
+    const measure = part.measures[measureIndex];
+    const measureNumber = measure.number ?? String(measureIndex + 1);
+
+    // Check barlines for repeat markers
+    if (measure.barlines) {
+      for (const barline of measure.barlines) {
+        if (barline.repeat) {
+          results.push({
+            type: barline.repeat.direction,
+            times: barline.repeat.times,
+            measureIndex,
+            measureNumber,
+          });
+        }
+      }
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Find barlines matching criteria
+ */
+export function findBarlines(
+  score: Score,
+  options?: { partIndex?: number; style?: string; repeat?: boolean }
+): BarlineWithContext[] {
+  const results: BarlineWithContext[] = [];
+
+  const startPart = options?.partIndex ?? 0;
+  const endPart = options?.partIndex !== undefined ? options.partIndex + 1 : score.parts.length;
+
+  for (let partIndex = startPart; partIndex < endPart; partIndex++) {
+    const part = score.parts[partIndex];
+    if (!part) continue;
+
+    for (let measureIndex = 0; measureIndex < part.measures.length; measureIndex++) {
+      const measure = part.measures[measureIndex];
+      const measureNumber = measure.number ?? String(measureIndex + 1);
+
+      if (measure.barlines) {
+        for (const barline of measure.barlines) {
+          // Filter by style
+          if (options?.style !== undefined && barline.barStyle !== options.style) {
+            continue;
+          }
+          // Filter by repeat
+          if (options?.repeat !== undefined) {
+            const hasRepeat = barline.repeat !== undefined;
+            if (hasRepeat !== options.repeat) {
+              continue;
+            }
+          }
+
+          results.push({
+            barline,
+            partIndex,
+            measureIndex,
+            measureNumber,
+          });
+        }
+      }
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Get all endings (volta brackets) from a score
+ */
+export function getEndings(
+  score: Score,
+  options?: { partIndex?: number }
+): EndingInfo[] {
+  const results: EndingInfo[] = [];
+
+  const startPart = options?.partIndex ?? 0;
+  const endPart = options?.partIndex !== undefined ? options.partIndex + 1 : score.parts.length;
+
+  for (let partIndex = startPart; partIndex < endPart; partIndex++) {
+    const part = score.parts[partIndex];
+    if (!part) continue;
+
+    for (let measureIndex = 0; measureIndex < part.measures.length; measureIndex++) {
+      const measure = part.measures[measureIndex];
+      const measureNumber = measure.number ?? String(measureIndex + 1);
+
+      if (measure.barlines) {
+        for (const barline of measure.barlines) {
+          if (barline.ending) {
+            results.push({
+              number: barline.ending.number,
+              type: barline.ending.type,
+              partIndex,
+              measureIndex,
+              measureNumber,
+            });
+          }
+        }
+      }
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Get all key signature changes in a score
+ */
+export function getKeyChanges(
+  score: Score,
+  options?: { partIndex?: number }
+): KeyChangeInfo[] {
+  const results: KeyChangeInfo[] = [];
+
+  const startPart = options?.partIndex ?? 0;
+  const endPart = options?.partIndex !== undefined ? options.partIndex + 1 : score.parts.length;
+
+  for (let partIndex = startPart; partIndex < endPart; partIndex++) {
+    const part = score.parts[partIndex];
+    if (!part) continue;
+
+    let lastKey: KeySignature | undefined;
+
+    for (let measureIndex = 0; measureIndex < part.measures.length; measureIndex++) {
+      const measure = part.measures[measureIndex];
+      const measureNumber = measure.number ?? String(measureIndex + 1);
+      const state = createPositionState();
+
+      // Check measure-level attributes first
+      if (measure.attributes?.key) {
+        const key = measure.attributes.key;
+        if (!lastKey || lastKey.fifths !== key.fifths || lastKey.mode !== key.mode) {
+          results.push({
+            key,
+            partIndex,
+            measureIndex,
+            measureNumber,
+            position: 0,
+          });
+          lastKey = key;
+        }
+      }
+
+      // Check entry-level attributes for mid-measure changes
+      for (const entry of measure.entries) {
+        if (entry.type === 'attributes' && entry.attributes.key) {
+          const key = entry.attributes.key;
+          // Check if key changed
+          if (!lastKey || lastKey.fifths !== key.fifths || lastKey.mode !== key.mode) {
+            results.push({
+              key,
+              partIndex,
+              measureIndex,
+              measureNumber,
+              position: state.position,
+            });
+            lastKey = key;
+          }
+        }
+        updatePositionForEntry(state, entry);
+      }
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Get all time signature changes in a score
+ */
+export function getTimeChanges(
+  score: Score,
+  options?: { partIndex?: number }
+): TimeChangeInfo[] {
+  const results: TimeChangeInfo[] = [];
+
+  const startPart = options?.partIndex ?? 0;
+  const endPart = options?.partIndex !== undefined ? options.partIndex + 1 : score.parts.length;
+
+  for (let partIndex = startPart; partIndex < endPart; partIndex++) {
+    const part = score.parts[partIndex];
+    if (!part) continue;
+
+    let lastTime: TimeSignature | undefined;
+
+    for (let measureIndex = 0; measureIndex < part.measures.length; measureIndex++) {
+      const measure = part.measures[measureIndex];
+      const measureNumber = measure.number ?? String(measureIndex + 1);
+
+      // Check measure-level attributes first
+      if (measure.attributes?.time) {
+        const time = measure.attributes.time;
+        // Check if time signature changed
+        if (!lastTime ||
+            lastTime.beats !== time.beats ||
+            lastTime.beatType !== time.beatType) {
+          results.push({
+            time,
+            partIndex,
+            measureIndex,
+            measureNumber,
+          });
+          lastTime = time;
+        }
+      }
+
+      // Check entry-level attributes for mid-measure changes
+      for (const entry of measure.entries) {
+        if (entry.type === 'attributes' && entry.attributes.time) {
+          const time = entry.attributes.time;
+          // Check if time signature changed
+          if (!lastTime ||
+              lastTime.beats !== time.beats ||
+              lastTime.beatType !== time.beatType) {
+            results.push({
+              time,
+              partIndex,
+              measureIndex,
+              measureNumber,
+            });
+            lastTime = time;
+          }
+        }
+      }
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Get all clef changes in a score
+ */
+export function getClefChanges(
+  score: Score,
+  options?: { partIndex?: number; staff?: number }
+): ClefChangeInfo[] {
+  const results: ClefChangeInfo[] = [];
+
+  const startPart = options?.partIndex ?? 0;
+  const endPart = options?.partIndex !== undefined ? options.partIndex + 1 : score.parts.length;
+
+  for (let partIndex = startPart; partIndex < endPart; partIndex++) {
+    const part = score.parts[partIndex];
+    if (!part) continue;
+
+    // Track last clef per staff
+    const lastClefs = new Map<number, Clef>();
+
+    for (let measureIndex = 0; measureIndex < part.measures.length; measureIndex++) {
+      const measure = part.measures[measureIndex];
+      const measureNumber = measure.number ?? String(measureIndex + 1);
+      const state = createPositionState();
+
+      // Check measure-level attributes first
+      if (measure.attributes?.clef) {
+        for (const clef of measure.attributes.clef) {
+          const staff = clef.staff ?? 1;
+
+          // Filter by staff if specified
+          if (options?.staff !== undefined && staff !== options.staff) {
+            continue;
+          }
+
+          const lastClef = lastClefs.get(staff);
+          // Check if clef changed
+          if (!lastClef ||
+              lastClef.sign !== clef.sign ||
+              lastClef.line !== clef.line ||
+              lastClef.clefOctaveChange !== clef.clefOctaveChange) {
+            results.push({
+              clef,
+              staff,
+              partIndex,
+              measureIndex,
+              measureNumber,
+              position: 0,
+            });
+            lastClefs.set(staff, clef);
+          }
+        }
+      }
+
+      // Check entry-level attributes for mid-measure changes
+      for (const entry of measure.entries) {
+        if (entry.type === 'attributes' && entry.attributes.clef) {
+          for (const clef of entry.attributes.clef) {
+            const staff = clef.staff ?? 1;
+
+            // Filter by staff if specified
+            if (options?.staff !== undefined && staff !== options.staff) {
+              continue;
+            }
+
+            const lastClef = lastClefs.get(staff);
+            // Check if clef changed
+            if (!lastClef ||
+                lastClef.sign !== clef.sign ||
+                lastClef.line !== clef.line ||
+                lastClef.clefOctaveChange !== clef.clefOctaveChange) {
+              results.push({
+                clef,
+                staff,
+                partIndex,
+                measureIndex,
+                measureNumber,
+                position: state.position,
+              });
+              lastClefs.set(staff, clef);
+            }
+          }
+        }
+        updatePositionForEntry(state, entry);
+      }
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Get all structural changes in a score (key, time, clef)
+ */
+export function getStructuralChanges(
+  score: Score,
+  options?: { partIndex?: number }
+): StructuralChanges {
+  return {
+    keyChanges: getKeyChanges(score, options),
+    timeChanges: getTimeChanges(score, options),
+    clefChanges: getClefChanges(score, options),
+  };
+}
+
+// ============================================================
+// Phase 8: Additional Utilities
+// ============================================================
+
+/**
+ * Get a part by index
+ */
+export function getPartByIndex(score: Score, index: number): Part | undefined {
+  return score.parts[index];
+}
+
+/**
+ * Get the number of parts in a score
+ */
+export function getPartCount(score: Score): number {
+  return score.parts.length;
+}
+
+/**
+ * Get all part IDs from a score
+ */
+export function getPartIds(score: Score): string[] {
+  return score.parts.map(part => part.id);
 }

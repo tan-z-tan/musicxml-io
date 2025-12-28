@@ -48,6 +48,18 @@ import {
   getLyrics,
   getLyricText,
   getVerseCount,
+  // Phase 7: Structure
+  getRepeatStructure,
+  findBarlines,
+  getEndings,
+  getKeyChanges,
+  getTimeChanges,
+  getClefChanges,
+  getStructuralChanges,
+  // Phase 8: Additional Utilities
+  getPartByIndex,
+  getPartCount,
+  getPartIds,
 } from '../src/accessors';
 import type { NoteEntry, NoteWithContext } from '../src/types';
 
@@ -923,6 +935,179 @@ describe('Phase 6: Harmony and Lyrics', () => {
       const count = getVerseCount(score);
 
       expect(count).toBe(0);
+    });
+  });
+});
+
+// ============================================================
+// Phase 7: Structure and Navigation
+// ============================================================
+
+describe('Phase 7: Structure and Navigation', () => {
+  describe('getRepeatStructure', () => {
+    it('should get repeat markers from a score', () => {
+      const xml = readFileSync(join(lilypondPath, '45a-SimpleRepeat.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const repeats = getRepeatStructure(score);
+
+      expect(repeats.length).toBeGreaterThan(0);
+      expect(repeats[0].type).toBe('backward');
+      expect(repeats[0].times).toBe(5);
+    });
+  });
+
+  describe('findBarlines', () => {
+    it('should find all barlines in a score', () => {
+      const xml = readFileSync(join(lilypondPath, '46a-Barlines.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const barlines = findBarlines(score);
+
+      expect(barlines.length).toBeGreaterThan(0);
+    });
+
+    it('should filter by barline style', () => {
+      const xml = readFileSync(join(lilypondPath, '46a-Barlines.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const heavyBarlines = findBarlines(score, { style: 'light-heavy' });
+
+      expect(heavyBarlines.length).toBeGreaterThan(0);
+      heavyBarlines.forEach((b) => {
+        expect(b.barline.barStyle).toBe('light-heavy');
+      });
+    });
+
+    it('should filter by repeat presence', () => {
+      const xml = readFileSync(join(lilypondPath, '45a-SimpleRepeat.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const repeatBarlines = findBarlines(score, { repeat: true });
+
+      expect(repeatBarlines.length).toBeGreaterThan(0);
+      repeatBarlines.forEach((b) => {
+        expect(b.barline.repeat).toBeDefined();
+      });
+    });
+  });
+
+  describe('getEndings', () => {
+    it('should get volta bracket endings from a score', () => {
+      const xml = readFileSync(join(lilypondPath, '45b-RepeatWithAlternatives.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const endings = getEndings(score);
+
+      expect(endings.length).toBeGreaterThanOrEqual(2);
+      // Should have ending 1 and ending 2
+      const endingNumbers = [...new Set(endings.map((e) => e.number))];
+      expect(endingNumbers).toContain('1');
+      expect(endingNumbers).toContain('2');
+    });
+  });
+
+  describe('getKeyChanges', () => {
+    it('should get key signature changes from a score', () => {
+      const xml = readFileSync(join(lilypondPath, '13e-KeySignatures-MidMeasure-Change.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const keyChanges = getKeyChanges(score);
+
+      expect(keyChanges.length).toBe(4); // 2, -2, 0, 7 sharps/flats
+      expect(keyChanges[0].key.fifths).toBe(2);
+      expect(keyChanges[1].key.fifths).toBe(-2);
+      expect(keyChanges[2].key.fifths).toBe(0);
+      expect(keyChanges[3].key.fifths).toBe(7);
+    });
+  });
+
+  describe('getTimeChanges', () => {
+    it('should get time signature changes from a score', () => {
+      const xml = readFileSync(join(lilypondPath, '11a-TimeSignatures.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const timeChanges = getTimeChanges(score);
+
+      expect(timeChanges.length).toBeGreaterThan(5);
+      // First is 2/2 (alla breve)
+      expect(timeChanges[0].time.beats).toBe('2');
+      expect(timeChanges[0].time.beatType).toBe(2);
+    });
+  });
+
+  describe('getClefChanges', () => {
+    it('should get clef changes from a score', () => {
+      const xml = readFileSync(join(lilypondPath, '01a-Pitches-Pitches.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const clefChanges = getClefChanges(score);
+
+      expect(clefChanges.length).toBeGreaterThan(0);
+      expect(clefChanges[0].clef.sign).toBe('G');
+      expect(clefChanges[0].clef.line).toBe(2);
+    });
+  });
+
+  describe('getStructuralChanges', () => {
+    it('should get all structural changes at once', () => {
+      const xml = readFileSync(join(lilypondPath, '11a-TimeSignatures.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const changes = getStructuralChanges(score);
+
+      expect(changes.keyChanges.length).toBeGreaterThan(0);
+      expect(changes.timeChanges.length).toBeGreaterThan(0);
+      expect(changes.clefChanges.length).toBeGreaterThan(0);
+    });
+  });
+});
+
+// ============================================================
+// Phase 8: Additional Utilities
+// ============================================================
+
+describe('Phase 8: Additional Utilities', () => {
+  describe('getPartByIndex', () => {
+    it('should get a part by index', () => {
+      const xml = readFileSync(join(lilypondPath, '01a-Pitches-Pitches.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const part = getPartByIndex(score, 0);
+
+      expect(part).toBeDefined();
+      expect(part?.id).toBe('P1');
+    });
+
+    it('should return undefined for out of range index', () => {
+      const xml = readFileSync(join(lilypondPath, '01a-Pitches-Pitches.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const part = getPartByIndex(score, 100);
+
+      expect(part).toBeUndefined();
+    });
+  });
+
+  describe('getPartCount', () => {
+    it('should return the number of parts', () => {
+      const xml = readFileSync(join(lilypondPath, '01a-Pitches-Pitches.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const count = getPartCount(score);
+
+      expect(count).toBe(1);
+    });
+  });
+
+  describe('getPartIds', () => {
+    it('should return all part IDs', () => {
+      const xml = readFileSync(join(lilypondPath, '01a-Pitches-Pitches.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const ids = getPartIds(score);
+
+      expect(ids).toEqual(['P1']);
     });
   });
 });
