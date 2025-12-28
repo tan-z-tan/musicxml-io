@@ -9,14 +9,31 @@ import type {
   Part,
   PartInfo,
   Clef,
+  ArticulationType,
+  DynamicsValue,
+  SlurNotation,
+  TiedNotation,
+  ArticulationNotation,
+  DirectionEntry,
+  AttributesEntry,
 } from '../types';
-import { STEPS, STEP_SEMITONES, getMeasureEndPosition } from '../utils';
+import {
+  STEPS,
+  STEP_SEMITONES,
+  getMeasureEndPosition,
+  pitchToSemitone,
+  semitoneToKeyAwarePitch,
+  getAccidentalsInMeasure,
+  determineAccidental,
+  getAbsolutePositionForNote,
+} from '../utils';
 import {
   validate,
   validateMeasureLocal,
   getMeasureContext,
   type ValidationError,
 } from '../validator';
+import { getAttributesAtMeasure } from '../query';
 
 // ============================================================
 // Result Type
@@ -56,7 +73,19 @@ export type OperationErrorCode =
   | 'MEASURE_NOT_FOUND'
   | 'INVALID_DURATION'
   | 'INVALID_STAFF'
-  | 'DUPLICATE_PART_ID';
+  | 'DUPLICATE_PART_ID'
+  | 'TIE_ALREADY_EXISTS'
+  | 'TIE_NOT_FOUND'
+  | 'TIE_PITCH_MISMATCH'
+  | 'TIE_INVALID_TARGET'
+  | 'SLUR_ALREADY_EXISTS'
+  | 'SLUR_NOT_FOUND'
+  | 'ARTICULATION_ALREADY_EXISTS'
+  | 'ARTICULATION_NOT_FOUND'
+  | 'DYNAMICS_ALREADY_EXISTS'
+  | 'DYNAMICS_NOT_FOUND'
+  | 'INVALID_CLEF'
+  | 'ACCIDENTAL_OUT_OF_BOUNDS';
 
 function operationError(
   code: OperationErrorCode,
@@ -748,6 +777,296 @@ export function setNotePitch(
 }
 
 // ============================================================
+// Key-Aware Pitch Operations
+// ============================================================
+
+export interface SetNotePitchBySemitoneOptions {
+  partIndex: number;
+  measureIndex: number;
+  noteIndex: number;
+  /** MIDI-like semitone value (C4 = 48, C#4 = 49, etc.) */
+  semitone: number;
+  /** Prefer sharp spelling over flat (defaults to key signature preference) */
+  preferSharp?: boolean;
+}
+
+/**
+ * Set note pitch by semitone value, considering key signature and accidentals.
+ * Automatically determines the appropriate enharmonic spelling and sets the accidental if needed.
+ */
+export function setNotePitchBySemitone(
+  score: Score,
+  options: SetNotePitchBySemitoneOptions
+): OperationResult<Score> {
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  if (options.measureIndex < 0 || options.measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const measure = result.parts[options.partIndex].measures[options.measureIndex];
+
+  // Get key signature from measure attributes
+  const measureNumber = measure.number ?? String(options.measureIndex + 1);
+  const attrs = getAttributesAtMeasure(result, { part: options.partIndex, measure: measureNumber });
+  const keySignature = attrs.key ?? { fifths: 0 };
+
+  // Find the note
+  let noteCount = 0;
+  for (const entry of measure.entries) {
+    if (entry.type === 'note' && !entry.rest) {
+      if (noteCount === options.noteIndex) {
+        // Get position of this note for accidental tracking
+        const notePosition = getAbsolutePositionForNote(entry, measure);
+
+        // Get accidentals used earlier in the measure
+        const accidentalsInMeasure = getAccidentalsInMeasure(measure, notePosition, entry.voice);
+
+        // Convert semitone to pitch with key-aware spelling
+        const newPitch = semitoneToKeyAwarePitch(options.semitone, keySignature, {
+          preferSharp: options.preferSharp,
+        });
+
+        // Determine if we need to show an accidental
+        const accidental = determineAccidental(newPitch, keySignature, accidentalsInMeasure);
+
+        // Update the note
+        entry.pitch = newPitch;
+        if (accidental) {
+          entry.accidental = { value: accidental };
+        } else {
+          delete entry.accidental;
+        }
+
+        return success(result);
+      }
+      noteCount++;
+    }
+  }
+
+  return failure([operationError('NOTE_NOT_FOUND', `Note index ${options.noteIndex} not found`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+}
+
+export interface ShiftNotePitchOptions {
+  partIndex: number;
+  measureIndex: number;
+  noteIndex: number;
+  /** Number of semitones to shift (positive = up, negative = down) */
+  semitones: number;
+  /** Prefer sharp spelling over flat (defaults to key signature preference) */
+  preferSharp?: boolean;
+}
+
+/**
+ * Shift note pitch by a number of semitones, considering key signature and accidentals.
+ * Automatically determines the appropriate enharmonic spelling and sets the accidental if needed.
+ */
+export function shiftNotePitch(
+  score: Score,
+  options: ShiftNotePitchOptions
+): OperationResult<Score> {
+  if (options.semitones === 0) {
+    return success(score);
+  }
+
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  if (options.measureIndex < 0 || options.measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  // Find the note and get its current semitone
+  const measure = part.measures[options.measureIndex];
+  let noteCount = 0;
+  let currentSemitone: number | null = null;
+
+  for (const entry of measure.entries) {
+    if (entry.type === 'note' && !entry.rest) {
+      if (noteCount === options.noteIndex) {
+        if (!entry.pitch) {
+          return failure([operationError('NOTE_NOT_FOUND', 'Note has no pitch', { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+        }
+        currentSemitone = pitchToSemitone(entry.pitch);
+        break;
+      }
+      noteCount++;
+    }
+  }
+
+  if (currentSemitone === null) {
+    return failure([operationError('NOTE_NOT_FOUND', `Note index ${options.noteIndex} not found`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  // Calculate new semitone and delegate to setNotePitchBySemitone
+  return setNotePitchBySemitone(score, {
+    partIndex: options.partIndex,
+    measureIndex: options.measureIndex,
+    noteIndex: options.noteIndex,
+    semitone: currentSemitone + options.semitones,
+    preferSharp: options.preferSharp,
+  });
+}
+
+// ============================================================
+// Accidental Operations
+// ============================================================
+
+export interface RaiseAccidentalOptions {
+  partIndex: number;
+  measureIndex: number;
+  noteIndex: number;
+}
+
+/**
+ * Raise the accidental of a note by one step.
+ * C → C#, C# → C##, Db → D, etc.
+ * Keeps the note's step (letter name) and increments alter by 1.
+ * Returns error if alter would exceed +2.
+ */
+export function raiseAccidental(
+  score: Score,
+  options: RaiseAccidentalOptions
+): OperationResult<Score> {
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  if (options.measureIndex < 0 || options.measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const measure = result.parts[options.partIndex].measures[options.measureIndex];
+
+  // Get key signature for accidental display
+  const measureNumber = measure.number ?? String(options.measureIndex + 1);
+  const attrs = getAttributesAtMeasure(result, { part: options.partIndex, measure: measureNumber });
+  const keySignature = attrs.key ?? { fifths: 0 };
+
+  // Find the note
+  let noteCount = 0;
+  for (const entry of measure.entries) {
+    if (entry.type === 'note' && !entry.rest) {
+      if (noteCount === options.noteIndex) {
+        if (!entry.pitch) {
+          return failure([operationError('NOTE_NOT_FOUND', 'Note has no pitch', { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+        }
+
+        const currentAlter = entry.pitch.alter ?? 0;
+        const newAlter = currentAlter + 1;
+
+        // Check bounds
+        if (newAlter > 2) {
+          return failure([operationError('ACCIDENTAL_OUT_OF_BOUNDS', `Cannot raise accidental beyond double-sharp (current: ${currentAlter})`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+        }
+
+        // Update pitch
+        entry.pitch.alter = newAlter === 0 ? undefined : newAlter;
+
+        // Get position for accidental tracking
+        const notePosition = getAbsolutePositionForNote(entry, measure);
+        const accidentalsInMeasure = getAccidentalsInMeasure(measure, notePosition, entry.voice);
+
+        // Determine accidental to display
+        const accidental = determineAccidental(entry.pitch, keySignature, accidentalsInMeasure);
+        if (accidental) {
+          entry.accidental = { value: accidental };
+        } else {
+          delete entry.accidental;
+        }
+
+        return success(result);
+      }
+      noteCount++;
+    }
+  }
+
+  return failure([operationError('NOTE_NOT_FOUND', `Note index ${options.noteIndex} not found`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+}
+
+export interface LowerAccidentalOptions {
+  partIndex: number;
+  measureIndex: number;
+  noteIndex: number;
+}
+
+/**
+ * Lower the accidental of a note by one step.
+ * C# → C, C## → C#, D → Db, Db → Dbb, etc.
+ * Keeps the note's step (letter name) and decrements alter by 1.
+ * Returns error if alter would go below -2.
+ */
+export function lowerAccidental(
+  score: Score,
+  options: LowerAccidentalOptions
+): OperationResult<Score> {
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  if (options.measureIndex < 0 || options.measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const measure = result.parts[options.partIndex].measures[options.measureIndex];
+
+  // Get key signature for accidental display
+  const measureNumber = measure.number ?? String(options.measureIndex + 1);
+  const attrs = getAttributesAtMeasure(result, { part: options.partIndex, measure: measureNumber });
+  const keySignature = attrs.key ?? { fifths: 0 };
+
+  // Find the note
+  let noteCount = 0;
+  for (const entry of measure.entries) {
+    if (entry.type === 'note' && !entry.rest) {
+      if (noteCount === options.noteIndex) {
+        if (!entry.pitch) {
+          return failure([operationError('NOTE_NOT_FOUND', 'Note has no pitch', { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+        }
+
+        const currentAlter = entry.pitch.alter ?? 0;
+        const newAlter = currentAlter - 1;
+
+        // Check bounds
+        if (newAlter < -2) {
+          return failure([operationError('ACCIDENTAL_OUT_OF_BOUNDS', `Cannot lower accidental beyond double-flat (current: ${currentAlter})`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+        }
+
+        // Update pitch
+        entry.pitch.alter = newAlter === 0 ? undefined : newAlter;
+
+        // Get position for accidental tracking
+        const notePosition = getAbsolutePositionForNote(entry, measure);
+        const accidentalsInMeasure = getAccidentalsInMeasure(measure, notePosition, entry.voice);
+
+        // Determine accidental to display
+        const accidental = determineAccidental(entry.pitch, keySignature, accidentalsInMeasure);
+        if (accidental) {
+          entry.accidental = { value: accidental };
+        } else {
+          delete entry.accidental;
+        }
+
+        return success(result);
+      }
+      noteCount++;
+    }
+  }
+
+  return failure([operationError('NOTE_NOT_FOUND', `Note index ${options.noteIndex} not found`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+}
+
+// ============================================================
 // Voice Operations
 // ============================================================
 
@@ -1182,6 +1501,611 @@ export function deleteMeasure(score: Score, measureNumber: string | number): Sco
   }
 
   return result;
+}
+
+// ============================================================
+// Tie Operations
+// ============================================================
+
+export interface AddTieOptions {
+  partIndex: number;
+  startMeasureIndex: number;
+  startNoteIndex: number;
+  endMeasureIndex: number;
+  endNoteIndex: number;
+}
+
+/**
+ * Find a note by index (counting only pitched notes, not rests)
+ */
+function findNoteByIndex(measure: Measure, noteIndex: number): { note: NoteEntry; entryIndex: number } | null {
+  let noteCount = 0;
+  for (let i = 0; i < measure.entries.length; i++) {
+    const entry = measure.entries[i];
+    if (entry.type === 'note' && !entry.rest) {
+      if (noteCount === noteIndex) {
+        return { note: entry, entryIndex: i };
+      }
+      noteCount++;
+    }
+  }
+  return null;
+}
+
+/**
+ * Check if two pitches are equal
+ */
+function pitchesEqual(p1: Pitch, p2: Pitch): boolean {
+  return p1.step === p2.step && p1.octave === p2.octave && (p1.alter ?? 0) === (p2.alter ?? 0);
+}
+
+/**
+ * Add a tie between two notes.
+ * The notes must have the same pitch.
+ * Adds tie start to the first note and tie stop to the second note.
+ */
+export function addTie(
+  score: Score,
+  options: AddTieOptions
+): OperationResult<Score> {
+  // Validate bounds
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  if (options.startMeasureIndex < 0 || options.startMeasureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Start measure index ${options.startMeasureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.startMeasureIndex })]);
+  }
+  if (options.endMeasureIndex < 0 || options.endMeasureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `End measure index ${options.endMeasureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.endMeasureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const startMeasure = result.parts[options.partIndex].measures[options.startMeasureIndex];
+  const endMeasure = result.parts[options.partIndex].measures[options.endMeasureIndex];
+
+  const startResult = findNoteByIndex(startMeasure, options.startNoteIndex);
+  if (!startResult) {
+    return failure([operationError('NOTE_NOT_FOUND', `Start note index ${options.startNoteIndex} not found`, { partIndex: options.partIndex, measureIndex: options.startMeasureIndex })]);
+  }
+
+  const endResult = findNoteByIndex(endMeasure, options.endNoteIndex);
+  if (!endResult) {
+    return failure([operationError('NOTE_NOT_FOUND', `End note index ${options.endNoteIndex} not found`, { partIndex: options.partIndex, measureIndex: options.endMeasureIndex })]);
+  }
+
+  const startNote = startResult.note;
+  const endNote = endResult.note;
+
+  // Check pitch match
+  if (!startNote.pitch || !endNote.pitch) {
+    return failure([operationError('TIE_INVALID_TARGET', 'Cannot tie notes without pitch', { partIndex: options.partIndex })]);
+  }
+
+  if (!pitchesEqual(startNote.pitch, endNote.pitch)) {
+    return failure([operationError('TIE_PITCH_MISMATCH', 'Tied notes must have the same pitch', { partIndex: options.partIndex }, { startPitch: startNote.pitch, endPitch: endNote.pitch })]);
+  }
+
+  // Check if tie already exists
+  if (startNote.tie?.type === 'start' || startNote.tie?.type === 'continue') {
+    return failure([operationError('TIE_ALREADY_EXISTS', 'Start note already has a tie start', { partIndex: options.partIndex, measureIndex: options.startMeasureIndex })]);
+  }
+
+  // Add tie start to first note
+  startNote.tie = { type: 'start' };
+  if (!startNote.notations) startNote.notations = [];
+  startNote.notations.push({ type: 'tied', tiedType: 'start' } as TiedNotation);
+
+  // Add tie stop to second note
+  endNote.tie = { type: 'stop' };
+  if (!endNote.notations) endNote.notations = [];
+  endNote.notations.push({ type: 'tied', tiedType: 'stop' } as TiedNotation);
+
+  // Validate
+  const validationResult = validate(result, { checkTies: true });
+  const criticalErrors = validationResult.errors.filter(e => e.level === 'error');
+  if (criticalErrors.length > 0) {
+    return failure(criticalErrors);
+  }
+
+  return success(result, validationResult.warnings);
+}
+
+export interface RemoveTieOptions {
+  partIndex: number;
+  measureIndex: number;
+  noteIndex: number;
+}
+
+/**
+ * Remove a tie from a note (removes both start and stop if the note is part of a tie)
+ */
+export function removeTie(
+  score: Score,
+  options: RemoveTieOptions
+): OperationResult<Score> {
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  if (options.measureIndex < 0 || options.measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const measure = result.parts[options.partIndex].measures[options.measureIndex];
+
+  const noteResult = findNoteByIndex(measure, options.noteIndex);
+  if (!noteResult) {
+    return failure([operationError('NOTE_NOT_FOUND', `Note index ${options.noteIndex} not found`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const note = noteResult.note;
+
+  if (!note.tie) {
+    return failure([operationError('TIE_NOT_FOUND', 'Note does not have a tie', { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  // Remove tie
+  delete note.tie;
+  delete note.ties;
+
+  // Remove tied notation
+  if (note.notations) {
+    note.notations = note.notations.filter(n => n.type !== 'tied');
+    if (note.notations.length === 0) {
+      delete note.notations;
+    }
+  }
+
+  return success(result);
+}
+
+// ============================================================
+// Slur Operations
+// ============================================================
+
+export interface AddSlurOptions {
+  partIndex: number;
+  startMeasureIndex: number;
+  startNoteIndex: number;
+  endMeasureIndex: number;
+  endNoteIndex: number;
+  number?: number;
+  placement?: 'above' | 'below';
+}
+
+/**
+ * Add a slur between two notes
+ */
+export function addSlur(
+  score: Score,
+  options: AddSlurOptions
+): OperationResult<Score> {
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  if (options.startMeasureIndex < 0 || options.startMeasureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Start measure index ${options.startMeasureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.startMeasureIndex })]);
+  }
+  if (options.endMeasureIndex < 0 || options.endMeasureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `End measure index ${options.endMeasureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.endMeasureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const startMeasure = result.parts[options.partIndex].measures[options.startMeasureIndex];
+  const endMeasure = result.parts[options.partIndex].measures[options.endMeasureIndex];
+
+  const startResult = findNoteByIndex(startMeasure, options.startNoteIndex);
+  if (!startResult) {
+    return failure([operationError('NOTE_NOT_FOUND', `Start note index ${options.startNoteIndex} not found`, { partIndex: options.partIndex, measureIndex: options.startMeasureIndex })]);
+  }
+
+  const endResult = findNoteByIndex(endMeasure, options.endNoteIndex);
+  if (!endResult) {
+    return failure([operationError('NOTE_NOT_FOUND', `End note index ${options.endNoteIndex} not found`, { partIndex: options.partIndex, measureIndex: options.endMeasureIndex })]);
+  }
+
+  const startNote = startResult.note;
+  const endNote = endResult.note;
+  const slurNumber = options.number ?? 1;
+
+  // Check if slur with same number already exists on start note
+  if (startNote.notations?.some(n => n.type === 'slur' && (n as SlurNotation).slurType === 'start' && ((n as SlurNotation).number ?? 1) === slurNumber)) {
+    return failure([operationError('SLUR_ALREADY_EXISTS', `Slur ${slurNumber} already starts on this note`, { partIndex: options.partIndex, measureIndex: options.startMeasureIndex })]);
+  }
+
+  // Add slur start
+  if (!startNote.notations) startNote.notations = [];
+  startNote.notations.push({
+    type: 'slur',
+    slurType: 'start',
+    number: slurNumber,
+    placement: options.placement,
+  } as SlurNotation);
+
+  // Add slur stop
+  if (!endNote.notations) endNote.notations = [];
+  endNote.notations.push({
+    type: 'slur',
+    slurType: 'stop',
+    number: slurNumber,
+  } as SlurNotation);
+
+  // Validate
+  const validationResult = validate(result, { checkSlurs: true });
+  const criticalErrors = validationResult.errors.filter(e => e.level === 'error');
+  if (criticalErrors.length > 0) {
+    return failure(criticalErrors);
+  }
+
+  return success(result, validationResult.warnings);
+}
+
+export interface RemoveSlurOptions {
+  partIndex: number;
+  measureIndex: number;
+  noteIndex: number;
+  number?: number;
+}
+
+/**
+ * Remove a slur from a note
+ */
+export function removeSlur(
+  score: Score,
+  options: RemoveSlurOptions
+): OperationResult<Score> {
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  if (options.measureIndex < 0 || options.measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const measure = result.parts[options.partIndex].measures[options.measureIndex];
+
+  const noteResult = findNoteByIndex(measure, options.noteIndex);
+  if (!noteResult) {
+    return failure([operationError('NOTE_NOT_FOUND', `Note index ${options.noteIndex} not found`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const note = noteResult.note;
+  const slurNumber = options.number ?? 1;
+
+  if (!note.notations?.some(n => n.type === 'slur' && ((n as SlurNotation).number ?? 1) === slurNumber)) {
+    return failure([operationError('SLUR_NOT_FOUND', `Slur ${slurNumber} not found on this note`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  // Remove slur notation with matching number
+  note.notations = note.notations.filter(n => !(n.type === 'slur' && ((n as SlurNotation).number ?? 1) === slurNumber));
+  if (note.notations.length === 0) {
+    delete note.notations;
+  }
+
+  return success(result);
+}
+
+// ============================================================
+// Articulation Operations
+// ============================================================
+
+export interface AddArticulationOptions {
+  partIndex: number;
+  measureIndex: number;
+  noteIndex: number;
+  articulation: ArticulationType;
+  placement?: 'above' | 'below';
+}
+
+/**
+ * Add an articulation to a note
+ */
+export function addArticulation(
+  score: Score,
+  options: AddArticulationOptions
+): OperationResult<Score> {
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  if (options.measureIndex < 0 || options.measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const measure = result.parts[options.partIndex].measures[options.measureIndex];
+
+  const noteResult = findNoteByIndex(measure, options.noteIndex);
+  if (!noteResult) {
+    return failure([operationError('NOTE_NOT_FOUND', `Note index ${options.noteIndex} not found`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const note = noteResult.note;
+
+  // Check if articulation already exists
+  if (note.notations?.some(n => n.type === 'articulation' && (n as ArticulationNotation).articulation === options.articulation)) {
+    return failure([operationError('ARTICULATION_ALREADY_EXISTS', `Articulation ${options.articulation} already exists on this note`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  // Add articulation
+  if (!note.notations) note.notations = [];
+  note.notations.push({
+    type: 'articulation',
+    articulation: options.articulation,
+    placement: options.placement,
+  } as ArticulationNotation);
+
+  return success(result);
+}
+
+export interface RemoveArticulationOptions {
+  partIndex: number;
+  measureIndex: number;
+  noteIndex: number;
+  articulation: ArticulationType;
+}
+
+/**
+ * Remove an articulation from a note
+ */
+export function removeArticulation(
+  score: Score,
+  options: RemoveArticulationOptions
+): OperationResult<Score> {
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  if (options.measureIndex < 0 || options.measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const measure = result.parts[options.partIndex].measures[options.measureIndex];
+
+  const noteResult = findNoteByIndex(measure, options.noteIndex);
+  if (!noteResult) {
+    return failure([operationError('NOTE_NOT_FOUND', `Note index ${options.noteIndex} not found`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const note = noteResult.note;
+
+  if (!note.notations?.some(n => n.type === 'articulation' && (n as ArticulationNotation).articulation === options.articulation)) {
+    return failure([operationError('ARTICULATION_NOT_FOUND', `Articulation ${options.articulation} not found on this note`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  // Remove articulation
+  note.notations = note.notations.filter(n => !(n.type === 'articulation' && (n as ArticulationNotation).articulation === options.articulation));
+  if (note.notations.length === 0) {
+    delete note.notations;
+  }
+
+  return success(result);
+}
+
+// ============================================================
+// Dynamics Operations
+// ============================================================
+
+export interface AddDynamicsOptions {
+  partIndex: number;
+  measureIndex: number;
+  position: number;
+  dynamics: DynamicsValue;
+  staff?: number;
+  placement?: 'above' | 'below';
+}
+
+/**
+ * Calculate position for inserting a direction entry
+ */
+function getInsertPositionForDirection(measure: Measure, targetPosition: number): number {
+  let position = 0;
+  let insertIndex = 0;
+
+  for (let i = 0; i < measure.entries.length; i++) {
+    const entry = measure.entries[i];
+
+    if (position >= targetPosition) {
+      return insertIndex;
+    }
+
+    if (entry.type === 'note' && !entry.chord) {
+      position += entry.duration;
+    } else if (entry.type === 'backup') {
+      position -= entry.duration;
+    } else if (entry.type === 'forward') {
+      position += entry.duration;
+    }
+
+    insertIndex = i + 1;
+  }
+
+  return insertIndex;
+}
+
+/**
+ * Add a dynamics marking at a specific position in a measure
+ */
+export function addDynamics(
+  score: Score,
+  options: AddDynamicsOptions
+): OperationResult<Score> {
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  if (options.measureIndex < 0 || options.measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  if (options.position < 0) {
+    return failure([operationError('INVALID_POSITION', 'Position cannot be negative', { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const measure = result.parts[options.partIndex].measures[options.measureIndex];
+
+  // Create direction entry with dynamics
+  const directionEntry: DirectionEntry = {
+    type: 'direction',
+    directionTypes: [{
+      kind: 'dynamics',
+      value: options.dynamics,
+    }],
+    placement: options.placement ?? 'below',
+    staff: options.staff,
+  };
+
+  // Find insert position
+  const insertIndex = getInsertPositionForDirection(measure, options.position);
+  measure.entries.splice(insertIndex, 0, directionEntry);
+
+  return success(result);
+}
+
+export interface RemoveDynamicsOptions {
+  partIndex: number;
+  measureIndex: number;
+  directionIndex: number;
+}
+
+/**
+ * Remove a dynamics direction from a measure
+ */
+export function removeDynamics(
+  score: Score,
+  options: RemoveDynamicsOptions
+): OperationResult<Score> {
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  if (options.measureIndex < 0 || options.measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const measure = result.parts[options.partIndex].measures[options.measureIndex];
+
+  // Find direction entries with dynamics
+  let directionCount = 0;
+  let targetIndex = -1;
+
+  for (let i = 0; i < measure.entries.length; i++) {
+    const entry = measure.entries[i];
+    if (entry.type === 'direction') {
+      const hasDynamics = entry.directionTypes.some(dt => dt.kind === 'dynamics');
+      if (hasDynamics) {
+        if (directionCount === options.directionIndex) {
+          targetIndex = i;
+          break;
+        }
+        directionCount++;
+      }
+    }
+  }
+
+  if (targetIndex === -1) {
+    return failure([operationError('DYNAMICS_NOT_FOUND', `Dynamics direction index ${options.directionIndex} not found`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  measure.entries.splice(targetIndex, 1);
+
+  return success(result);
+}
+
+// ============================================================
+// Clef Change Operations
+// ============================================================
+
+export interface InsertClefChangeOptions {
+  partIndex: number;
+  measureIndex: number;
+  position: number;
+  clef: Clef;
+}
+
+/**
+ * Insert a clef change at a specific position within a measure
+ */
+export function insertClefChange(
+  score: Score,
+  options: InsertClefChangeOptions
+): OperationResult<Score> {
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  if (options.measureIndex < 0 || options.measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  if (options.position < 0) {
+    return failure([operationError('INVALID_POSITION', 'Position cannot be negative', { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  // Validate clef
+  const validSigns: Clef['sign'][] = ['G', 'F', 'C', 'percussion', 'TAB'];
+  if (!validSigns.includes(options.clef.sign)) {
+    return failure([operationError('INVALID_CLEF', `Invalid clef sign: ${options.clef.sign}`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const measure = result.parts[options.partIndex].measures[options.measureIndex];
+
+  if (options.position === 0) {
+    // Insert at measure start - update or create measure attributes
+    if (!measure.attributes) {
+      measure.attributes = {};
+    }
+
+    const staff = options.clef.staff ?? 1;
+    if (!measure.attributes.clef) {
+      measure.attributes.clef = [];
+    }
+
+    // Replace existing clef for this staff or add new one
+    const existingIndex = measure.attributes.clef.findIndex(c => (c.staff ?? 1) === staff);
+    if (existingIndex >= 0) {
+      measure.attributes.clef[existingIndex] = options.clef;
+    } else {
+      measure.attributes.clef.push(options.clef);
+    }
+  } else {
+    // Insert mid-measure as AttributesEntry
+    const attributesEntry: AttributesEntry = {
+      type: 'attributes',
+      attributes: {
+        clef: [options.clef],
+      },
+    };
+
+    const insertIndex = getInsertPositionForDirection(measure, options.position);
+    measure.entries.splice(insertIndex, 0, attributesEntry);
+  }
+
+  // Validate
+  const validationResult = validate(result, { checkStaffStructure: true });
+  const criticalErrors = validationResult.errors.filter(e => e.level === 'error');
+  if (criticalErrors.length > 0) {
+    return failure(criticalErrors);
+  }
+
+  return success(result, validationResult.warnings);
 }
 
 // ============================================================

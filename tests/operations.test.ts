@@ -27,6 +27,22 @@ import {
   // Staff operations
   setStaves,
   moveNoteToStaff,
+  // Notation operations
+  addTie,
+  removeTie,
+  addSlur,
+  removeSlur,
+  addArticulation,
+  removeArticulation,
+  addDynamics,
+  removeDynamics,
+  insertClefChange,
+  // Key-aware pitch operations
+  setNotePitchBySemitone,
+  shiftNotePitch,
+  // Accidental operations
+  raiseAccidental,
+  lowerAccidental,
   type OperationResult,
 } from '../src/operations';
 
@@ -975,6 +991,1146 @@ describe('Operations with Real MusicXML Files', () => {
 
       expect(result.success).toBe(true);
       expect(transposeTime).toBeLessThan(3000);
+    });
+  });
+});
+
+// ============================================================
+// Notation Operations Tests
+// ============================================================
+
+describe('Notation Operations', () => {
+  describe('addTie / removeTie', () => {
+    it('should add a tie between two notes with same pitch', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/two-notes.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = addTie(score, {
+        partIndex: 0,
+        startMeasureIndex: 0,
+        startNoteIndex: 0,
+        endMeasureIndex: 0,
+        endNoteIndex: 1,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const measure = result.data.parts[0].measures[0];
+        const entries = measure.entries.filter(e => e.type === 'note' && !e.rest);
+        expect(entries[0].tie?.type).toBe('start');
+        expect(entries[1].tie?.type).toBe('stop');
+        expect(entries[0].notations?.some(n => n.type === 'tied')).toBe(true);
+      }
+    });
+
+    it('should fail when tying notes with different pitches', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // Scale has C, D, E, F, G, A, B, C - different pitches
+      const result = addTie(score, {
+        partIndex: 0,
+        startMeasureIndex: 0,
+        startNoteIndex: 0, // C
+        endMeasureIndex: 0,
+        endNoteIndex: 1,   // D (different pitch)
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.errors[0].code).toBe('TIE_PITCH_MISMATCH');
+      }
+    });
+
+    it('should remove a tie from a note', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/two-notes.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // First add a tie
+      const withTie = addTie(score, {
+        partIndex: 0,
+        startMeasureIndex: 0,
+        startNoteIndex: 0,
+        endMeasureIndex: 0,
+        endNoteIndex: 1,
+      });
+      expect(withTie.success).toBe(true);
+      if (!withTie.success) return;
+
+      // Then remove it
+      const result = removeTie(withTie.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const entries = result.data.parts[0].measures[0].entries.filter(e => e.type === 'note' && !e.rest);
+        expect(entries[0].tie).toBeUndefined();
+      }
+    });
+
+    it('should fail to remove tie when none exists', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = removeTie(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.errors[0].code).toBe('TIE_NOT_FOUND');
+      }
+    });
+  });
+
+  describe('addSlur / removeSlur', () => {
+    it('should add a slur between two notes', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = addSlur(score, {
+        partIndex: 0,
+        startMeasureIndex: 0,
+        startNoteIndex: 0,
+        endMeasureIndex: 0,
+        endNoteIndex: 3, // Slur over 4 notes
+        placement: 'above',
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const entries = result.data.parts[0].measures[0].entries.filter(e => e.type === 'note' && !e.rest);
+        const startSlur = entries[0].notations?.find(n => n.type === 'slur');
+        const endSlur = entries[3].notations?.find(n => n.type === 'slur');
+
+        expect(startSlur).toBeDefined();
+        expect(endSlur).toBeDefined();
+        if (startSlur?.type === 'slur') {
+          expect(startSlur.slurType).toBe('start');
+        }
+        if (endSlur?.type === 'slur') {
+          expect(endSlur.slurType).toBe('stop');
+        }
+      }
+    });
+
+    it('should support multiple slurs with different numbers', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // Add first slur starting from note 0
+      const withSlur1 = addSlur(score, {
+        partIndex: 0,
+        startMeasureIndex: 0,
+        startNoteIndex: 0,
+        endMeasureIndex: 0,
+        endNoteIndex: 2,
+        number: 1,
+      });
+      expect(withSlur1.success).toBe(true);
+      if (!withSlur1.success) return;
+
+      // Add second slur also starting from note 0 with different number
+      const withSlur2 = addSlur(withSlur1.data, {
+        partIndex: 0,
+        startMeasureIndex: 0,
+        startNoteIndex: 0,
+        endMeasureIndex: 0,
+        endNoteIndex: 3, // Fixed: scale.xml measure 1 has notes at index 0-3
+        number: 2,
+      });
+
+      expect(withSlur2.success).toBe(true);
+      if (withSlur2.success) {
+        const entries = withSlur2.data.parts[0].measures[0].entries.filter(e => e.type === 'note' && !e.rest);
+        // Note at index 0 should have 2 slur starts
+        const slurs = entries[0].notations?.filter(n => n.type === 'slur');
+        expect(slurs?.length).toBe(2);
+      }
+    });
+
+    it('should remove a slur from a note', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // First add a slur
+      const withSlur = addSlur(score, {
+        partIndex: 0,
+        startMeasureIndex: 0,
+        startNoteIndex: 0,
+        endMeasureIndex: 0,
+        endNoteIndex: 2,
+      });
+      expect(withSlur.success).toBe(true);
+      if (!withSlur.success) return;
+
+      // Then remove it
+      const result = removeSlur(withSlur.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const entries = result.data.parts[0].measures[0].entries.filter(e => e.type === 'note' && !e.rest);
+        const slur = entries[0].notations?.find(n => n.type === 'slur');
+        expect(slur).toBeUndefined();
+      }
+    });
+  });
+
+  describe('addArticulation / removeArticulation', () => {
+    it('should add staccato to a note', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = addArticulation(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        articulation: 'staccato',
+        placement: 'above',
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const note = result.data.parts[0].measures[0].entries[0];
+        if (note.type === 'note') {
+          const articulation = note.notations?.find(n => n.type === 'articulation');
+          expect(articulation).toBeDefined();
+          if (articulation?.type === 'articulation') {
+            expect(articulation.articulation).toBe('staccato');
+            expect(articulation.placement).toBe('above');
+          }
+        }
+      }
+    });
+
+    it('should add accent to a note', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = addArticulation(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        articulation: 'accent',
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const note = result.data.parts[0].measures[0].entries[0];
+        if (note.type === 'note') {
+          const articulation = note.notations?.find(n => n.type === 'articulation');
+          expect(articulation?.type === 'articulation' && articulation.articulation).toBe('accent');
+        }
+      }
+    });
+
+    it('should add multiple articulations to the same note', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // Add staccato
+      const withStaccato = addArticulation(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        articulation: 'staccato',
+      });
+      expect(withStaccato.success).toBe(true);
+      if (!withStaccato.success) return;
+
+      // Add accent
+      const withBoth = addArticulation(withStaccato.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        articulation: 'accent',
+      });
+
+      expect(withBoth.success).toBe(true);
+      if (withBoth.success) {
+        const note = withBoth.data.parts[0].measures[0].entries[0];
+        if (note.type === 'note') {
+          const articulations = note.notations?.filter(n => n.type === 'articulation');
+          expect(articulations?.length).toBe(2);
+        }
+      }
+    });
+
+    it('should fail when adding duplicate articulation', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // Add staccato first
+      const withStaccato = addArticulation(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        articulation: 'staccato',
+      });
+      expect(withStaccato.success).toBe(true);
+      if (!withStaccato.success) return;
+
+      // Try to add staccato again
+      const result = addArticulation(withStaccato.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        articulation: 'staccato',
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.errors[0].code).toBe('ARTICULATION_ALREADY_EXISTS');
+      }
+    });
+
+    it('should remove an articulation from a note', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // Add articulation first
+      const withArticulation = addArticulation(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        articulation: 'staccato',
+      });
+      expect(withArticulation.success).toBe(true);
+      if (!withArticulation.success) return;
+
+      // Remove it
+      const result = removeArticulation(withArticulation.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        articulation: 'staccato',
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const note = result.data.parts[0].measures[0].entries[0];
+        if (note.type === 'note') {
+          expect(note.notations).toBeUndefined();
+        }
+      }
+    });
+  });
+
+  describe('addDynamics / removeDynamics', () => {
+    it('should add dynamics (f) at measure start', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = addDynamics(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        position: 0,
+        dynamics: 'f',
+        placement: 'below',
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const entries = result.data.parts[0].measures[0].entries;
+        const direction = entries.find(e => e.type === 'direction');
+        expect(direction).toBeDefined();
+        if (direction?.type === 'direction') {
+          const dynamicsType = direction.directionTypes.find(dt => dt.kind === 'dynamics');
+          expect(dynamicsType).toBeDefined();
+          if (dynamicsType?.kind === 'dynamics') {
+            expect(dynamicsType.value).toBe('f');
+          }
+        }
+      }
+    });
+
+    it('should add different dynamics values', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // Test various dynamics
+      const dynamicsValues: Array<'pp' | 'p' | 'mp' | 'mf' | 'f' | 'ff'> = ['pp', 'p', 'mp', 'mf', 'f', 'ff'];
+
+      for (const dyn of dynamicsValues) {
+        const result = addDynamics(score, {
+          partIndex: 0,
+          measureIndex: 0,
+          position: 0,
+          dynamics: dyn,
+        });
+        expect(result.success).toBe(true);
+      }
+    });
+
+    it('should remove dynamics from a measure', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // Add dynamics first
+      const withDynamics = addDynamics(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        position: 0,
+        dynamics: 'mf',
+      });
+      expect(withDynamics.success).toBe(true);
+      if (!withDynamics.success) return;
+
+      // Remove it
+      const result = removeDynamics(withDynamics.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        directionIndex: 0,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const entries = result.data.parts[0].measures[0].entries;
+        const direction = entries.find(e => e.type === 'direction');
+        expect(direction).toBeUndefined();
+      }
+    });
+
+    it('should fail when removing non-existent dynamics', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = removeDynamics(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        directionIndex: 0,
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.errors[0].code).toBe('DYNAMICS_NOT_FOUND');
+      }
+    });
+  });
+
+  describe('insertClefChange', () => {
+    it('should insert a clef change at measure start', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = insertClefChange(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        position: 0,
+        clef: { sign: 'F', line: 4 },
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const clef = result.data.parts[0].measures[0].attributes?.clef?.[0];
+        expect(clef?.sign).toBe('F');
+        expect(clef?.line).toBe(4);
+      }
+    });
+
+    it('should insert a mid-measure clef change', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // Get divisions to calculate position
+      const divisions = score.parts[0].measures[0].attributes?.divisions ?? 1;
+      const midPosition = divisions * 2; // After 2 beats
+
+      const result = insertClefChange(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        position: midPosition,
+        clef: { sign: 'F', line: 4 },
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const entries = result.data.parts[0].measures[0].entries;
+        const attrEntry = entries.find(e => e.type === 'attributes');
+        expect(attrEntry).toBeDefined();
+        if (attrEntry?.type === 'attributes') {
+          expect(attrEntry.attributes.clef?.[0].sign).toBe('F');
+        }
+      }
+    });
+
+    it('should handle clef change with staff number', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // First set up 2 staves
+      const withStaves = setStaves(score, { partIndex: 0, staves: 2 });
+      expect(withStaves.success).toBe(true);
+      if (!withStaves.success) return;
+
+      // Change clef on staff 2
+      const result = insertClefChange(withStaves.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        position: 0,
+        clef: { sign: 'C', line: 3, staff: 2 },
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const clefs = result.data.parts[0].measures[0].attributes?.clef;
+        const staff2Clef = clefs?.find(c => c.staff === 2);
+        expect(staff2Clef?.sign).toBe('C');
+        expect(staff2Clef?.line).toBe(3);
+      }
+    });
+
+    it('should validate clef sign', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = insertClefChange(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        position: 0,
+        clef: { sign: 'X' as any, line: 2 }, // Invalid sign
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.errors[0].code).toBe('INVALID_CLEF');
+      }
+    });
+  });
+});
+
+// ============================================================
+// Key-Aware Pitch Operations Tests
+// ============================================================
+
+describe('Key-Aware Pitch Operations', () => {
+  describe('setNotePitchBySemitone', () => {
+    it('should set pitch by semitone in C major', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // Set to D4 (semitone 50 - C4 is 48)
+      const result = setNotePitchBySemitone(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        semitone: 50, // D4
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const note = result.data.parts[0].measures[0].entries[0];
+        if (note.type === 'note') {
+          expect(note.pitch?.step).toBe('D');
+          expect(note.pitch?.octave).toBe(4);
+          expect(note.pitch?.alter).toBeUndefined();
+        }
+      }
+    });
+
+    it('should use sharp spelling in sharp key (G major)', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/g-major-scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // Set to F#4 (semitone 54) - should be F# in G major
+      const result = setNotePitchBySemitone(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        semitone: 54, // F#4
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const note = result.data.parts[0].measures[0].entries[0];
+        if (note.type === 'note') {
+          expect(note.pitch?.step).toBe('F');
+          expect(note.pitch?.alter).toBe(1);
+          // No accidental needed because F# is in G major
+          expect(note.accidental).toBeUndefined();
+        }
+      }
+    });
+
+    it('should add accidental when note differs from key signature', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/g-major-scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // Set to F natural (semitone 53) - needs natural accidental in G major
+      const result = setNotePitchBySemitone(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        semitone: 53, // F4 natural
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const note = result.data.parts[0].measures[0].entries[0];
+        if (note.type === 'note') {
+          expect(note.pitch?.step).toBe('F');
+          expect(note.pitch?.alter).toBeUndefined();
+          // Natural accidental needed because F natural is not in G major
+          expect(note.accidental?.value).toBe('natural');
+        }
+      }
+    });
+
+    it('should handle octave changes correctly', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // Set to C5 (semitone 60)
+      const result = setNotePitchBySemitone(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        semitone: 60, // C5
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const note = result.data.parts[0].measures[0].entries[0];
+        if (note.type === 'note') {
+          expect(note.pitch?.step).toBe('C');
+          expect(note.pitch?.octave).toBe(5);
+        }
+      }
+    });
+
+    it('should respect preferSharp option', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // Set to C#/Db (semitone 49) with preferSharp = false
+      const result = setNotePitchBySemitone(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        semitone: 49, // C#4 or Db4
+        preferSharp: false,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const note = result.data.parts[0].measures[0].entries[0];
+        if (note.type === 'note') {
+          expect(note.pitch?.step).toBe('D');
+          expect(note.pitch?.alter).toBe(-1); // Db
+        }
+      }
+    });
+  });
+
+  describe('shiftNotePitch', () => {
+    it('should shift pitch up by semitones', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // C4 + 2 semitones = D4
+      const result = shiftNotePitch(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        semitones: 2,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const note = result.data.parts[0].measures[0].entries[0];
+        if (note.type === 'note') {
+          expect(note.pitch?.step).toBe('D');
+          expect(note.pitch?.octave).toBe(4);
+        }
+      }
+    });
+
+    it('should shift pitch down by semitones', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // C4 - 2 semitones = A#3 (sharp preferred in C major/neutral key)
+      const result = shiftNotePitch(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        semitones: -2,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const note = result.data.parts[0].measures[0].entries[0];
+        if (note.type === 'note') {
+          expect(note.pitch?.step).toBe('A');
+          expect(note.pitch?.alter).toBe(1); // A#
+          expect(note.pitch?.octave).toBe(3);
+        }
+      }
+    });
+
+    it('should shift pitch down with flat preference', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // C4 - 2 semitones = Bb3 (with preferSharp = false)
+      const result = shiftNotePitch(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        semitones: -2,
+        preferSharp: false,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const note = result.data.parts[0].measures[0].entries[0];
+        if (note.type === 'note') {
+          expect(note.pitch?.step).toBe('B');
+          expect(note.pitch?.alter).toBe(-1); // Bb
+          expect(note.pitch?.octave).toBe(3);
+        }
+      }
+    });
+
+    it('should return original score when semitones is 0', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = shiftNotePitch(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        semitones: 0,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data).toBe(score); // Should be same reference
+      }
+    });
+
+    it('should handle octave crossing', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // C4 + 12 semitones = C5
+      const result = shiftNotePitch(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        semitones: 12,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const note = result.data.parts[0].measures[0].entries[0];
+        if (note.type === 'note') {
+          expect(note.pitch?.step).toBe('C');
+          expect(note.pitch?.octave).toBe(5);
+        }
+      }
+    });
+
+    it('should consider key signature when shifting in G major', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/g-major-scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // First note is G4. Shift down 2 semitones to F4
+      // In G major, F is naturally F#, so F natural needs an accidental
+      const result = shiftNotePitch(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        semitones: -2, // G4 -> F4
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const note = result.data.parts[0].measures[0].entries[0];
+        if (note.type === 'note') {
+          expect(note.pitch?.step).toBe('F');
+          expect(note.pitch?.alter).toBeUndefined();
+          expect(note.accidental?.value).toBe('natural');
+        }
+      }
+    });
+  });
+});
+
+// ============================================================
+// Accidental Operations Tests
+// ============================================================
+
+describe('Accidental Operations', () => {
+  describe('raiseAccidental', () => {
+    it('should raise C to C#', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = raiseAccidental(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const note = result.data.parts[0].measures[0].entries[0];
+        if (note.type === 'note') {
+          expect(note.pitch?.step).toBe('C'); // Step stays same
+          expect(note.pitch?.alter).toBe(1);  // Now sharp
+          expect(note.accidental?.value).toBe('sharp');
+        }
+      }
+    });
+
+    it('should raise C# to C##', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // First raise to C#
+      const withSharp = raiseAccidental(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+      expect(withSharp.success).toBe(true);
+      if (!withSharp.success) return;
+
+      // Then raise again to C##
+      const result = raiseAccidental(withSharp.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const note = result.data.parts[0].measures[0].entries[0];
+        if (note.type === 'note') {
+          expect(note.pitch?.step).toBe('C');
+          expect(note.pitch?.alter).toBe(2); // Double sharp
+          expect(note.accidental?.value).toBe('double-sharp');
+        }
+      }
+    });
+
+    it('should fail when raising beyond double-sharp', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // Raise twice to get to C##
+      let current = score;
+      for (let i = 0; i < 2; i++) {
+        const result = raiseAccidental(current, {
+          partIndex: 0,
+          measureIndex: 0,
+          noteIndex: 0,
+        });
+        expect(result.success).toBe(true);
+        if (result.success) {
+          current = result.data;
+        }
+      }
+
+      // Third raise should fail
+      const result = raiseAccidental(current, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.errors[0].code).toBe('ACCIDENTAL_OUT_OF_BOUNDS');
+      }
+    });
+
+    it('should raise Db to D natural', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // First lower to Cb (C flat)
+      const withFlat = lowerAccidental(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+      expect(withFlat.success).toBe(true);
+      if (!withFlat.success) return;
+
+      // Now raise back to C natural
+      const result = raiseAccidental(withFlat.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const note = result.data.parts[0].measures[0].entries[0];
+        if (note.type === 'note') {
+          expect(note.pitch?.step).toBe('C');
+          expect(note.pitch?.alter).toBeUndefined(); // Natural
+        }
+      }
+    });
+
+    it('should handle F# in G major (no accidental needed)', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/g-major-scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // First note is G4. We need a note that is F natural first.
+      // Let's use setNotePitchBySemitone to set it to F natural (53)
+      const withF = setNotePitchBySemitone(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        semitone: 53, // F4 natural
+      });
+      expect(withF.success).toBe(true);
+      if (!withF.success) return;
+
+      // Now raise F to F# - in G major this should NOT need an accidental
+      const result = raiseAccidental(withF.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const note = result.data.parts[0].measures[0].entries[0];
+        if (note.type === 'note') {
+          expect(note.pitch?.step).toBe('F');
+          expect(note.pitch?.alter).toBe(1);
+          // F# is in G major, so no accidental display needed
+          expect(note.accidental).toBeUndefined();
+        }
+      }
+    });
+  });
+
+  describe('lowerAccidental', () => {
+    it('should lower C to Cb', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = lowerAccidental(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const note = result.data.parts[0].measures[0].entries[0];
+        if (note.type === 'note') {
+          expect(note.pitch?.step).toBe('C'); // Step stays same
+          expect(note.pitch?.alter).toBe(-1); // Now flat
+          expect(note.accidental?.value).toBe('flat');
+        }
+      }
+    });
+
+    it('should lower Cb to Cbb', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // First lower to Cb
+      const withFlat = lowerAccidental(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+      expect(withFlat.success).toBe(true);
+      if (!withFlat.success) return;
+
+      // Then lower again to Cbb
+      const result = lowerAccidental(withFlat.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const note = result.data.parts[0].measures[0].entries[0];
+        if (note.type === 'note') {
+          expect(note.pitch?.step).toBe('C');
+          expect(note.pitch?.alter).toBe(-2); // Double flat
+          expect(note.accidental?.value).toBe('double-flat');
+        }
+      }
+    });
+
+    it('should fail when lowering beyond double-flat', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // Lower twice to get to Cbb
+      let current = score;
+      for (let i = 0; i < 2; i++) {
+        const result = lowerAccidental(current, {
+          partIndex: 0,
+          measureIndex: 0,
+          noteIndex: 0,
+        });
+        expect(result.success).toBe(true);
+        if (result.success) {
+          current = result.data;
+        }
+      }
+
+      // Third lower should fail
+      const result = lowerAccidental(current, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.errors[0].code).toBe('ACCIDENTAL_OUT_OF_BOUNDS');
+      }
+    });
+
+    it('should lower C# to C natural', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // First raise to C#
+      const withSharp = raiseAccidental(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+      expect(withSharp.success).toBe(true);
+      if (!withSharp.success) return;
+
+      // Now lower back to C natural
+      const result = lowerAccidental(withSharp.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const note = result.data.parts[0].measures[0].entries[0];
+        if (note.type === 'note') {
+          expect(note.pitch?.step).toBe('C');
+          expect(note.pitch?.alter).toBeUndefined(); // Natural
+        }
+      }
+    });
+
+    it('should lower F# to F natural in G major (needs natural accidental)', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/g-major-scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // First set to F#4 (semitone 54)
+      const withFSharp = setNotePitchBySemitone(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        semitone: 54, // F#4
+      });
+      expect(withFSharp.success).toBe(true);
+      if (!withFSharp.success) return;
+
+      // Lower F# to F natural
+      const result = lowerAccidental(withFSharp.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const note = result.data.parts[0].measures[0].entries[0];
+        if (note.type === 'note') {
+          expect(note.pitch?.step).toBe('F');
+          expect(note.pitch?.alter).toBeUndefined();
+          // F natural is NOT in G major, so needs natural accidental
+          expect(note.accidental?.value).toBe('natural');
+        }
+      }
+    });
+  });
+
+  describe('raiseAccidental and lowerAccidental combined', () => {
+    it('should be reversible: raise then lower returns to original', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // Get original pitch
+      const originalNote = score.parts[0].measures[0].entries[0];
+      const originalAlter = originalNote.type === 'note' ? originalNote.pitch?.alter : undefined;
+
+      // Raise
+      const raised = raiseAccidental(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+      expect(raised.success).toBe(true);
+      if (!raised.success) return;
+
+      // Then lower
+      const result = lowerAccidental(raised.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const note = result.data.parts[0].measures[0].entries[0];
+        if (note.type === 'note') {
+          expect(note.pitch?.step).toBe('C');
+          expect(note.pitch?.alter).toBe(originalAlter); // Back to original
+        }
+      }
+    });
+
+    it('should be reversible: lower then raise returns to original', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // Lower
+      const lowered = lowerAccidental(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+      expect(lowered.success).toBe(true);
+      if (!lowered.success) return;
+
+      // Then raise
+      const result = raiseAccidental(lowered.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const note = result.data.parts[0].measures[0].entries[0];
+        if (note.type === 'note') {
+          expect(note.pitch?.step).toBe('C');
+          expect(note.pitch?.alter).toBeUndefined(); // Back to natural
+        }
+      }
     });
   });
 });
