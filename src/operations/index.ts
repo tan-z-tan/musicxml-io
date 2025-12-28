@@ -15,7 +15,10 @@ import type {
   TiedNotation,
   ArticulationNotation,
   DirectionEntry,
+  DirectionType,
   AttributesEntry,
+  FermataNotation,
+  OrnamentNotation,
 } from '../types';
 import {
   STEPS,
@@ -2200,6 +2203,1960 @@ export const modifyNoteDurationChecked = (score: Score, options: { partIndex: nu
 
 /** @deprecated Use transpose instead */
 export const transposeChecked = transpose;
+
+// ============================================================
+// Tuplet Operations
+// ============================================================
+
+export interface CreateTupletOptions {
+  partIndex: number;
+  measureIndex: number;
+  /** Starting note index (0-based, counting pitched notes only) */
+  startNoteIndex: number;
+  /** Number of notes to include in the tuplet */
+  noteCount: number;
+  /** Actual notes in the time of normal notes (e.g., 3 for triplet) */
+  actualNotes: number;
+  /** Normal notes (e.g., 2 for triplet) */
+  normalNotes: number;
+  /** Show bracket (default: true) */
+  bracket?: boolean;
+  /** Show number display (default: 'actual') */
+  showNumber?: 'actual' | 'both' | 'none';
+}
+
+/**
+ * Create a tuplet from consecutive notes.
+ * A tuplet fits `actualNotes` notes in the time of `normalNotes` (e.g., 3 in the time of 2 for triplets).
+ *
+ * @example
+ * // Create a triplet from 3 eighth notes (3 in the time of 2)
+ * createTuplet(score, {
+ *   partIndex: 0,
+ *   measureIndex: 0,
+ *   startNoteIndex: 0,
+ *   noteCount: 3,
+ *   actualNotes: 3,
+ *   normalNotes: 2,
+ * })
+ */
+export function createTuplet(
+  score: Score,
+  options: CreateTupletOptions
+): OperationResult<Score> {
+  // Validate bounds
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  if (options.measureIndex < 0 || options.measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  if (options.noteCount < 2) {
+    return failure([operationError('INVALID_DURATION', 'Tuplet must contain at least 2 notes', { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  if (options.actualNotes < 2 || options.normalNotes < 1) {
+    return failure([operationError('INVALID_DURATION', 'Invalid tuplet ratio', { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const measure = result.parts[options.partIndex].measures[options.measureIndex];
+
+  // Find the notes to include in the tuplet
+  const notes: Array<{ note: NoteEntry; entryIndex: number }> = [];
+  let noteCount = 0;
+
+  for (let i = 0; i < measure.entries.length; i++) {
+    const entry = measure.entries[i];
+    if (entry.type === 'note' && !entry.rest && !entry.chord) {
+      if (noteCount >= options.startNoteIndex && noteCount < options.startNoteIndex + options.noteCount) {
+        notes.push({ note: entry, entryIndex: i });
+      }
+      noteCount++;
+    }
+  }
+
+  if (notes.length !== options.noteCount) {
+    return failure([operationError('NOTE_NOT_FOUND', `Could not find ${options.noteCount} notes starting at index ${options.startNoteIndex}`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  // Check that all notes have the same voice
+  const voice = notes[0].note.voice;
+  const staff = notes[0].note.staff;
+  if (!notes.every(n => n.note.voice === voice)) {
+    return failure([operationError('NOTE_CONFLICT', 'All notes in a tuplet must be in the same voice', { partIndex: options.partIndex, measureIndex: options.measureIndex, voice })]);
+  }
+
+  // Apply tuplet modifications to each note
+  const tupletNumber = 1; // Use tuplet number 1 by default
+
+  for (let i = 0; i < notes.length; i++) {
+    const { note } = notes[i];
+
+    // Add time modification
+    note.timeModification = {
+      actualNotes: options.actualNotes,
+      normalNotes: options.normalNotes,
+    };
+
+    // Add tuplet notations
+    if (!note.notations) note.notations = [];
+
+    if (i === 0) {
+      // First note: tuplet start
+      note.notations.push({
+        type: 'tuplet',
+        tupletType: 'start',
+        number: tupletNumber,
+        bracket: options.bracket ?? true,
+        showNumber: options.showNumber ?? 'actual',
+        tupletActual: { tupletNumber: options.actualNotes },
+        tupletNormal: { tupletNumber: options.normalNotes },
+      });
+    } else if (i === notes.length - 1) {
+      // Last note: tuplet stop
+      note.notations.push({
+        type: 'tuplet',
+        tupletType: 'stop',
+        number: tupletNumber,
+      });
+    }
+    // Middle notes don't need tuplet notation, just timeModification
+  }
+
+  // Validate
+  const context = getMeasureContext(result, options.partIndex, options.measureIndex);
+  const errors = validateMeasureLocal(measure, context, {
+    checkTuplets: true,
+    checkMeasureDuration: true,
+  });
+
+  const criticalErrors = errors.filter(e => e.level === 'error');
+  if (criticalErrors.length > 0) {
+    return failure(criticalErrors);
+  }
+
+  return success(result, errors.filter(e => e.level !== 'error'));
+}
+
+export interface RemoveTupletOptions {
+  partIndex: number;
+  measureIndex: number;
+  /** Note index of any note within the tuplet */
+  noteIndex: number;
+}
+
+/**
+ * Remove tuplet from notes.
+ * Finds the tuplet containing the specified note and removes all tuplet information.
+ */
+export function removeTuplet(
+  score: Score,
+  options: RemoveTupletOptions
+): OperationResult<Score> {
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  if (options.measureIndex < 0 || options.measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const measure = result.parts[options.partIndex].measures[options.measureIndex];
+
+  // Find the target note
+  let noteCount = 0;
+  let targetNote: NoteEntry | null = null;
+  let targetEntryIndex = -1;
+
+  for (let i = 0; i < measure.entries.length; i++) {
+    const entry = measure.entries[i];
+    if (entry.type === 'note' && !entry.rest) {
+      if (noteCount === options.noteIndex) {
+        targetNote = entry;
+        targetEntryIndex = i;
+        break;
+      }
+      noteCount++;
+    }
+  }
+
+  if (!targetNote || targetEntryIndex === -1) {
+    return failure([operationError('NOTE_NOT_FOUND', `Note index ${options.noteIndex} not found`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  // Check if note is in a tuplet
+  if (!targetNote.timeModification) {
+    return failure([operationError('NOTE_NOT_FOUND', 'Note is not part of a tuplet', { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  // Find all notes in the same tuplet (same voice, contiguous notes with same timeModification)
+  const voice = targetNote.voice;
+  const staff = targetNote.staff;
+  const actualNotes = targetNote.timeModification.actualNotes;
+  const normalNotes = targetNote.timeModification.normalNotes;
+
+  const tupletNotes: NoteEntry[] = [];
+  let inTuplet = false;
+  let tupletNumber: number | undefined;
+
+  for (const entry of measure.entries) {
+    if (entry.type !== 'note' || entry.rest) continue;
+    if (entry.voice !== voice || entry.staff !== staff) continue;
+
+    const hasSameTimeModification =
+      entry.timeModification?.actualNotes === actualNotes &&
+      entry.timeModification?.normalNotes === normalNotes;
+
+    // Check for tuplet start
+    const hasTupletStart = entry.notations?.some(
+      n => n.type === 'tuplet' && n.tupletType === 'start'
+    );
+
+    // Check for tuplet stop
+    const hasTupletStop = entry.notations?.some(
+      n => n.type === 'tuplet' && n.tupletType === 'stop'
+    );
+
+    if (hasTupletStart) {
+      inTuplet = true;
+      tupletNumber = entry.notations?.find(
+        n => n.type === 'tuplet' && n.tupletType === 'start'
+      )?.number;
+    }
+
+    if (inTuplet && hasSameTimeModification) {
+      tupletNotes.push(entry);
+    }
+
+    if (hasTupletStop && inTuplet) {
+      // Check if this tuplet contains our target note
+      if (tupletNotes.includes(targetNote)) {
+        break;
+      } else {
+        // Reset and continue looking
+        tupletNotes.length = 0;
+        inTuplet = false;
+        tupletNumber = undefined;
+      }
+    }
+  }
+
+  // If we didn't find a complete tuplet, just remove from the individual note
+  if (tupletNotes.length === 0) {
+    tupletNotes.push(targetNote);
+  }
+
+  // Remove tuplet information from all notes
+  for (const note of tupletNotes) {
+    delete note.timeModification;
+
+    if (note.notations) {
+      note.notations = note.notations.filter(n => n.type !== 'tuplet');
+      if (note.notations.length === 0) {
+        delete note.notations;
+      }
+    }
+  }
+
+  return success(result);
+}
+
+// ============================================================
+// Beam Operations
+// ============================================================
+
+export interface AddBeamOptions {
+  partIndex: number;
+  measureIndex: number;
+  /** Starting note index */
+  startNoteIndex: number;
+  /** Number of notes to beam together */
+  noteCount: number;
+  /** Beam level (1 = eighth notes, 2 = sixteenth notes, etc.) */
+  beamLevel?: number;
+}
+
+/**
+ * Add beaming to consecutive notes.
+ * Notes must be in the same voice and should be eighth notes or shorter.
+ */
+export function addBeam(
+  score: Score,
+  options: AddBeamOptions
+): OperationResult<Score> {
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  if (options.measureIndex < 0 || options.measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  if (options.noteCount < 2) {
+    return failure([operationError('INVALID_DURATION', 'Beam must contain at least 2 notes', { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const measure = result.parts[options.partIndex].measures[options.measureIndex];
+  const beamLevel = options.beamLevel ?? 1;
+
+  // Find the notes to beam
+  const notes: NoteEntry[] = [];
+  let noteCount = 0;
+
+  for (const entry of measure.entries) {
+    if (entry.type === 'note' && !entry.rest && !entry.chord) {
+      if (noteCount >= options.startNoteIndex && noteCount < options.startNoteIndex + options.noteCount) {
+        notes.push(entry);
+      }
+      noteCount++;
+    }
+  }
+
+  if (notes.length !== options.noteCount) {
+    return failure([operationError('NOTE_NOT_FOUND', `Could not find ${options.noteCount} notes starting at index ${options.startNoteIndex}`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  // Check that all notes are in the same voice
+  const voice = notes[0].voice;
+  if (!notes.every(n => n.voice === voice)) {
+    return failure([operationError('NOTE_CONFLICT', 'All beamed notes must be in the same voice', { partIndex: options.partIndex, measureIndex: options.measureIndex, voice })]);
+  }
+
+  // Add beam information to each note
+  for (let i = 0; i < notes.length; i++) {
+    const note = notes[i];
+
+    // Initialize or update beam array
+    if (!note.beam) {
+      note.beam = [];
+    }
+
+    // Remove existing beam for this level
+    note.beam = note.beam.filter(b => b.number !== beamLevel);
+
+    // Add new beam
+    let beamType: 'begin' | 'continue' | 'end';
+    if (i === 0) {
+      beamType = 'begin';
+    } else if (i === notes.length - 1) {
+      beamType = 'end';
+    } else {
+      beamType = 'continue';
+    }
+
+    note.beam.push({
+      number: beamLevel,
+      type: beamType,
+    });
+  }
+
+  // Validate
+  const context = getMeasureContext(result, options.partIndex, options.measureIndex);
+  const errors = validateMeasureLocal(measure, context, { checkBeams: true });
+
+  const criticalErrors = errors.filter(e => e.level === 'error');
+  if (criticalErrors.length > 0) {
+    return failure(criticalErrors);
+  }
+
+  return success(result, errors.filter(e => e.level !== 'error'));
+}
+
+export interface RemoveBeamOptions {
+  partIndex: number;
+  measureIndex: number;
+  /** Note index of any note within the beam group */
+  noteIndex: number;
+  /** Beam level to remove (default: all levels) */
+  beamLevel?: number;
+}
+
+/**
+ * Remove beaming from notes.
+ */
+export function removeBeam(
+  score: Score,
+  options: RemoveBeamOptions
+): OperationResult<Score> {
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  if (options.measureIndex < 0 || options.measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const measure = result.parts[options.partIndex].measures[options.measureIndex];
+
+  // Find the target note
+  let noteCount = 0;
+  let targetNote: NoteEntry | null = null;
+
+  for (const entry of measure.entries) {
+    if (entry.type === 'note' && !entry.rest) {
+      if (noteCount === options.noteIndex) {
+        targetNote = entry;
+        break;
+      }
+      noteCount++;
+    }
+  }
+
+  if (!targetNote) {
+    return failure([operationError('NOTE_NOT_FOUND', `Note index ${options.noteIndex} not found`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  if (!targetNote.beam || targetNote.beam.length === 0) {
+    return failure([operationError('NOTE_NOT_FOUND', 'Note is not part of a beam group', { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const voice = targetNote.voice;
+  const staff = targetNote.staff;
+
+  // Find all notes in the same beam group
+  const beamNotes: NoteEntry[] = [];
+  let inBeam = false;
+  const targetBeamLevel = options.beamLevel ?? targetNote.beam[0]?.number ?? 1;
+
+  for (const entry of measure.entries) {
+    if (entry.type !== 'note' || entry.rest) continue;
+    if (entry.voice !== voice || entry.staff !== staff) continue;
+
+    const beamInfo = entry.beam?.find(b => b.number === targetBeamLevel);
+    if (!beamInfo) {
+      if (inBeam) {
+        // End of beam group
+        break;
+      }
+      continue;
+    }
+
+    if (beamInfo.type === 'begin') {
+      inBeam = true;
+      beamNotes.push(entry);
+    } else if (beamInfo.type === 'continue') {
+      if (inBeam) beamNotes.push(entry);
+    } else if (beamInfo.type === 'end') {
+      beamNotes.push(entry);
+      // Check if this beam group contains our target
+      if (beamNotes.includes(targetNote)) {
+        break;
+      } else {
+        // Reset and continue looking
+        beamNotes.length = 0;
+        inBeam = false;
+      }
+    }
+  }
+
+  // If we didn't find a complete beam, just remove from the individual note
+  if (beamNotes.length === 0) {
+    beamNotes.push(targetNote);
+  }
+
+  // Remove beam information from all notes
+  for (const note of beamNotes) {
+    if (note.beam) {
+      if (options.beamLevel !== undefined) {
+        note.beam = note.beam.filter(b => b.number !== options.beamLevel);
+      } else {
+        note.beam = [];
+      }
+      if (note.beam.length === 0) {
+        delete note.beam;
+      }
+    }
+  }
+
+  return success(result);
+}
+
+/**
+ * Note type to division mapping for auto-beaming
+ */
+const NOTE_TYPE_DIVISIONS: Record<string, number> = {
+  'whole': 16,
+  'half': 8,
+  'quarter': 4,
+  'eighth': 2,
+  '16th': 1,
+  '32nd': 0.5,
+  '64th': 0.25,
+};
+
+export interface AutoBeamOptions {
+  partIndex: number;
+  measureIndex: number;
+  /** Optional voice filter */
+  voice?: number;
+  /** Group by beat (default: true) */
+  groupByBeat?: boolean;
+}
+
+/**
+ * Automatically beam notes based on time signature and beat groupings.
+ * Groups eighth notes and shorter notes by beat.
+ */
+export function autoBeam(
+  score: Score,
+  options: AutoBeamOptions
+): OperationResult<Score> {
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  if (options.measureIndex < 0 || options.measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const measure = result.parts[options.partIndex].measures[options.measureIndex];
+
+  // Get context for time signature
+  const context = getMeasureContext(result, options.partIndex, options.measureIndex);
+  const divisions = context.divisions;
+  const time = context.time ?? { beats: '4', beatType: 4 };
+  const beatDuration = (4 / time.beatType) * divisions; // Duration of one beat in divisions
+
+  // First, remove all existing beams
+  for (const entry of measure.entries) {
+    if (entry.type === 'note') {
+      delete entry.beam;
+    }
+  }
+
+  // Collect notes with their positions
+  const notesByVoice = new Map<number, Array<{ note: NoteEntry; position: number }>>();
+  let position = 0;
+
+  for (const entry of measure.entries) {
+    if (entry.type === 'note') {
+      if (!entry.chord && !entry.rest) {
+        const voice = entry.voice;
+        if (options.voice === undefined || voice === options.voice) {
+          if (!notesByVoice.has(voice)) {
+            notesByVoice.set(voice, []);
+          }
+          notesByVoice.get(voice)!.push({ note: entry, position });
+        }
+      }
+      if (!entry.chord) {
+        position += entry.duration;
+      }
+    } else if (entry.type === 'backup') {
+      position -= entry.duration;
+    } else if (entry.type === 'forward') {
+      position += entry.duration;
+    }
+  }
+
+  // Beam each voice
+  for (const [, notes] of notesByVoice) {
+    // Group notes by beat
+    const beatGroups: Array<Array<{ note: NoteEntry; position: number }>> = [];
+    let currentBeat = -1;
+    let currentGroup: Array<{ note: NoteEntry; position: number }> = [];
+
+    for (const { note, position: notePos } of notes) {
+      // Only beam eighth notes and shorter (duration <= half a beat)
+      if (note.duration > beatDuration / 2) {
+        // This note is too long to beam
+        if (currentGroup.length >= 2) {
+          beatGroups.push(currentGroup);
+        }
+        currentGroup = [];
+        currentBeat = -1;
+        continue;
+      }
+
+      const beat = Math.floor(notePos / beatDuration);
+
+      if (options.groupByBeat !== false && beat !== currentBeat) {
+        // New beat - save current group if valid
+        if (currentGroup.length >= 2) {
+          beatGroups.push(currentGroup);
+        }
+        currentGroup = [{ note, position: notePos }];
+        currentBeat = beat;
+      } else {
+        currentGroup.push({ note, position: notePos });
+      }
+    }
+
+    // Don't forget the last group
+    if (currentGroup.length >= 2) {
+      beatGroups.push(currentGroup);
+    }
+
+    // Apply beaming to each group
+    for (const group of beatGroups) {
+      for (let i = 0; i < group.length; i++) {
+        const { note } = group[i];
+
+        if (!note.beam) {
+          note.beam = [];
+        }
+
+        let beamType: 'begin' | 'continue' | 'end';
+        if (i === 0) {
+          beamType = 'begin';
+        } else if (i === group.length - 1) {
+          beamType = 'end';
+        } else {
+          beamType = 'continue';
+        }
+
+        note.beam.push({
+          number: 1,
+          type: beamType,
+        });
+      }
+    }
+  }
+
+  // Validate
+  const errors = validateMeasureLocal(measure, context, { checkBeams: true });
+
+  const criticalErrors = errors.filter(e => e.level === 'error');
+  if (criticalErrors.length > 0) {
+    return failure(criticalErrors);
+  }
+
+  return success(result, errors.filter(e => e.level !== 'error'));
+}
+
+// ============================================================
+// Copy/Paste Operations
+// ============================================================
+
+/**
+ * Selection represents copied content that can be pasted
+ */
+export interface NoteSelection {
+  /** Source information */
+  source: {
+    partIndex: number;
+    measureIndex: number;
+    startPosition: number;
+    endPosition: number;
+    voice: number;
+    staff?: number;
+  };
+  /** Copied notes with their relative positions */
+  notes: Array<{
+    /** Relative position from selection start */
+    relativePosition: number;
+    /** Note data (deep cloned) */
+    note: NoteEntry;
+  }>;
+  /** Total duration of the selection */
+  duration: number;
+}
+
+export interface CopyNotesOptions {
+  partIndex: number;
+  measureIndex: number;
+  /** Start position in the measure (in divisions) */
+  startPosition: number;
+  /** End position in the measure (in divisions) */
+  endPosition: number;
+  /** Voice to copy from */
+  voice: number;
+  /** Staff to copy from (optional) */
+  staff?: number;
+}
+
+/**
+ * Copy notes from a range in a measure.
+ * Returns a NoteSelection that can be used with pasteNotes.
+ */
+export function copyNotes(
+  score: Score,
+  options: CopyNotesOptions
+): OperationResult<NoteSelection> {
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  if (options.measureIndex < 0 || options.measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  if (options.startPosition >= options.endPosition) {
+    return failure([operationError('INVALID_POSITION', 'Start position must be less than end position', { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const measure = part.measures[options.measureIndex];
+
+  // Collect notes in the range
+  const copiedNotes: NoteSelection['notes'] = [];
+  let position = 0;
+
+  for (const entry of measure.entries) {
+    if (entry.type === 'note') {
+      if (entry.voice === options.voice &&
+          (options.staff === undefined || (entry.staff ?? 1) === options.staff)) {
+        if (!entry.chord) {
+          const noteEnd = position + entry.duration;
+
+          // Check if note overlaps with the selection range
+          if (position < options.endPosition && noteEnd > options.startPosition) {
+            // Deep clone the note
+            const clonedNote: NoteEntry = JSON.parse(JSON.stringify(entry));
+
+            // Clear notations that shouldn't be copied (like ties that might be broken)
+            if (clonedNote.tie) {
+              // Keep tie info, but it will be handled during paste
+            }
+
+            copiedNotes.push({
+              relativePosition: position - options.startPosition,
+              note: clonedNote,
+            });
+          }
+          position += entry.duration;
+        } else {
+          // Chord note - copy if the parent note was copied
+          if (copiedNotes.length > 0) {
+            const lastCopied = copiedNotes[copiedNotes.length - 1];
+            if (lastCopied.note.voice === entry.voice &&
+                (options.staff === undefined || (lastCopied.note.staff ?? 1) === (entry.staff ?? 1))) {
+              const clonedNote: NoteEntry = JSON.parse(JSON.stringify(entry));
+              copiedNotes.push({
+                relativePosition: lastCopied.relativePosition,
+                note: clonedNote,
+              });
+            }
+          }
+        }
+      } else if (!entry.chord) {
+        position += entry.duration;
+      }
+    } else if (entry.type === 'backup') {
+      position -= entry.duration;
+    } else if (entry.type === 'forward') {
+      position += entry.duration;
+    }
+  }
+
+  if (copiedNotes.length === 0) {
+    return failure([operationError('NOTE_NOT_FOUND', 'No notes found in the specified range', { partIndex: options.partIndex, measureIndex: options.measureIndex, voice: options.voice })]);
+  }
+
+  const selection: NoteSelection = {
+    source: {
+      partIndex: options.partIndex,
+      measureIndex: options.measureIndex,
+      startPosition: options.startPosition,
+      endPosition: options.endPosition,
+      voice: options.voice,
+      staff: options.staff,
+    },
+    notes: copiedNotes,
+    duration: options.endPosition - options.startPosition,
+  };
+
+  return success(selection);
+}
+
+export interface PasteNotesOptions {
+  /** Selection to paste */
+  selection: NoteSelection;
+  /** Target part index */
+  partIndex: number;
+  /** Target measure index */
+  measureIndex: number;
+  /** Target position in the measure */
+  position: number;
+  /** Target voice (defaults to original voice) */
+  voice?: number;
+  /** Target staff (defaults to original staff) */
+  staff?: number;
+  /** Clear existing notes in the paste range (default: true) */
+  overwrite?: boolean;
+}
+
+/**
+ * Paste notes from a NoteSelection to a target position.
+ */
+export function pasteNotes(
+  score: Score,
+  options: PasteNotesOptions
+): OperationResult<Score> {
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  if (options.measureIndex < 0 || options.measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  if (options.position < 0) {
+    return failure([operationError('INVALID_POSITION', 'Position cannot be negative', { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const measure = result.parts[options.partIndex].measures[options.measureIndex];
+
+  // Get context
+  const context = getMeasureContext(result, options.partIndex, options.measureIndex);
+  const measureDuration = context.time
+    ? getMeasureDuration(context.divisions, context.time)
+    : context.divisions * 4;
+
+  const targetVoice = options.voice ?? options.selection.source.voice;
+  const targetStaff = options.staff ?? options.selection.source.staff;
+  const pasteEnd = options.position + options.selection.duration;
+
+  // Check if paste would exceed measure
+  if (pasteEnd > measureDuration) {
+    return failure([operationError(
+      'EXCEEDS_MEASURE',
+      `Paste would exceed measure duration (ends at ${pasteEnd}, measure is ${measureDuration})`,
+      { partIndex: options.partIndex, measureIndex: options.measureIndex },
+      { pasteEnd, measureDuration }
+    )]);
+  }
+
+  // Get voice entries and check for conflicts (unless overwrite is true)
+  const voiceEntries = getVoiceEntries(measure, targetVoice, targetStaff);
+
+  if (options.overwrite !== false) {
+    // Remove notes in the paste range
+    const entriesToKeep = voiceEntries.filter(e => {
+      if (e.entry.type !== 'note') return true;
+      const note = e.entry as NoteEntry;
+      if (note.rest) return true;
+      // Keep notes that don't overlap with paste range
+      return e.endPosition <= options.position || e.position >= pasteEnd;
+    });
+
+    // Rebuild entries for this voice
+    const newEntries: Array<{ position: number; entry: NoteEntry }> = [];
+
+    for (const { position, entry } of entriesToKeep) {
+      if (entry.type === 'note') {
+        newEntries.push({ position, entry: entry as NoteEntry });
+      }
+    }
+
+    // Add pasted notes
+    for (const { relativePosition, note } of options.selection.notes) {
+      const pastePosition = options.position + Math.max(0, relativePosition);
+
+      // Clone and update the note
+      const newNote: NoteEntry = JSON.parse(JSON.stringify(note));
+      newNote.voice = targetVoice;
+      if (targetStaff !== undefined) {
+        newNote.staff = targetStaff;
+      }
+
+      // Clear ties when pasting (they would be broken)
+      delete newNote.tie;
+      delete newNote.ties;
+      if (newNote.notations) {
+        newNote.notations = newNote.notations.filter(n => n.type !== 'tied');
+        if (newNote.notations.length === 0) {
+          delete newNote.notations;
+        }
+      }
+
+      newEntries.push({ position: pastePosition, entry: newNote });
+    }
+
+    // Rebuild measure
+    measure.entries = rebuildMeasureWithVoice(
+      measure,
+      targetVoice,
+      newEntries,
+      measureDuration,
+      targetStaff
+    );
+  } else {
+    // Check for conflicts
+    const { hasNotes, conflictingNotes } = hasNotesInRange(voiceEntries, options.position, pasteEnd);
+
+    if (hasNotes) {
+      return failure([operationError(
+        'NOTE_CONFLICT',
+        `Paste range ${options.position}-${pasteEnd} conflicts with existing notes`,
+        { partIndex: options.partIndex, measureIndex: options.measureIndex, voice: targetVoice },
+        { conflictingPositions: conflictingNotes.map(n => ({ start: n.position, end: n.endPosition })) }
+      )]);
+    }
+
+    // Get existing notes and add pasted notes
+    const existingNotes = voiceEntries
+      .filter(e => e.entry.type === 'note')
+      .map(e => ({ position: e.position, entry: e.entry as NoteEntry }));
+
+    for (const { relativePosition, note } of options.selection.notes) {
+      const pastePosition = options.position + Math.max(0, relativePosition);
+
+      const newNote: NoteEntry = JSON.parse(JSON.stringify(note));
+      newNote.voice = targetVoice;
+      if (targetStaff !== undefined) {
+        newNote.staff = targetStaff;
+      }
+
+      delete newNote.tie;
+      delete newNote.ties;
+      if (newNote.notations) {
+        newNote.notations = newNote.notations.filter(n => n.type !== 'tied');
+        if (newNote.notations.length === 0) {
+          delete newNote.notations;
+        }
+      }
+
+      existingNotes.push({ position: pastePosition, entry: newNote });
+    }
+
+    measure.entries = rebuildMeasureWithVoice(
+      measure,
+      targetVoice,
+      existingNotes,
+      measureDuration,
+      targetStaff
+    );
+  }
+
+  // Validate
+  const errors = validateMeasureLocal(measure, context, {
+    checkMeasureDuration: true,
+    checkPosition: true,
+    checkVoiceStaff: true,
+  });
+
+  const criticalErrors = errors.filter(e => e.level === 'error');
+  if (criticalErrors.length > 0) {
+    return failure(criticalErrors);
+  }
+
+  return success(result, errors.filter(e => e.level !== 'error'));
+}
+
+export interface CutNotesOptions extends CopyNotesOptions {}
+
+/**
+ * Cut notes from a range (copy and delete).
+ * Returns both the selection and the modified score.
+ */
+export function cutNotes(
+  score: Score,
+  options: CutNotesOptions
+): OperationResult<{ score: Score; selection: NoteSelection }> {
+  // First, copy the notes
+  const copyResult = copyNotes(score, options);
+  if (!copyResult.success) {
+    return failure(copyResult.errors);
+  }
+
+  const selection = copyResult.data;
+
+  // Then, delete the notes from the score
+  const result = cloneScore(score);
+  const measure = result.parts[options.partIndex].measures[options.measureIndex];
+
+  // Get context
+  const context = getMeasureContext(result, options.partIndex, options.measureIndex);
+  const measureDuration = context.time
+    ? getMeasureDuration(context.divisions, context.time)
+    : context.divisions * 4;
+
+  // Get voice entries and remove notes in the cut range
+  const voiceEntries = getVoiceEntries(measure, options.voice, options.staff);
+
+  const entriesToKeep = voiceEntries.filter(e => {
+    if (e.entry.type !== 'note') return true;
+    const note = e.entry as NoteEntry;
+    if (note.rest) return true;
+    // Keep notes that don't overlap with cut range
+    return e.endPosition <= options.startPosition || e.position >= options.endPosition;
+  });
+
+  // Rebuild entries for this voice
+  const newEntries: Array<{ position: number; entry: NoteEntry }> = [];
+
+  for (const { position, entry } of entriesToKeep) {
+    if (entry.type === 'note') {
+      newEntries.push({ position, entry: entry as NoteEntry });
+    }
+  }
+
+  // Rebuild measure (rests will fill the gap)
+  measure.entries = rebuildMeasureWithVoice(
+    measure,
+    options.voice,
+    newEntries,
+    measureDuration,
+    options.staff
+  );
+
+  // Validate
+  const errors = validateMeasureLocal(measure, context, {
+    checkMeasureDuration: true,
+    checkPosition: true,
+    checkVoiceStaff: true,
+  });
+
+  const criticalErrors = errors.filter(e => e.level === 'error');
+  if (criticalErrors.length > 0) {
+    return failure(criticalErrors);
+  }
+
+  return success(
+    { score: result, selection },
+    errors.filter(e => e.level !== 'error')
+  );
+}
+
+export interface CopyNotesMultiMeasureOptions {
+  partIndex: number;
+  /** Starting measure index */
+  startMeasureIndex: number;
+  /** Ending measure index (inclusive) */
+  endMeasureIndex: number;
+  /** Voice to copy from */
+  voice: number;
+  /** Staff to copy from (optional) */
+  staff?: number;
+}
+
+/**
+ * Selection for multiple measures
+ */
+export interface MultiMeasureSelection {
+  source: {
+    partIndex: number;
+    startMeasureIndex: number;
+    endMeasureIndex: number;
+    voice: number;
+    staff?: number;
+  };
+  /** Notes grouped by measure offset */
+  measures: Array<{
+    measureOffset: number;
+    notes: Array<{
+      relativePosition: number;
+      note: NoteEntry;
+    }>;
+  }>;
+}
+
+/**
+ * Copy notes across multiple measures.
+ */
+export function copyNotesMultiMeasure(
+  score: Score,
+  options: CopyNotesMultiMeasureOptions
+): OperationResult<MultiMeasureSelection> {
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  if (options.startMeasureIndex < 0 || options.startMeasureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Start measure index ${options.startMeasureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.startMeasureIndex })]);
+  }
+  if (options.endMeasureIndex < options.startMeasureIndex || options.endMeasureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `End measure index ${options.endMeasureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.endMeasureIndex })]);
+  }
+
+  const selection: MultiMeasureSelection = {
+    source: {
+      partIndex: options.partIndex,
+      startMeasureIndex: options.startMeasureIndex,
+      endMeasureIndex: options.endMeasureIndex,
+      voice: options.voice,
+      staff: options.staff,
+    },
+    measures: [],
+  };
+
+  for (let measureIndex = options.startMeasureIndex; measureIndex <= options.endMeasureIndex; measureIndex++) {
+    const measure = part.measures[measureIndex];
+    const measureOffset = measureIndex - options.startMeasureIndex;
+
+    const copiedNotes: Array<{ relativePosition: number; note: NoteEntry }> = [];
+    let position = 0;
+
+    for (const entry of measure.entries) {
+      if (entry.type === 'note') {
+        if (entry.voice === options.voice &&
+            (options.staff === undefined || (entry.staff ?? 1) === options.staff)) {
+          if (!entry.chord && !entry.rest) {
+            const clonedNote: NoteEntry = JSON.parse(JSON.stringify(entry));
+            copiedNotes.push({
+              relativePosition: position,
+              note: clonedNote,
+            });
+            position += entry.duration;
+          } else if (entry.chord && copiedNotes.length > 0) {
+            const clonedNote: NoteEntry = JSON.parse(JSON.stringify(entry));
+            copiedNotes.push({
+              relativePosition: copiedNotes[copiedNotes.length - 1].relativePosition,
+              note: clonedNote,
+            });
+          } else if (!entry.chord) {
+            position += entry.duration;
+          }
+        } else if (!entry.chord) {
+          position += entry.duration;
+        }
+      } else if (entry.type === 'backup') {
+        position -= entry.duration;
+      } else if (entry.type === 'forward') {
+        position += entry.duration;
+      }
+    }
+
+    if (copiedNotes.length > 0) {
+      selection.measures.push({
+        measureOffset,
+        notes: copiedNotes,
+      });
+    }
+  }
+
+  if (selection.measures.length === 0) {
+    return failure([operationError('NOTE_NOT_FOUND', 'No notes found in the specified range', { partIndex: options.partIndex, voice: options.voice })]);
+  }
+
+  return success(selection);
+}
+
+export interface PasteNotesMultiMeasureOptions {
+  selection: MultiMeasureSelection;
+  partIndex: number;
+  /** Target starting measure index */
+  startMeasureIndex: number;
+  /** Target voice (defaults to original voice) */
+  voice?: number;
+  /** Target staff (defaults to original staff) */
+  staff?: number;
+  /** Clear existing notes in paste measures (default: true) */
+  overwrite?: boolean;
+}
+
+/**
+ * Paste notes across multiple measures.
+ */
+export function pasteNotesMultiMeasure(
+  score: Score,
+  options: PasteNotesMultiMeasureOptions
+): OperationResult<Score> {
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  const measureCount = options.selection.measures.length > 0
+    ? options.selection.measures[options.selection.measures.length - 1].measureOffset + 1
+    : 0;
+
+  if (options.startMeasureIndex + measureCount > part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Not enough measures to paste (need ${measureCount})`, { partIndex: options.partIndex, measureIndex: options.startMeasureIndex })]);
+  }
+
+  let result = cloneScore(score);
+  const targetVoice = options.voice ?? options.selection.source.voice;
+  const targetStaff = options.staff ?? options.selection.source.staff;
+
+  for (const measureData of options.selection.measures) {
+    const measureIndex = options.startMeasureIndex + measureData.measureOffset;
+    const measure = result.parts[options.partIndex].measures[measureIndex];
+
+    const context = getMeasureContext(result, options.partIndex, measureIndex);
+    const measureDuration = context.time
+      ? getMeasureDuration(context.divisions, context.time)
+      : context.divisions * 4;
+
+    const voiceEntries = getVoiceEntries(measure, targetVoice, targetStaff);
+
+    // Remove existing notes if overwriting
+    let entriesToKeep: Array<{ position: number; entry: NoteEntry }>;
+
+    if (options.overwrite !== false) {
+      entriesToKeep = voiceEntries
+        .filter(e => e.entry.type === 'note' && (e.entry as NoteEntry).rest)
+        .map(e => ({ position: e.position, entry: e.entry as NoteEntry }));
+    } else {
+      entriesToKeep = voiceEntries
+        .filter(e => e.entry.type === 'note')
+        .map(e => ({ position: e.position, entry: e.entry as NoteEntry }));
+    }
+
+    // Add pasted notes
+    for (const { relativePosition, note } of measureData.notes) {
+      const newNote: NoteEntry = JSON.parse(JSON.stringify(note));
+      newNote.voice = targetVoice;
+      if (targetStaff !== undefined) {
+        newNote.staff = targetStaff;
+      }
+
+      // Clear ties
+      delete newNote.tie;
+      delete newNote.ties;
+      if (newNote.notations) {
+        newNote.notations = newNote.notations.filter(n => n.type !== 'tied');
+        if (newNote.notations.length === 0) {
+          delete newNote.notations;
+        }
+      }
+
+      entriesToKeep.push({ position: relativePosition, entry: newNote });
+    }
+
+    measure.entries = rebuildMeasureWithVoice(
+      measure,
+      targetVoice,
+      entriesToKeep,
+      measureDuration,
+      targetStaff
+    );
+
+    // Validate this measure
+    const errors = validateMeasureLocal(measure, context, {
+      checkMeasureDuration: true,
+      checkPosition: true,
+      checkVoiceStaff: true,
+    });
+
+    const criticalErrors = errors.filter(e => e.level === 'error');
+    if (criticalErrors.length > 0) {
+      return failure(criticalErrors);
+    }
+  }
+
+  return success(result);
+}
+
+// ============================================================
+// Expression / Performance Direction Operations
+// ============================================================
+
+export interface AddTempoOptions {
+  partIndex: number;
+  measureIndex: number;
+  /** Position in divisions within the measure */
+  position: number;
+  /** Tempo in BPM */
+  bpm: number;
+  /** Beat unit (e.g., 'quarter', 'half', 'eighth') */
+  beatUnit?: 'whole' | 'half' | 'quarter' | 'eighth' | '16th';
+  /** Beat unit dots */
+  beatUnitDots?: number;
+  /** Text description (e.g., 'Allegro', 'Andante') */
+  text?: string;
+  /** Placement (above/below staff) */
+  placement?: 'above' | 'below';
+}
+
+/**
+ * Add a tempo marking to a measure.
+ */
+export function addTempo(
+  score: Score,
+  options: AddTempoOptions
+): OperationResult<Score> {
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  if (options.measureIndex < 0 || options.measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  if (options.bpm <= 0) {
+    return failure([operationError('INVALID_DURATION', 'BPM must be positive', { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const measure = result.parts[options.partIndex].measures[options.measureIndex];
+
+  const directionTypes: DirectionType[] = [];
+
+  // Add metronome marking
+  directionTypes.push({
+    kind: 'metronome',
+    beatUnit: options.beatUnit ?? 'quarter',
+    beatUnitDots: options.beatUnitDots,
+    perMinute: options.bpm,
+  });
+
+  // Add text if provided
+  if (options.text) {
+    directionTypes.push({
+      kind: 'words',
+      text: options.text,
+      fontWeight: 'bold',
+    });
+  }
+
+  const direction: DirectionEntry = {
+    type: 'direction',
+    directionTypes,
+    placement: options.placement ?? 'above',
+    sound: { tempo: options.bpm },
+  };
+
+  // Insert at the correct position
+  insertDirectionAtPosition(measure, direction, options.position);
+
+  return success(result);
+}
+
+export interface RemoveTempoOptions {
+  partIndex: number;
+  measureIndex: number;
+  /** Index of the direction to remove (among tempo directions) */
+  directionIndex?: number;
+}
+
+/**
+ * Remove a tempo marking from a measure.
+ */
+export function removeTempo(
+  score: Score,
+  options: RemoveTempoOptions
+): OperationResult<Score> {
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  if (options.measureIndex < 0 || options.measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const measure = result.parts[options.partIndex].measures[options.measureIndex];
+
+  // Find tempo directions
+  const tempoDirectionIndices: number[] = [];
+  for (let i = 0; i < measure.entries.length; i++) {
+    const entry = measure.entries[i];
+    if (entry.type === 'direction' && entry.directionTypes.some(dt => dt.kind === 'metronome')) {
+      tempoDirectionIndices.push(i);
+    }
+  }
+
+  if (tempoDirectionIndices.length === 0) {
+    return failure([operationError('TEMPO_NOT_FOUND', 'No tempo marking found in measure', { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const targetIndex = options.directionIndex ?? 0;
+  if (targetIndex < 0 || targetIndex >= tempoDirectionIndices.length) {
+    return failure([operationError('TEMPO_NOT_FOUND', `Tempo direction index ${targetIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  measure.entries.splice(tempoDirectionIndices[targetIndex], 1);
+
+  return success(result);
+}
+
+export interface AddWedgeOptions {
+  partIndex: number;
+  /** Starting measure index */
+  startMeasureIndex: number;
+  /** Starting position in divisions */
+  startPosition: number;
+  /** Ending measure index */
+  endMeasureIndex: number;
+  /** Ending position in divisions */
+  endPosition: number;
+  /** Wedge type */
+  type: 'crescendo' | 'diminuendo';
+  /** Staff number (for multi-staff parts) */
+  staff?: number;
+  /** Placement (above/below) */
+  placement?: 'above' | 'below';
+}
+
+/**
+ * Add a wedge (crescendo or diminuendo) spanning one or more measures.
+ */
+export function addWedge(
+  score: Score,
+  options: AddWedgeOptions
+): OperationResult<Score> {
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  if (options.startMeasureIndex < 0 || options.startMeasureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Start measure index ${options.startMeasureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.startMeasureIndex })]);
+  }
+  if (options.endMeasureIndex < 0 || options.endMeasureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `End measure index ${options.endMeasureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.endMeasureIndex })]);
+  }
+
+  if (options.endMeasureIndex < options.startMeasureIndex ||
+      (options.endMeasureIndex === options.startMeasureIndex && options.endPosition <= options.startPosition)) {
+    return failure([operationError('INVALID_RANGE', 'End position must be after start position', { partIndex: options.partIndex })]);
+  }
+
+  const result = cloneScore(score);
+
+  // Add start wedge
+  const startMeasure = result.parts[options.partIndex].measures[options.startMeasureIndex];
+  const startDirection: DirectionEntry = {
+    type: 'direction',
+    directionTypes: [{
+      kind: 'wedge',
+      type: options.type,
+    }],
+    placement: options.placement ?? 'below',
+    staff: options.staff,
+  };
+  insertDirectionAtPosition(startMeasure, startDirection, options.startPosition);
+
+  // Add stop wedge
+  const endMeasure = result.parts[options.partIndex].measures[options.endMeasureIndex];
+  const endDirection: DirectionEntry = {
+    type: 'direction',
+    directionTypes: [{
+      kind: 'wedge',
+      type: 'stop',
+    }],
+    placement: options.placement ?? 'below',
+    staff: options.staff,
+  };
+  insertDirectionAtPosition(endMeasure, endDirection, options.endPosition);
+
+  return success(result);
+}
+
+export interface RemoveWedgeOptions {
+  partIndex: number;
+  measureIndex: number;
+  /** Index of the wedge start direction to remove */
+  directionIndex?: number;
+}
+
+/**
+ * Remove a wedge (and its corresponding stop).
+ */
+export function removeWedge(
+  score: Score,
+  options: RemoveWedgeOptions
+): OperationResult<Score> {
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  if (options.measureIndex < 0 || options.measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+
+  // Find wedge start directions
+  const wedgeStarts: { measureIndex: number; entryIndex: number }[] = [];
+  for (let mi = options.measureIndex; mi < result.parts[options.partIndex].measures.length; mi++) {
+    const measure = result.parts[options.partIndex].measures[mi];
+    for (let ei = 0; ei < measure.entries.length; ei++) {
+      const entry = measure.entries[ei];
+      if (entry.type === 'direction') {
+        const wedgeType = entry.directionTypes.find(dt => dt.kind === 'wedge');
+        if (wedgeType && wedgeType.kind === 'wedge' && (wedgeType.type === 'crescendo' || wedgeType.type === 'diminuendo')) {
+          wedgeStarts.push({ measureIndex: mi, entryIndex: ei });
+        }
+      }
+    }
+    if (mi === options.measureIndex && wedgeStarts.length > 0) break;
+  }
+
+  if (wedgeStarts.length === 0) {
+    return failure([operationError('WEDGE_NOT_FOUND', 'No wedge found starting in measure', { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const targetIndex = options.directionIndex ?? 0;
+  if (targetIndex >= wedgeStarts.length) {
+    return failure([operationError('WEDGE_NOT_FOUND', `Wedge direction index ${targetIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const startInfo = wedgeStarts[targetIndex];
+  const startMeasure = result.parts[options.partIndex].measures[startInfo.measureIndex];
+
+  // Remove the start wedge
+  startMeasure.entries.splice(startInfo.entryIndex, 1);
+
+  // Find and remove the corresponding stop wedge
+  for (let mi = startInfo.measureIndex; mi < result.parts[options.partIndex].measures.length; mi++) {
+    const measure = result.parts[options.partIndex].measures[mi];
+    for (let ei = 0; ei < measure.entries.length; ei++) {
+      const entry = measure.entries[ei];
+      if (entry.type === 'direction') {
+        const wedgeType = entry.directionTypes.find(dt => dt.kind === 'wedge' && dt.type === 'stop');
+        if (wedgeType) {
+          measure.entries.splice(ei, 1);
+          return success(result);
+        }
+      }
+    }
+  }
+
+  return success(result);
+}
+
+export interface AddFermataOptions {
+  partIndex: number;
+  measureIndex: number;
+  noteIndex: number;
+  /** Fermata shape */
+  shape?: 'normal' | 'angled' | 'square' | 'double-angled' | 'double-square' | 'double-dot' | 'half-curve' | 'curlew';
+  /** Fermata type (upright or inverted) */
+  fermataType?: 'upright' | 'inverted';
+  /** Placement */
+  placement?: 'above' | 'below';
+}
+
+/**
+ * Add a fermata to a note.
+ */
+export function addFermata(
+  score: Score,
+  options: AddFermataOptions
+): OperationResult<Score> {
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  if (options.measureIndex < 0 || options.measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const measure = result.parts[options.partIndex].measures[options.measureIndex];
+
+  // Find the note
+  const notes = measure.entries.filter(e => e.type === 'note' && !e.rest);
+  if (options.noteIndex < 0 || options.noteIndex >= notes.length) {
+    return failure([operationError('NOTE_NOT_FOUND', `Note index ${options.noteIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const note = notes[options.noteIndex] as NoteEntry;
+
+  // Check if fermata already exists
+  if (note.notations?.some(n => n.type === 'fermata')) {
+    return failure([operationError('FERMATA_ALREADY_EXISTS', 'Note already has a fermata', { partIndex: options.partIndex, measureIndex: options.measureIndex, noteIndex: options.noteIndex })]);
+  }
+
+  // Add fermata
+  if (!note.notations) {
+    note.notations = [];
+  }
+
+  const fermataNotation: FermataNotation = {
+    type: 'fermata',
+    shape: options.shape ?? 'normal',
+    fermataType: options.fermataType ?? 'upright',
+    placement: options.placement ?? 'above',
+  };
+
+  note.notations.push(fermataNotation);
+
+  return success(result);
+}
+
+export interface RemoveFermataOptions {
+  partIndex: number;
+  measureIndex: number;
+  noteIndex: number;
+}
+
+/**
+ * Remove a fermata from a note.
+ */
+export function removeFermata(
+  score: Score,
+  options: RemoveFermataOptions
+): OperationResult<Score> {
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  if (options.measureIndex < 0 || options.measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const measure = result.parts[options.partIndex].measures[options.measureIndex];
+
+  const notes = measure.entries.filter(e => e.type === 'note' && !e.rest);
+  if (options.noteIndex < 0 || options.noteIndex >= notes.length) {
+    return failure([operationError('NOTE_NOT_FOUND', `Note index ${options.noteIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const note = notes[options.noteIndex] as NoteEntry;
+
+  const fermataIndex = note.notations?.findIndex(n => n.type === 'fermata');
+  if (fermataIndex === undefined || fermataIndex === -1) {
+    return failure([operationError('FERMATA_NOT_FOUND', 'Note does not have a fermata', { partIndex: options.partIndex, measureIndex: options.measureIndex, noteIndex: options.noteIndex })]);
+  }
+
+  note.notations!.splice(fermataIndex, 1);
+  if (note.notations!.length === 0) {
+    delete note.notations;
+  }
+
+  return success(result);
+}
+
+export type OrnamentKind = 'trill-mark' | 'turn' | 'delayed-turn' | 'inverted-turn' | 'delayed-inverted-turn' |
+  'vertical-turn' | 'inverted-vertical-turn' | 'shake' | 'wavy-line' | 'mordent' | 'inverted-mordent' |
+  'schleifer' | 'tremolo' | 'haydn' | 'other-ornament';
+
+export interface AddOrnamentOptions {
+  partIndex: number;
+  measureIndex: number;
+  noteIndex: number;
+  /** Ornament type */
+  ornament: OrnamentKind;
+  /** Placement */
+  placement?: 'above' | 'below';
+  /** Accidental mark for the ornament */
+  accidentalMark?: 'sharp' | 'flat' | 'natural' | 'double-sharp' | 'flat-flat';
+}
+
+/**
+ * Add an ornament (trill, mordent, turn, etc.) to a note.
+ */
+export function addOrnament(
+  score: Score,
+  options: AddOrnamentOptions
+): OperationResult<Score> {
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  if (options.measureIndex < 0 || options.measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const measure = result.parts[options.partIndex].measures[options.measureIndex];
+
+  const notes = measure.entries.filter(e => e.type === 'note' && !e.rest);
+  if (options.noteIndex < 0 || options.noteIndex >= notes.length) {
+    return failure([operationError('NOTE_NOT_FOUND', `Note index ${options.noteIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const note = notes[options.noteIndex] as NoteEntry;
+
+  // Check if same ornament already exists
+  if (note.notations?.some(n => n.type === 'ornament' && n.ornament === options.ornament)) {
+    return failure([operationError('ORNAMENT_ALREADY_EXISTS', `Note already has ornament: ${options.ornament}`, { partIndex: options.partIndex, measureIndex: options.measureIndex, noteIndex: options.noteIndex })]);
+  }
+
+  if (!note.notations) {
+    note.notations = [];
+  }
+
+  const ornamentNotation: OrnamentNotation = {
+    type: 'ornament',
+    ornament: options.ornament,
+    placement: options.placement,
+    accidentalMark: options.accidentalMark,
+  };
+
+  note.notations.push(ornamentNotation);
+
+  return success(result);
+}
+
+export interface RemoveOrnamentOptions {
+  partIndex: number;
+  measureIndex: number;
+  noteIndex: number;
+  /** Specific ornament to remove (removes first ornament if not specified) */
+  ornament?: OrnamentKind;
+}
+
+/**
+ * Remove an ornament from a note.
+ */
+export function removeOrnament(
+  score: Score,
+  options: RemoveOrnamentOptions
+): OperationResult<Score> {
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  if (options.measureIndex < 0 || options.measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const measure = result.parts[options.partIndex].measures[options.measureIndex];
+
+  const notes = measure.entries.filter(e => e.type === 'note' && !e.rest);
+  if (options.noteIndex < 0 || options.noteIndex >= notes.length) {
+    return failure([operationError('NOTE_NOT_FOUND', `Note index ${options.noteIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const note = notes[options.noteIndex] as NoteEntry;
+
+  const ornamentIndex = options.ornament
+    ? note.notations?.findIndex(n => n.type === 'ornament' && n.ornament === options.ornament)
+    : note.notations?.findIndex(n => n.type === 'ornament');
+
+  if (ornamentIndex === undefined || ornamentIndex === -1) {
+    return failure([operationError('ORNAMENT_NOT_FOUND', 'Note does not have the specified ornament', { partIndex: options.partIndex, measureIndex: options.measureIndex, noteIndex: options.noteIndex })]);
+  }
+
+  note.notations!.splice(ornamentIndex, 1);
+  if (note.notations!.length === 0) {
+    delete note.notations;
+  }
+
+  return success(result);
+}
+
+export interface AddPedalOptions {
+  partIndex: number;
+  measureIndex: number;
+  /** Position in divisions */
+  position: number;
+  /** Pedal type */
+  pedalType: 'start' | 'stop' | 'change' | 'continue';
+  /** Show as line or Ped/star symbols */
+  line?: boolean;
+  /** Placement */
+  placement?: 'above' | 'below';
+}
+
+/**
+ * Add a pedal marking.
+ */
+export function addPedal(
+  score: Score,
+  options: AddPedalOptions
+): OperationResult<Score> {
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  if (options.measureIndex < 0 || options.measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const measure = result.parts[options.partIndex].measures[options.measureIndex];
+
+  const direction: DirectionEntry = {
+    type: 'direction',
+    directionTypes: [{
+      kind: 'pedal',
+      type: options.pedalType,
+      line: options.line,
+    }],
+    placement: options.placement ?? 'below',
+  };
+
+  insertDirectionAtPosition(measure, direction, options.position);
+
+  return success(result);
+}
+
+export interface RemovePedalOptions {
+  partIndex: number;
+  measureIndex: number;
+  /** Index of the pedal direction to remove (among pedal directions) */
+  directionIndex?: number;
+}
+
+/**
+ * Remove a pedal marking.
+ */
+export function removePedal(
+  score: Score,
+  options: RemovePedalOptions
+): OperationResult<Score> {
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  if (options.measureIndex < 0 || options.measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const measure = result.parts[options.partIndex].measures[options.measureIndex];
+
+  // Find pedal directions
+  const pedalIndices: number[] = [];
+  for (let i = 0; i < measure.entries.length; i++) {
+    const entry = measure.entries[i];
+    if (entry.type === 'direction' && entry.directionTypes.some(dt => dt.kind === 'pedal')) {
+      pedalIndices.push(i);
+    }
+  }
+
+  if (pedalIndices.length === 0) {
+    return failure([operationError('PEDAL_NOT_FOUND', 'No pedal marking found in measure', { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const targetIndex = options.directionIndex ?? 0;
+  if (targetIndex < 0 || targetIndex >= pedalIndices.length) {
+    return failure([operationError('PEDAL_NOT_FOUND', `Pedal direction index ${targetIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  measure.entries.splice(pedalIndices[targetIndex], 1);
+
+  return success(result);
+}
+
+export interface AddTextDirectionOptions {
+  partIndex: number;
+  measureIndex: number;
+  /** Position in divisions */
+  position: number;
+  /** Text content */
+  text: string;
+  /** Font style */
+  fontStyle?: 'normal' | 'italic';
+  /** Font weight */
+  fontWeight?: 'normal' | 'bold';
+  /** Placement */
+  placement?: 'above' | 'below';
+}
+
+/**
+ * Add a text direction (expression text, performance instruction).
+ */
+export function addTextDirection(
+  score: Score,
+  options: AddTextDirectionOptions
+): OperationResult<Score> {
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  if (options.measureIndex < 0 || options.measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  if (!options.text.trim()) {
+    return failure([operationError('INVALID_TEXT', 'Text cannot be empty', { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const measure = result.parts[options.partIndex].measures[options.measureIndex];
+
+  const direction: DirectionEntry = {
+    type: 'direction',
+    directionTypes: [{
+      kind: 'words',
+      text: options.text,
+      fontStyle: options.fontStyle,
+      fontWeight: options.fontWeight,
+    }],
+    placement: options.placement ?? 'above',
+  };
+
+  insertDirectionAtPosition(measure, direction, options.position);
+
+  return success(result);
+}
+
+export interface AddRehearsalMarkOptions {
+  partIndex: number;
+  measureIndex: number;
+  /** Rehearsal mark text (e.g., 'A', 'B', '1', '2') */
+  text: string;
+  /** Enclosure type */
+  enclosure?: 'square' | 'circle' | 'oval' | 'rectangle' | 'diamond' | 'triangle' | 'pentagon' | 'hexagon' | 'none';
+}
+
+/**
+ * Add a rehearsal mark to a measure.
+ */
+export function addRehearsalMark(
+  score: Score,
+  options: AddRehearsalMarkOptions
+): OperationResult<Score> {
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  if (options.measureIndex < 0 || options.measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const measure = result.parts[options.partIndex].measures[options.measureIndex];
+
+  const direction: DirectionEntry = {
+    type: 'direction',
+    directionTypes: [{
+      kind: 'rehearsal',
+      text: options.text,
+      enclosure: options.enclosure ?? 'square',
+    }],
+    placement: 'above',
+  };
+
+  // Rehearsal marks go at the beginning of the measure
+  insertDirectionAtPosition(measure, direction, 0);
+
+  return success(result);
+}
+
+/**
+ * Helper function to insert a direction at the correct position in a measure.
+ */
+function insertDirectionAtPosition(measure: Measure, direction: DirectionEntry, position: number): void {
+  let currentPosition = 0;
+  let insertIndex = 0;
+
+  for (let i = 0; i < measure.entries.length; i++) {
+    const entry = measure.entries[i];
+
+    if (currentPosition >= position) {
+      insertIndex = i;
+      break;
+    }
+
+    if (entry.type === 'note' && !entry.chord) {
+      currentPosition += entry.duration;
+    } else if (entry.type === 'forward') {
+      currentPosition += entry.duration;
+    } else if (entry.type === 'backup') {
+      currentPosition -= entry.duration;
+    }
+
+    insertIndex = i + 1;
+  }
+
+  measure.entries.splice(insertIndex, 0, direction);
+}
 
 // Re-exports
 export type { ValidationError } from '../validator';
