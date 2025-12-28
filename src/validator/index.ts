@@ -18,6 +18,9 @@ export type ValidationErrorCode =
   | 'MEASURE_DURATION_MISMATCH'
   | 'MEASURE_DURATION_OVERFLOW'
   | 'MEASURE_DURATION_UNDERFLOW'
+  // Measure fullness (Piano Roll semantics)
+  | 'VOICE_INCOMPLETE'
+  | 'VOICE_GAP'
   // Position
   | 'NEGATIVE_POSITION'
   | 'BACKUP_EXCEEDS_POSITION'
@@ -88,6 +91,8 @@ export interface ValidateOptions {
   checkDivisions?: boolean;
   /** Check measure durations match time signature (default: true) */
   checkMeasureDuration?: boolean;
+  /** Check that each voice fills the entire measure (Piano Roll semantics) (default: false) */
+  checkMeasureFullness?: boolean;
   /** Check backup/forward position consistency (default: true) */
   checkPosition?: boolean;
   /** Check tie start/stop pairing (default: true) */
@@ -113,6 +118,7 @@ export interface ValidateOptions {
 const DEFAULT_OPTIONS: Required<ValidateOptions> = {
   checkDivisions: true,
   checkMeasureDuration: true,
+  checkMeasureFullness: false, // Piano Roll semantics - opt-in
   checkPosition: true,
   checkTies: true,
   checkBeams: true,
@@ -185,6 +191,15 @@ export function validate(score: Score, options: ValidateOptions = {}): Validatio
           currentTime,
           location,
           opts.durationTolerance
+        ));
+      }
+
+      if (opts.checkMeasureFullness && currentTime) {
+        allErrors.push(...validateMeasureFullness(
+          measure,
+          currentDivisions,
+          currentTime,
+          location
         ));
       }
 
@@ -390,6 +405,126 @@ function calculateVoiceDurations(measure: Measure): Map<string, number> {
   }
 
   return voiceDurations;
+}
+
+/**
+ * Validate measure fullness (Piano Roll semantics).
+ * Checks that each voice is completely filled with notes/rests.
+ */
+export function validateMeasureFullness(
+  measure: Measure,
+  divisions: number,
+  time: TimeSignature,
+  location: ValidationLocation
+): ValidationError[] {
+  const errors: ValidationError[] = [];
+
+  // Skip if senzaMisura (free time)
+  if (time.senzaMisura) {
+    return errors;
+  }
+
+  // Calculate expected duration
+  const beats = parseInt(time.beats, 10);
+  if (isNaN(beats)) {
+    return errors; // Complex beats string, skip validation
+  }
+
+  const expectedDuration = (beats / time.beatType) * 4 * divisions;
+
+  // Track coverage for each voice: Map<voice-staff, Set<position>>
+  const voiceCoverage = new Map<string, { segments: Array<{ start: number; end: number }> }>();
+  let currentPosition = 0;
+
+  for (const entry of measure.entries) {
+    if (entry.type === 'note') {
+      const staff = entry.staff ?? 1;
+      const voice = entry.voice;
+      const key = `${staff}-${voice}`;
+
+      if (!entry.chord) {
+        if (!voiceCoverage.has(key)) {
+          voiceCoverage.set(key, { segments: [] });
+        }
+        voiceCoverage.get(key)!.segments.push({
+          start: currentPosition,
+          end: currentPosition + entry.duration,
+        });
+        currentPosition += entry.duration;
+      }
+    } else if (entry.type === 'backup') {
+      currentPosition -= entry.duration;
+    } else if (entry.type === 'forward') {
+      const staff = entry.staff ?? 1;
+      const voice = entry.voice ?? 1;
+      const key = `${staff}-${voice}`;
+
+      if (!voiceCoverage.has(key)) {
+        voiceCoverage.set(key, { segments: [] });
+      }
+      voiceCoverage.get(key)!.segments.push({
+        start: currentPosition,
+        end: currentPosition + entry.duration,
+      });
+      currentPosition += entry.duration;
+    }
+  }
+
+  // Check each voice for completeness
+  for (const [voiceKey, { segments }] of voiceCoverage.entries()) {
+    const [staff, voice] = voiceKey.split('-').map(Number);
+
+    // Sort segments by start position
+    const sorted = [...segments].sort((a, b) => a.start - b.start);
+
+    // Check for gaps
+    let lastEnd = 0;
+    const gaps: Array<{ start: number; end: number }> = [];
+
+    for (const seg of sorted) {
+      if (seg.start > lastEnd) {
+        gaps.push({ start: lastEnd, end: seg.start });
+      }
+      lastEnd = Math.max(lastEnd, seg.end);
+    }
+
+    // Check if ends before measure end
+    if (lastEnd < expectedDuration) {
+      gaps.push({ start: lastEnd, end: expectedDuration });
+    }
+
+    // Report gaps
+    for (const gap of gaps) {
+      errors.push({
+        code: 'VOICE_GAP',
+        level: 'warning',
+        message: `Voice ${voice} (staff ${staff}) has gap from position ${gap.start} to ${gap.end}`,
+        location: { ...location, voice, staff },
+        details: {
+          gapStart: gap.start,
+          gapEnd: gap.end,
+          gapDuration: gap.end - gap.start,
+        },
+      });
+    }
+
+    // Check if voice is incomplete (doesn't reach expected duration)
+    if (lastEnd < expectedDuration) {
+      errors.push({
+        code: 'VOICE_INCOMPLETE',
+        level: 'warning',
+        message: `Voice ${voice} (staff ${staff}) ends at ${lastEnd}, expected ${expectedDuration}`,
+        location: { ...location, voice, staff },
+        details: {
+          actualEnd: lastEnd,
+          expectedDuration,
+          missing: expectedDuration - lastEnd,
+        },
+      });
+    }
+  }
+
+  return errors;
 }
 
 /**
@@ -1056,6 +1191,7 @@ export interface MeasureValidationContext {
  */
 export interface LocalValidateOptions {
   checkMeasureDuration?: boolean;
+  checkMeasureFullness?: boolean;
   checkPosition?: boolean;
   checkBeams?: boolean;
   checkTuplets?: boolean;
@@ -1065,6 +1201,7 @@ export interface LocalValidateOptions {
 
 const DEFAULT_LOCAL_OPTIONS: Required<LocalValidateOptions> = {
   checkMeasureDuration: true,
+  checkMeasureFullness: false, // Piano Roll semantics - opt-in
   checkPosition: true,
   checkBeams: true,
   checkTuplets: true,
@@ -1107,6 +1244,15 @@ export function validateMeasureLocal(
       context.time,
       location,
       opts.durationTolerance
+    ));
+  }
+
+  if (opts.checkMeasureFullness && context.time) {
+    errors.push(...validateMeasureFullness(
+      measure,
+      context.divisions,
+      context.time,
+      location
     ));
   }
 
