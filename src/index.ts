@@ -36,6 +36,40 @@ export type {
   Print,
   Defaults,
   Credit,
+  // Extended Query Types
+  VoiceToStaffMap,
+  NoteWithContext,
+  EntryWithContext,
+  DirectionWithContext,
+  StaffRange,
+  PositionQueryOptions,
+  VerticalSlice,
+  VoiceLine,
+  AdjacentNotes,
+  DirectionKind,
+  DynamicWithContext,
+  TempoWithContext,
+  PedalWithContext,
+  WedgeWithContext,
+  OctaveShiftWithContext,
+  // Phase 5: Groups and Spans
+  TiedNoteGroup,
+  SlurSpan,
+  TupletGroup,
+  BeamGroup,
+  NotationType,
+  // Phase 6: Harmony and Lyrics
+  HarmonyWithContext,
+  LyricWithContext,
+  AssembledLyrics,
+  // Phase 7: Structure
+  BarlineWithContext,
+  RepeatInfo,
+  EndingInfo,
+  KeyChangeInfo,
+  TimeChangeInfo,
+  ClefChangeInfo,
+  StructuralChanges,
 } from './types';
 
 // Importers
@@ -62,6 +96,62 @@ export {
   isRestMeasure,
   getNormalizedPosition,
   getNormalizedDuration,
+  // Phase 1: Staff Enhancement
+  getEntriesForStaff,
+  buildVoiceToStaffMap,
+  buildVoiceToStaffMapForPart,
+  inferStaff,
+  getEffectiveStaff,
+  getClefForStaff,
+  getVoicesForStaff,
+  getStaffRange,
+  // Phase 2: Position and Voice Line
+  getEntriesAtPosition,
+  getNotesAtPosition,
+  getEntriesInRange,
+  getNotesInRange,
+  getVerticalSlice,
+  getVoiceLine,
+  getVoiceLineInRange,
+  // Phase 3: Navigation
+  iterateEntries,
+  getNextNote,
+  getPrevNote,
+  getAdjacentNotes,
+  // Phase 4: Direction and Expression
+  getDirections,
+  getDirectionsAtPosition,
+  findDirectionsByType,
+  getDynamics,
+  getTempoMarkings,
+  getPedalMarkings,
+  getWedges,
+  getOctaveShifts,
+  // Phase 5: Groups and Spans
+  getTiedNoteGroups,
+  getSlurSpans,
+  getTupletGroups,
+  getBeamGroups,
+  findNotesWithNotation,
+  // Phase 6: Harmony and Lyrics
+  getHarmonies,
+  getHarmonyAtPosition,
+  getChordProgression,
+  getLyrics,
+  getLyricText,
+  getVerseCount,
+  // Phase 7: Structure
+  getRepeatStructure,
+  findBarlines,
+  getEndings,
+  getKeyChanges,
+  getTimeChanges,
+  getClefChanges,
+  getStructuralChanges,
+  // Phase 8: Additional Utilities
+  getPartByIndex,
+  getPartCount,
+  getPartIds,
 } from './accessors';
 export type { VoiceFilter, NormalizedPositionOptions } from './accessors';
 

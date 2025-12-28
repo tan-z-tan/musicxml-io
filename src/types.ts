@@ -853,3 +853,328 @@ export interface NoteIteratorItem {
   note: NoteEntry;
   position: number;
 }
+
+// ============================================================
+// Extended Query Types
+// ============================================================
+
+/**
+ * Voice to Staff mapping for inferring staff when not explicitly specified
+ */
+export interface VoiceToStaffMap {
+  get(voice: number): number | undefined;
+  has(voice: number): boolean;
+  entries(): IterableIterator<[number, number]>;
+  size: number;
+}
+
+/**
+ * Note with full context information
+ */
+export interface NoteWithContext {
+  note: NoteEntry;
+  part: Part;
+  partIndex: number;
+  measure: Measure;
+  measureIndex: number;
+  position: number;
+}
+
+/**
+ * Entry with context (for iterateEntries)
+ */
+export interface EntryWithContext {
+  entry: MeasureEntry;
+  part: Part;
+  partIndex: number;
+  measure: Measure;
+  measureIndex: number;
+  position: number;
+}
+
+/**
+ * Direction with context information
+ */
+export interface DirectionWithContext {
+  direction: DirectionEntry;
+  part: Part;
+  partIndex: number;
+  measure: Measure;
+  measureIndex: number;
+  position: number;
+}
+
+/**
+ * Staff range (min and max staff numbers)
+ */
+export interface StaffRange {
+  min: number;
+  max: number;
+}
+
+/**
+ * Options for position-based queries
+ */
+export interface PositionQueryOptions {
+  staff?: number;
+  voice?: number;
+  includeChordNotes?: boolean;
+}
+
+/**
+ * Vertical slice - all notes at a specific position across all parts
+ */
+export interface VerticalSlice {
+  measureIndex: number;
+  position: number;
+  parts: Map<number, NoteEntry[]>;
+}
+
+/**
+ * Voice line - continuous melodic line across measures
+ */
+export interface VoiceLine {
+  partIndex: number;
+  voice: number;
+  staff?: number;
+  notes: NoteWithContext[];
+}
+
+/**
+ * Adjacent notes (previous and next)
+ */
+export interface AdjacentNotes {
+  prev: NoteWithContext | null;
+  next: NoteWithContext | null;
+}
+
+/**
+ * Direction kind type for filtering
+ */
+export type DirectionKind = DirectionType['kind'];
+
+/**
+ * Dynamic marking with context
+ */
+export interface DynamicWithContext {
+  dynamic: DynamicsValue;
+  direction: DirectionEntry;
+  part: Part;
+  partIndex: number;
+  measure: Measure;
+  measureIndex: number;
+  position: number;
+}
+
+/**
+ * Tempo marking with context
+ */
+export interface TempoWithContext {
+  beatUnit: NoteType;
+  perMinute?: number | string;
+  beatUnitDot?: boolean;
+  direction: DirectionEntry;
+  partIndex: number;
+  measureIndex: number;
+  position: number;
+}
+
+/**
+ * Pedal marking with context
+ */
+export interface PedalWithContext {
+  pedalType: 'start' | 'stop' | 'change' | 'continue';
+  direction: DirectionEntry;
+  partIndex: number;
+  measureIndex: number;
+  position: number;
+}
+
+/**
+ * Wedge (crescendo/diminuendo) with context
+ */
+export interface WedgeWithContext {
+  wedgeType: 'crescendo' | 'diminuendo' | 'stop';
+  direction: DirectionEntry;
+  partIndex: number;
+  measureIndex: number;
+  position: number;
+}
+
+/**
+ * Octave shift with context
+ */
+export interface OctaveShiftWithContext {
+  shiftType: 'up' | 'down' | 'stop';
+  size?: number;
+  direction: DirectionEntry;
+  partIndex: number;
+  measureIndex: number;
+  position: number;
+}
+
+// ============================================================
+// Phase 5: Groups and Spans Types
+// ============================================================
+
+/**
+ * A group of tied notes (notes connected by ties)
+ */
+export interface TiedNoteGroup {
+  notes: NoteWithContext[];
+  /** Total duration of all tied notes */
+  totalDuration: number;
+}
+
+/**
+ * A slur span from start to stop
+ */
+export interface SlurSpan {
+  number: number;
+  startNote: NoteWithContext;
+  endNote: NoteWithContext;
+  /** Notes covered by the slur (including start and end) */
+  notes: NoteWithContext[];
+}
+
+/**
+ * A tuplet group
+ */
+export interface TupletGroup {
+  number: number;
+  notes: NoteWithContext[];
+  /** Actual notes (numerator of time modification) */
+  actualNotes: number;
+  /** Normal notes (denominator of time modification) */
+  normalNotes: number;
+}
+
+/**
+ * A beam group (notes connected by beams)
+ */
+export interface BeamGroup {
+  notes: NoteWithContext[];
+  /** Beam level (1 for eighth notes, 2 for sixteenth, etc.) */
+  beamLevel: number;
+}
+
+/**
+ * Filter for finding notes with specific notations
+ */
+export type NotationType = Notation['type'];
+
+// ============================================================
+// Phase 6: Harmony and Lyrics Types
+// ============================================================
+
+/**
+ * Harmony entry with context
+ */
+export interface HarmonyWithContext {
+  harmony: HarmonyEntry;
+  part: Part;
+  partIndex: number;
+  measure: Measure;
+  measureIndex: number;
+  position: number;
+}
+
+/**
+ * Lyric entry with context
+ */
+export interface LyricWithContext {
+  lyric: Lyric;
+  note: NoteEntry;
+  part: Part;
+  partIndex: number;
+  measure: Measure;
+  measureIndex: number;
+  position: number;
+  verse: number;
+}
+
+/**
+ * Assembled lyrics for a verse
+ */
+export interface AssembledLyrics {
+  verse: number;
+  text: string;
+  syllables: { text: string; position: number; measureIndex: number }[];
+}
+
+// ============================================================
+// Phase 7: Structure Types
+// ============================================================
+
+/**
+ * Barline information with context
+ */
+export interface BarlineWithContext {
+  barline: Barline;
+  partIndex: number;
+  measureIndex: number;
+  measureNumber: string;
+}
+
+/**
+ * Repeat structure information
+ */
+export interface RepeatInfo {
+  type: 'forward' | 'backward';
+  times?: number;
+  measureIndex: number;
+  measureNumber: string;
+}
+
+/**
+ * Ending (volta bracket) information
+ */
+export interface EndingInfo {
+  number: string;
+  type: 'start' | 'stop' | 'discontinue';
+  partIndex: number;
+  measureIndex: number;
+  measureNumber: string;
+}
+
+/**
+ * Key change information
+ */
+export interface KeyChangeInfo {
+  key: KeySignature;
+  partIndex: number;
+  measureIndex: number;
+  measureNumber: string;
+  position: number;
+}
+
+/**
+ * Time signature change information
+ */
+export interface TimeChangeInfo {
+  time: TimeSignature;
+  partIndex: number;
+  measureIndex: number;
+  measureNumber: string;
+}
+
+/**
+ * Clef change information
+ */
+export interface ClefChangeInfo {
+  clef: Clef;
+  staff: number;
+  partIndex: number;
+  measureIndex: number;
+  measureNumber: string;
+  position: number;
+}
+
+/**
+ * All structural changes combined
+ */
+export interface StructuralChanges {
+  keyChanges: KeyChangeInfo[];
+  timeChanges: TimeChangeInfo[];
+  clefChanges: ClefChangeInfo[];
+}
