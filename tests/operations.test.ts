@@ -56,6 +56,19 @@ import {
   cutNotes,
   copyNotesMultiMeasure,
   pasteNotesMultiMeasure,
+  // Expression/Performance operations
+  addTempo,
+  removeTempo,
+  addWedge,
+  removeWedge,
+  addFermata,
+  removeFermata,
+  addOrnament,
+  removeOrnament,
+  addPedal,
+  removePedal,
+  addTextDirection,
+  addRehearsalMark,
   type OperationResult,
   type NoteSelection,
 } from '../src/operations';
@@ -2712,6 +2725,529 @@ describe('Copy/Paste Operations', () => {
       });
 
       expect(pasteResult.success).toBe(true);
+    });
+  });
+});
+
+// ============================================================
+// Expression / Performance Direction Operations Tests
+// ============================================================
+
+describe('Expression/Performance Operations', () => {
+  describe('addTempo', () => {
+    it('should add a tempo marking to a measure', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = addTempo(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        position: 0,
+        bpm: 120,
+        beatUnit: 'quarter',
+        text: 'Allegro',
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const measure = result.data.parts[0].measures[0];
+        const tempoDirection = measure.entries.find(
+          e => e.type === 'direction' && e.directionTypes.some(dt => dt.kind === 'metronome')
+        );
+        expect(tempoDirection).toBeDefined();
+        if (tempoDirection?.type === 'direction') {
+          expect(tempoDirection.sound?.tempo).toBe(120);
+        }
+      }
+    });
+
+    it('should fail with invalid BPM', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = addTempo(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        position: 0,
+        bpm: 0,
+      });
+
+      expect(result.success).toBe(false);
+    });
+  });
+
+  describe('removeTempo', () => {
+    it('should remove a tempo marking', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // First add tempo
+      const withTempo = addTempo(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        position: 0,
+        bpm: 120,
+      });
+      expect(withTempo.success).toBe(true);
+      if (!withTempo.success) return;
+
+      // Then remove it
+      const result = removeTempo(withTempo.data, {
+        partIndex: 0,
+        measureIndex: 0,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const measure = result.data.parts[0].measures[0];
+        const tempoDirection = measure.entries.find(
+          e => e.type === 'direction' && e.directionTypes.some(dt => dt.kind === 'metronome')
+        );
+        expect(tempoDirection).toBeUndefined();
+      }
+    });
+  });
+
+  describe('addWedge', () => {
+    it('should add a crescendo wedge', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const divisions = score.parts[0].measures[0].attributes?.divisions ?? 1;
+
+      const result = addWedge(score, {
+        partIndex: 0,
+        startMeasureIndex: 0,
+        startPosition: 0,
+        endMeasureIndex: 0,
+        endPosition: divisions * 4, // End of measure
+        type: 'crescendo',
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const measure = result.data.parts[0].measures[0];
+        const wedgeStart = measure.entries.find(
+          e => e.type === 'direction' && e.directionTypes.some(dt => dt.kind === 'wedge' && dt.type === 'crescendo')
+        );
+        const wedgeStop = measure.entries.find(
+          e => e.type === 'direction' && e.directionTypes.some(dt => dt.kind === 'wedge' && dt.type === 'stop')
+        );
+        expect(wedgeStart).toBeDefined();
+        expect(wedgeStop).toBeDefined();
+      }
+    });
+
+    it('should add a diminuendo wedge', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const divisions = score.parts[0].measures[0].attributes?.divisions ?? 1;
+
+      const result = addWedge(score, {
+        partIndex: 0,
+        startMeasureIndex: 0,
+        startPosition: 0,
+        endMeasureIndex: 0,
+        endPosition: divisions * 2,
+        type: 'diminuendo',
+      });
+
+      expect(result.success).toBe(true);
+    });
+
+    it('should fail with invalid range', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = addWedge(score, {
+        partIndex: 0,
+        startMeasureIndex: 0,
+        startPosition: 4,
+        endMeasureIndex: 0,
+        endPosition: 2, // Before start
+        type: 'crescendo',
+      });
+
+      expect(result.success).toBe(false);
+    });
+  });
+
+  describe('removeWedge', () => {
+    it('should remove a wedge and its stop', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const divisions = score.parts[0].measures[0].attributes?.divisions ?? 1;
+
+      // First add wedge
+      const withWedge = addWedge(score, {
+        partIndex: 0,
+        startMeasureIndex: 0,
+        startPosition: 0,
+        endMeasureIndex: 0,
+        endPosition: divisions * 4,
+        type: 'crescendo',
+      });
+      expect(withWedge.success).toBe(true);
+      if (!withWedge.success) return;
+
+      // Then remove it
+      const result = removeWedge(withWedge.data, {
+        partIndex: 0,
+        measureIndex: 0,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const measure = result.data.parts[0].measures[0];
+        const wedgeDirections = measure.entries.filter(
+          e => e.type === 'direction' && e.directionTypes.some(dt => dt.kind === 'wedge')
+        );
+        expect(wedgeDirections.length).toBe(0);
+      }
+    });
+  });
+
+  describe('addFermata', () => {
+    it('should add a fermata to a note', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = addFermata(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const note = result.data.parts[0].measures[0].entries.find(e => e.type === 'note' && !e.rest);
+        if (note?.type === 'note') {
+          const fermata = note.notations?.find(n => n.type === 'fermata');
+          expect(fermata).toBeDefined();
+        }
+      }
+    });
+
+    it('should fail if fermata already exists', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // Add first fermata
+      const withFermata = addFermata(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+      expect(withFermata.success).toBe(true);
+      if (!withFermata.success) return;
+
+      // Try to add another
+      const result = addFermata(withFermata.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+
+      expect(result.success).toBe(false);
+    });
+  });
+
+  describe('removeFermata', () => {
+    it('should remove a fermata from a note', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // First add fermata
+      const withFermata = addFermata(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+      expect(withFermata.success).toBe(true);
+      if (!withFermata.success) return;
+
+      // Then remove it
+      const result = removeFermata(withFermata.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const note = result.data.parts[0].measures[0].entries.find(e => e.type === 'note' && !e.rest);
+        if (note?.type === 'note') {
+          const fermata = note.notations?.find(n => n.type === 'fermata');
+          expect(fermata).toBeUndefined();
+        }
+      }
+    });
+  });
+
+  describe('addOrnament', () => {
+    it('should add a trill to a note', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = addOrnament(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        ornament: 'trill-mark',
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const note = result.data.parts[0].measures[0].entries.find(e => e.type === 'note' && !e.rest);
+        if (note?.type === 'note') {
+          const ornament = note.notations?.find(n => n.type === 'ornament');
+          expect(ornament).toBeDefined();
+          if (ornament?.type === 'ornament') {
+            expect(ornament.ornament).toBe('trill-mark');
+          }
+        }
+      }
+    });
+
+    it('should add a mordent to a note', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = addOrnament(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        ornament: 'mordent',
+      });
+
+      expect(result.success).toBe(true);
+    });
+
+    it('should add a turn to a note', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = addOrnament(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        ornament: 'turn',
+      });
+
+      expect(result.success).toBe(true);
+    });
+
+    it('should fail if same ornament already exists', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const withOrnament = addOrnament(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        ornament: 'trill-mark',
+      });
+      expect(withOrnament.success).toBe(true);
+      if (!withOrnament.success) return;
+
+      const result = addOrnament(withOrnament.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        ornament: 'trill-mark',
+      });
+
+      expect(result.success).toBe(false);
+    });
+  });
+
+  describe('removeOrnament', () => {
+    it('should remove an ornament from a note', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const withOrnament = addOrnament(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        ornament: 'trill-mark',
+      });
+      expect(withOrnament.success).toBe(true);
+      if (!withOrnament.success) return;
+
+      const result = removeOrnament(withOrnament.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        ornament: 'trill-mark',
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const note = result.data.parts[0].measures[0].entries.find(e => e.type === 'note' && !e.rest);
+        if (note?.type === 'note') {
+          const ornament = note.notations?.find(n => n.type === 'ornament');
+          expect(ornament).toBeUndefined();
+        }
+      }
+    });
+  });
+
+  describe('addPedal', () => {
+    it('should add a pedal start marking', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = addPedal(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        position: 0,
+        pedalType: 'start',
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const measure = result.data.parts[0].measures[0];
+        const pedalDirection = measure.entries.find(
+          e => e.type === 'direction' && e.directionTypes.some(dt => dt.kind === 'pedal')
+        );
+        expect(pedalDirection).toBeDefined();
+      }
+    });
+
+    it('should add start and stop pedal markings', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const divisions = score.parts[0].measures[0].attributes?.divisions ?? 1;
+
+      // Add start
+      const withStart = addPedal(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        position: 0,
+        pedalType: 'start',
+      });
+      expect(withStart.success).toBe(true);
+      if (!withStart.success) return;
+
+      // Add stop
+      const result = addPedal(withStart.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        position: divisions * 4,
+        pedalType: 'stop',
+      });
+
+      expect(result.success).toBe(true);
+    });
+  });
+
+  describe('removePedal', () => {
+    it('should remove a pedal marking', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // First add pedal
+      const withPedal = addPedal(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        position: 0,
+        pedalType: 'start',
+      });
+      expect(withPedal.success).toBe(true);
+      if (!withPedal.success) return;
+
+      // Then remove it
+      const result = removePedal(withPedal.data, {
+        partIndex: 0,
+        measureIndex: 0,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const measure = result.data.parts[0].measures[0];
+        const pedalDirection = measure.entries.find(
+          e => e.type === 'direction' && e.directionTypes.some(dt => dt.kind === 'pedal')
+        );
+        expect(pedalDirection).toBeUndefined();
+      }
+    });
+  });
+
+  describe('addTextDirection', () => {
+    it('should add a text direction', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = addTextDirection(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        position: 0,
+        text: 'dolce',
+        fontStyle: 'italic',
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const measure = result.data.parts[0].measures[0];
+        const textDirection = measure.entries.find(
+          e => e.type === 'direction' && e.directionTypes.some(dt => dt.kind === 'words' && dt.text === 'dolce')
+        );
+        expect(textDirection).toBeDefined();
+      }
+    });
+
+    it('should fail with empty text', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = addTextDirection(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        position: 0,
+        text: '',
+      });
+
+      expect(result.success).toBe(false);
+    });
+  });
+
+  describe('addRehearsalMark', () => {
+    it('should add a rehearsal mark', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = addRehearsalMark(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        text: 'A',
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const measure = result.data.parts[0].measures[0];
+        const rehearsalDirection = measure.entries.find(
+          e => e.type === 'direction' && e.directionTypes.some(dt => dt.kind === 'rehearsal')
+        );
+        expect(rehearsalDirection).toBeDefined();
+      }
+    });
+
+    it('should add numbered rehearsal marks', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = addRehearsalMark(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        text: '1',
+        enclosure: 'circle',
+      });
+
+      expect(result.success).toBe(true);
     });
   });
 });

@@ -15,7 +15,10 @@ import type {
   TiedNotation,
   ArticulationNotation,
   DirectionEntry,
+  DirectionType,
   AttributesEntry,
+  FermataNotation,
+  OrnamentNotation,
 } from '../types';
 import {
   STEPS,
@@ -3439,6 +3442,720 @@ export function pasteNotesMultiMeasure(
   }
 
   return success(result);
+}
+
+// ============================================================
+// Expression / Performance Direction Operations
+// ============================================================
+
+export interface AddTempoOptions {
+  partIndex: number;
+  measureIndex: number;
+  /** Position in divisions within the measure */
+  position: number;
+  /** Tempo in BPM */
+  bpm: number;
+  /** Beat unit (e.g., 'quarter', 'half', 'eighth') */
+  beatUnit?: 'whole' | 'half' | 'quarter' | 'eighth' | '16th';
+  /** Beat unit dots */
+  beatUnitDots?: number;
+  /** Text description (e.g., 'Allegro', 'Andante') */
+  text?: string;
+  /** Placement (above/below staff) */
+  placement?: 'above' | 'below';
+}
+
+/**
+ * Add a tempo marking to a measure.
+ */
+export function addTempo(
+  score: Score,
+  options: AddTempoOptions
+): OperationResult<Score> {
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  if (options.measureIndex < 0 || options.measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  if (options.bpm <= 0) {
+    return failure([operationError('INVALID_DURATION', 'BPM must be positive', { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const measure = result.parts[options.partIndex].measures[options.measureIndex];
+
+  const directionTypes: DirectionType[] = [];
+
+  // Add metronome marking
+  directionTypes.push({
+    kind: 'metronome',
+    beatUnit: options.beatUnit ?? 'quarter',
+    beatUnitDots: options.beatUnitDots,
+    perMinute: options.bpm,
+  });
+
+  // Add text if provided
+  if (options.text) {
+    directionTypes.push({
+      kind: 'words',
+      text: options.text,
+      fontWeight: 'bold',
+    });
+  }
+
+  const direction: DirectionEntry = {
+    type: 'direction',
+    directionTypes,
+    placement: options.placement ?? 'above',
+    sound: { tempo: options.bpm },
+  };
+
+  // Insert at the correct position
+  insertDirectionAtPosition(measure, direction, options.position);
+
+  return success(result);
+}
+
+export interface RemoveTempoOptions {
+  partIndex: number;
+  measureIndex: number;
+  /** Index of the direction to remove (among tempo directions) */
+  directionIndex?: number;
+}
+
+/**
+ * Remove a tempo marking from a measure.
+ */
+export function removeTempo(
+  score: Score,
+  options: RemoveTempoOptions
+): OperationResult<Score> {
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  if (options.measureIndex < 0 || options.measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const measure = result.parts[options.partIndex].measures[options.measureIndex];
+
+  // Find tempo directions
+  const tempoDirectionIndices: number[] = [];
+  for (let i = 0; i < measure.entries.length; i++) {
+    const entry = measure.entries[i];
+    if (entry.type === 'direction' && entry.directionTypes.some(dt => dt.kind === 'metronome')) {
+      tempoDirectionIndices.push(i);
+    }
+  }
+
+  if (tempoDirectionIndices.length === 0) {
+    return failure([operationError('TEMPO_NOT_FOUND', 'No tempo marking found in measure', { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const targetIndex = options.directionIndex ?? 0;
+  if (targetIndex < 0 || targetIndex >= tempoDirectionIndices.length) {
+    return failure([operationError('TEMPO_NOT_FOUND', `Tempo direction index ${targetIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  measure.entries.splice(tempoDirectionIndices[targetIndex], 1);
+
+  return success(result);
+}
+
+export interface AddWedgeOptions {
+  partIndex: number;
+  /** Starting measure index */
+  startMeasureIndex: number;
+  /** Starting position in divisions */
+  startPosition: number;
+  /** Ending measure index */
+  endMeasureIndex: number;
+  /** Ending position in divisions */
+  endPosition: number;
+  /** Wedge type */
+  type: 'crescendo' | 'diminuendo';
+  /** Staff number (for multi-staff parts) */
+  staff?: number;
+  /** Placement (above/below) */
+  placement?: 'above' | 'below';
+}
+
+/**
+ * Add a wedge (crescendo or diminuendo) spanning one or more measures.
+ */
+export function addWedge(
+  score: Score,
+  options: AddWedgeOptions
+): OperationResult<Score> {
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  if (options.startMeasureIndex < 0 || options.startMeasureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Start measure index ${options.startMeasureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.startMeasureIndex })]);
+  }
+  if (options.endMeasureIndex < 0 || options.endMeasureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `End measure index ${options.endMeasureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.endMeasureIndex })]);
+  }
+
+  if (options.endMeasureIndex < options.startMeasureIndex ||
+      (options.endMeasureIndex === options.startMeasureIndex && options.endPosition <= options.startPosition)) {
+    return failure([operationError('INVALID_RANGE', 'End position must be after start position', { partIndex: options.partIndex })]);
+  }
+
+  const result = cloneScore(score);
+
+  // Add start wedge
+  const startMeasure = result.parts[options.partIndex].measures[options.startMeasureIndex];
+  const startDirection: DirectionEntry = {
+    type: 'direction',
+    directionTypes: [{
+      kind: 'wedge',
+      type: options.type,
+    }],
+    placement: options.placement ?? 'below',
+    staff: options.staff,
+  };
+  insertDirectionAtPosition(startMeasure, startDirection, options.startPosition);
+
+  // Add stop wedge
+  const endMeasure = result.parts[options.partIndex].measures[options.endMeasureIndex];
+  const endDirection: DirectionEntry = {
+    type: 'direction',
+    directionTypes: [{
+      kind: 'wedge',
+      type: 'stop',
+    }],
+    placement: options.placement ?? 'below',
+    staff: options.staff,
+  };
+  insertDirectionAtPosition(endMeasure, endDirection, options.endPosition);
+
+  return success(result);
+}
+
+export interface RemoveWedgeOptions {
+  partIndex: number;
+  measureIndex: number;
+  /** Index of the wedge start direction to remove */
+  directionIndex?: number;
+}
+
+/**
+ * Remove a wedge (and its corresponding stop).
+ */
+export function removeWedge(
+  score: Score,
+  options: RemoveWedgeOptions
+): OperationResult<Score> {
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  if (options.measureIndex < 0 || options.measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+
+  // Find wedge start directions
+  const wedgeStarts: { measureIndex: number; entryIndex: number }[] = [];
+  for (let mi = options.measureIndex; mi < result.parts[options.partIndex].measures.length; mi++) {
+    const measure = result.parts[options.partIndex].measures[mi];
+    for (let ei = 0; ei < measure.entries.length; ei++) {
+      const entry = measure.entries[ei];
+      if (entry.type === 'direction') {
+        const wedgeType = entry.directionTypes.find(dt => dt.kind === 'wedge');
+        if (wedgeType && wedgeType.kind === 'wedge' && (wedgeType.type === 'crescendo' || wedgeType.type === 'diminuendo')) {
+          wedgeStarts.push({ measureIndex: mi, entryIndex: ei });
+        }
+      }
+    }
+    if (mi === options.measureIndex && wedgeStarts.length > 0) break;
+  }
+
+  if (wedgeStarts.length === 0) {
+    return failure([operationError('WEDGE_NOT_FOUND', 'No wedge found starting in measure', { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const targetIndex = options.directionIndex ?? 0;
+  if (targetIndex >= wedgeStarts.length) {
+    return failure([operationError('WEDGE_NOT_FOUND', `Wedge direction index ${targetIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const startInfo = wedgeStarts[targetIndex];
+  const startMeasure = result.parts[options.partIndex].measures[startInfo.measureIndex];
+
+  // Remove the start wedge
+  startMeasure.entries.splice(startInfo.entryIndex, 1);
+
+  // Find and remove the corresponding stop wedge
+  for (let mi = startInfo.measureIndex; mi < result.parts[options.partIndex].measures.length; mi++) {
+    const measure = result.parts[options.partIndex].measures[mi];
+    for (let ei = 0; ei < measure.entries.length; ei++) {
+      const entry = measure.entries[ei];
+      if (entry.type === 'direction') {
+        const wedgeType = entry.directionTypes.find(dt => dt.kind === 'wedge' && dt.type === 'stop');
+        if (wedgeType) {
+          measure.entries.splice(ei, 1);
+          return success(result);
+        }
+      }
+    }
+  }
+
+  return success(result);
+}
+
+export interface AddFermataOptions {
+  partIndex: number;
+  measureIndex: number;
+  noteIndex: number;
+  /** Fermata shape */
+  shape?: 'normal' | 'angled' | 'square' | 'double-angled' | 'double-square' | 'double-dot' | 'half-curve' | 'curlew';
+  /** Fermata type (upright or inverted) */
+  fermataType?: 'upright' | 'inverted';
+  /** Placement */
+  placement?: 'above' | 'below';
+}
+
+/**
+ * Add a fermata to a note.
+ */
+export function addFermata(
+  score: Score,
+  options: AddFermataOptions
+): OperationResult<Score> {
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  if (options.measureIndex < 0 || options.measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const measure = result.parts[options.partIndex].measures[options.measureIndex];
+
+  // Find the note
+  const notes = measure.entries.filter(e => e.type === 'note' && !e.rest);
+  if (options.noteIndex < 0 || options.noteIndex >= notes.length) {
+    return failure([operationError('NOTE_NOT_FOUND', `Note index ${options.noteIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const note = notes[options.noteIndex] as NoteEntry;
+
+  // Check if fermata already exists
+  if (note.notations?.some(n => n.type === 'fermata')) {
+    return failure([operationError('FERMATA_ALREADY_EXISTS', 'Note already has a fermata', { partIndex: options.partIndex, measureIndex: options.measureIndex, noteIndex: options.noteIndex })]);
+  }
+
+  // Add fermata
+  if (!note.notations) {
+    note.notations = [];
+  }
+
+  const fermataNotation: FermataNotation = {
+    type: 'fermata',
+    shape: options.shape ?? 'normal',
+    fermataType: options.fermataType ?? 'upright',
+    placement: options.placement ?? 'above',
+  };
+
+  note.notations.push(fermataNotation);
+
+  return success(result);
+}
+
+export interface RemoveFermataOptions {
+  partIndex: number;
+  measureIndex: number;
+  noteIndex: number;
+}
+
+/**
+ * Remove a fermata from a note.
+ */
+export function removeFermata(
+  score: Score,
+  options: RemoveFermataOptions
+): OperationResult<Score> {
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  if (options.measureIndex < 0 || options.measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const measure = result.parts[options.partIndex].measures[options.measureIndex];
+
+  const notes = measure.entries.filter(e => e.type === 'note' && !e.rest);
+  if (options.noteIndex < 0 || options.noteIndex >= notes.length) {
+    return failure([operationError('NOTE_NOT_FOUND', `Note index ${options.noteIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const note = notes[options.noteIndex] as NoteEntry;
+
+  const fermataIndex = note.notations?.findIndex(n => n.type === 'fermata');
+  if (fermataIndex === undefined || fermataIndex === -1) {
+    return failure([operationError('FERMATA_NOT_FOUND', 'Note does not have a fermata', { partIndex: options.partIndex, measureIndex: options.measureIndex, noteIndex: options.noteIndex })]);
+  }
+
+  note.notations!.splice(fermataIndex, 1);
+  if (note.notations!.length === 0) {
+    delete note.notations;
+  }
+
+  return success(result);
+}
+
+export type OrnamentKind = 'trill-mark' | 'turn' | 'delayed-turn' | 'inverted-turn' | 'delayed-inverted-turn' |
+  'vertical-turn' | 'inverted-vertical-turn' | 'shake' | 'wavy-line' | 'mordent' | 'inverted-mordent' |
+  'schleifer' | 'tremolo' | 'haydn' | 'other-ornament';
+
+export interface AddOrnamentOptions {
+  partIndex: number;
+  measureIndex: number;
+  noteIndex: number;
+  /** Ornament type */
+  ornament: OrnamentKind;
+  /** Placement */
+  placement?: 'above' | 'below';
+  /** Accidental mark for the ornament */
+  accidentalMark?: 'sharp' | 'flat' | 'natural' | 'double-sharp' | 'flat-flat';
+}
+
+/**
+ * Add an ornament (trill, mordent, turn, etc.) to a note.
+ */
+export function addOrnament(
+  score: Score,
+  options: AddOrnamentOptions
+): OperationResult<Score> {
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  if (options.measureIndex < 0 || options.measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const measure = result.parts[options.partIndex].measures[options.measureIndex];
+
+  const notes = measure.entries.filter(e => e.type === 'note' && !e.rest);
+  if (options.noteIndex < 0 || options.noteIndex >= notes.length) {
+    return failure([operationError('NOTE_NOT_FOUND', `Note index ${options.noteIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const note = notes[options.noteIndex] as NoteEntry;
+
+  // Check if same ornament already exists
+  if (note.notations?.some(n => n.type === 'ornament' && n.ornament === options.ornament)) {
+    return failure([operationError('ORNAMENT_ALREADY_EXISTS', `Note already has ornament: ${options.ornament}`, { partIndex: options.partIndex, measureIndex: options.measureIndex, noteIndex: options.noteIndex })]);
+  }
+
+  if (!note.notations) {
+    note.notations = [];
+  }
+
+  const ornamentNotation: OrnamentNotation = {
+    type: 'ornament',
+    ornament: options.ornament,
+    placement: options.placement,
+    accidentalMark: options.accidentalMark,
+  };
+
+  note.notations.push(ornamentNotation);
+
+  return success(result);
+}
+
+export interface RemoveOrnamentOptions {
+  partIndex: number;
+  measureIndex: number;
+  noteIndex: number;
+  /** Specific ornament to remove (removes first ornament if not specified) */
+  ornament?: OrnamentKind;
+}
+
+/**
+ * Remove an ornament from a note.
+ */
+export function removeOrnament(
+  score: Score,
+  options: RemoveOrnamentOptions
+): OperationResult<Score> {
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  if (options.measureIndex < 0 || options.measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const measure = result.parts[options.partIndex].measures[options.measureIndex];
+
+  const notes = measure.entries.filter(e => e.type === 'note' && !e.rest);
+  if (options.noteIndex < 0 || options.noteIndex >= notes.length) {
+    return failure([operationError('NOTE_NOT_FOUND', `Note index ${options.noteIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const note = notes[options.noteIndex] as NoteEntry;
+
+  const ornamentIndex = options.ornament
+    ? note.notations?.findIndex(n => n.type === 'ornament' && n.ornament === options.ornament)
+    : note.notations?.findIndex(n => n.type === 'ornament');
+
+  if (ornamentIndex === undefined || ornamentIndex === -1) {
+    return failure([operationError('ORNAMENT_NOT_FOUND', 'Note does not have the specified ornament', { partIndex: options.partIndex, measureIndex: options.measureIndex, noteIndex: options.noteIndex })]);
+  }
+
+  note.notations!.splice(ornamentIndex, 1);
+  if (note.notations!.length === 0) {
+    delete note.notations;
+  }
+
+  return success(result);
+}
+
+export interface AddPedalOptions {
+  partIndex: number;
+  measureIndex: number;
+  /** Position in divisions */
+  position: number;
+  /** Pedal type */
+  pedalType: 'start' | 'stop' | 'change' | 'continue';
+  /** Show as line or Ped/star symbols */
+  line?: boolean;
+  /** Placement */
+  placement?: 'above' | 'below';
+}
+
+/**
+ * Add a pedal marking.
+ */
+export function addPedal(
+  score: Score,
+  options: AddPedalOptions
+): OperationResult<Score> {
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  if (options.measureIndex < 0 || options.measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const measure = result.parts[options.partIndex].measures[options.measureIndex];
+
+  const direction: DirectionEntry = {
+    type: 'direction',
+    directionTypes: [{
+      kind: 'pedal',
+      type: options.pedalType,
+      line: options.line,
+    }],
+    placement: options.placement ?? 'below',
+  };
+
+  insertDirectionAtPosition(measure, direction, options.position);
+
+  return success(result);
+}
+
+export interface RemovePedalOptions {
+  partIndex: number;
+  measureIndex: number;
+  /** Index of the pedal direction to remove (among pedal directions) */
+  directionIndex?: number;
+}
+
+/**
+ * Remove a pedal marking.
+ */
+export function removePedal(
+  score: Score,
+  options: RemovePedalOptions
+): OperationResult<Score> {
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  if (options.measureIndex < 0 || options.measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const measure = result.parts[options.partIndex].measures[options.measureIndex];
+
+  // Find pedal directions
+  const pedalIndices: number[] = [];
+  for (let i = 0; i < measure.entries.length; i++) {
+    const entry = measure.entries[i];
+    if (entry.type === 'direction' && entry.directionTypes.some(dt => dt.kind === 'pedal')) {
+      pedalIndices.push(i);
+    }
+  }
+
+  if (pedalIndices.length === 0) {
+    return failure([operationError('PEDAL_NOT_FOUND', 'No pedal marking found in measure', { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const targetIndex = options.directionIndex ?? 0;
+  if (targetIndex < 0 || targetIndex >= pedalIndices.length) {
+    return failure([operationError('PEDAL_NOT_FOUND', `Pedal direction index ${targetIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  measure.entries.splice(pedalIndices[targetIndex], 1);
+
+  return success(result);
+}
+
+export interface AddTextDirectionOptions {
+  partIndex: number;
+  measureIndex: number;
+  /** Position in divisions */
+  position: number;
+  /** Text content */
+  text: string;
+  /** Font style */
+  fontStyle?: 'normal' | 'italic';
+  /** Font weight */
+  fontWeight?: 'normal' | 'bold';
+  /** Placement */
+  placement?: 'above' | 'below';
+}
+
+/**
+ * Add a text direction (expression text, performance instruction).
+ */
+export function addTextDirection(
+  score: Score,
+  options: AddTextDirectionOptions
+): OperationResult<Score> {
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  if (options.measureIndex < 0 || options.measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  if (!options.text.trim()) {
+    return failure([operationError('INVALID_TEXT', 'Text cannot be empty', { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const measure = result.parts[options.partIndex].measures[options.measureIndex];
+
+  const direction: DirectionEntry = {
+    type: 'direction',
+    directionTypes: [{
+      kind: 'words',
+      text: options.text,
+      fontStyle: options.fontStyle,
+      fontWeight: options.fontWeight,
+    }],
+    placement: options.placement ?? 'above',
+  };
+
+  insertDirectionAtPosition(measure, direction, options.position);
+
+  return success(result);
+}
+
+export interface AddRehearsalMarkOptions {
+  partIndex: number;
+  measureIndex: number;
+  /** Rehearsal mark text (e.g., 'A', 'B', '1', '2') */
+  text: string;
+  /** Enclosure type */
+  enclosure?: 'square' | 'circle' | 'oval' | 'rectangle' | 'diamond' | 'triangle' | 'pentagon' | 'hexagon' | 'none';
+}
+
+/**
+ * Add a rehearsal mark to a measure.
+ */
+export function addRehearsalMark(
+  score: Score,
+  options: AddRehearsalMarkOptions
+): OperationResult<Score> {
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  if (options.measureIndex < 0 || options.measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const measure = result.parts[options.partIndex].measures[options.measureIndex];
+
+  const direction: DirectionEntry = {
+    type: 'direction',
+    directionTypes: [{
+      kind: 'rehearsal',
+      text: options.text,
+      enclosure: options.enclosure ?? 'square',
+    }],
+    placement: 'above',
+  };
+
+  // Rehearsal marks go at the beginning of the measure
+  insertDirectionAtPosition(measure, direction, 0);
+
+  return success(result);
+}
+
+/**
+ * Helper function to insert a direction at the correct position in a measure.
+ */
+function insertDirectionAtPosition(measure: Measure, direction: DirectionEntry, position: number): void {
+  let currentPosition = 0;
+  let insertIndex = 0;
+
+  for (let i = 0; i < measure.entries.length; i++) {
+    const entry = measure.entries[i];
+
+    if (currentPosition >= position) {
+      insertIndex = i;
+      break;
+    }
+
+    if (entry.type === 'note' && !entry.chord) {
+      currentPosition += entry.duration;
+    } else if (entry.type === 'forward') {
+      currentPosition += entry.duration;
+    } else if (entry.type === 'backup') {
+      currentPosition -= entry.duration;
+    }
+
+    insertIndex = i + 1;
+  }
+
+  measure.entries.splice(insertIndex, 0, direction);
 }
 
 // Re-exports
