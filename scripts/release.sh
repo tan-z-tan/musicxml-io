@@ -113,14 +113,42 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     npm publish
     success "Published to npm! 🎉"
 
+    # 13. Create GitHub Release
+    if command -v gh &> /dev/null; then
+        info "Creating GitHub Release..."
+
+        # Get previous tag for changelog
+        PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+
+        if [[ -n "$PREV_TAG" ]]; then
+            # Generate release notes from commits since last tag
+            RELEASE_NOTES=$(git log "${PREV_TAG}..HEAD" --pretty=format:"- %s" --no-merges | grep -v "chore: release")
+        else
+            RELEASE_NOTES="Initial release"
+        fi
+
+        # Create GitHub release with auto-generated notes
+        gh release create "$NEW_VERSION" \
+            --title "Release ${NEW_VERSION}" \
+            --notes "$RELEASE_NOTES" \
+            && success "GitHub Release created" \
+            || warning "Failed to create GitHub Release (you can create it manually)"
+    else
+        warning "gh CLI not found. Skipping GitHub Release creation."
+        echo "  Install gh: https://cli.github.com/"
+        echo "  Then run: gh release create $NEW_VERSION --title \"Release ${NEW_VERSION}\" --generate-notes"
+    fi
+
     echo ""
     echo "=========================================="
     echo "  Release Complete: ${NEW_VERSION}"
     echo "  https://www.npmjs.com/package/musicxml-io"
+    echo "  https://github.com/tan-z-tan/musicxml-io/releases/tag/${NEW_VERSION}"
     echo "=========================================="
 else
     info "Please push and publish manually:"
     echo "  git push origin $CURRENT_BRANCH"
     echo "  git push origin $NEW_VERSION"
     echo "  npm publish"
+    echo "  gh release create $NEW_VERSION --generate-notes"
 fi
