@@ -43,7 +43,21 @@ import {
   // Accidental operations
   raiseAccidental,
   lowerAccidental,
+  // Tuplet operations
+  createTuplet,
+  removeTuplet,
+  // Beam operations
+  addBeam,
+  removeBeam,
+  autoBeam,
+  // Copy/Paste operations
+  copyNotes,
+  pasteNotes,
+  cutNotes,
+  copyNotesMultiMeasure,
+  pasteNotesMultiMeasure,
   type OperationResult,
+  type NoteSelection,
 } from '../src/operations';
 
 const fixturesPath = join(__dirname, 'fixtures');
@@ -2131,6 +2145,573 @@ describe('Accidental Operations', () => {
           expect(note.pitch?.alter).toBeUndefined(); // Back to natural
         }
       }
+    });
+  });
+});
+
+// ============================================================
+// Tuplet Operations Tests
+// ============================================================
+
+describe('Tuplet Operations', () => {
+  describe('createTuplet', () => {
+    it('should create a triplet from three notes', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = createTuplet(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        startNoteIndex: 0,
+        noteCount: 3,
+        actualNotes: 3,
+        normalNotes: 2,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const entries = result.data.parts[0].measures[0].entries.filter(e => e.type === 'note' && !e.rest);
+        // First 3 notes should have timeModification
+        for (let i = 0; i < 3; i++) {
+          if (entries[i].type === 'note') {
+            expect(entries[i].timeModification).toBeDefined();
+            expect(entries[i].timeModification?.actualNotes).toBe(3);
+            expect(entries[i].timeModification?.normalNotes).toBe(2);
+          }
+        }
+      }
+    });
+
+    it('should add bracket notation to tuplet', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = createTuplet(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        startNoteIndex: 0,
+        noteCount: 3,
+        actualNotes: 3,
+        normalNotes: 2,
+        bracket: true,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const entries = result.data.parts[0].measures[0].entries.filter(e => e.type === 'note' && !e.rest);
+        // First note should have tuplet start
+        if (entries[0].type === 'note') {
+          const tupletNotation = entries[0].notations?.find(n => n.type === 'tuplet');
+          expect(tupletNotation).toBeDefined();
+          if (tupletNotation?.type === 'tuplet') {
+            expect(tupletNotation.tupletType).toBe('start');
+            expect(tupletNotation.bracket).toBe(true);
+          }
+        }
+        // Last note of tuplet should have tuplet stop
+        if (entries[2].type === 'note') {
+          const tupletNotation = entries[2].notations?.find(n => n.type === 'tuplet');
+          expect(tupletNotation).toBeDefined();
+          if (tupletNotation?.type === 'tuplet') {
+            expect(tupletNotation.tupletType).toBe('stop');
+          }
+        }
+      }
+    });
+
+    it('should fail with invalid note count', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = createTuplet(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        startNoteIndex: 0,
+        noteCount: 5, // Only 1 note in measure
+        actualNotes: 3,
+        normalNotes: 2,
+      });
+
+      expect(result.success).toBe(false);
+    });
+
+    it('should fail with invalid part index', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = createTuplet(score, {
+        partIndex: 99,
+        measureIndex: 0,
+        startNoteIndex: 0,
+        noteCount: 3,
+        actualNotes: 3,
+        normalNotes: 2,
+      });
+
+      expect(result.success).toBe(false);
+    });
+  });
+
+  describe('removeTuplet', () => {
+    it('should remove tuplet from notes', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // First create a tuplet
+      const withTuplet = createTuplet(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        startNoteIndex: 0,
+        noteCount: 3,
+        actualNotes: 3,
+        normalNotes: 2,
+        bracket: true,
+      });
+      expect(withTuplet.success).toBe(true);
+      if (!withTuplet.success) return;
+
+      // Then remove it - use noteIndex instead of startNoteIndex
+      const result = removeTuplet(withTuplet.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0, // any note in the tuplet
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const entries = result.data.parts[0].measures[0].entries.filter(e => e.type === 'note' && !e.rest);
+        // Notes should no longer have timeModification
+        for (let i = 0; i < 3; i++) {
+          if (entries[i].type === 'note') {
+            expect(entries[i].timeModification).toBeUndefined();
+          }
+        }
+      }
+    });
+
+    it('should fail when no tuplet exists', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = removeTuplet(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        // Returns NOTE_NOT_FOUND if note doesn't have a tuplet
+        expect(result.errors[0].code).toMatch(/NOTE_NOT_FOUND|TUPLET_NOT_FOUND/);
+      }
+    });
+  });
+});
+
+// ============================================================
+// Beam Operations Tests
+// ============================================================
+
+describe('Beam Operations', () => {
+  describe('addBeam', () => {
+    it('should add beam to consecutive notes', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = addBeam(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        startNoteIndex: 0,
+        noteCount: 2, // Use noteCount instead of endNoteIndex
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const entries = result.data.parts[0].measures[0].entries.filter(e => e.type === 'note' && !e.rest);
+        if (entries[0].type === 'note') {
+          expect(entries[0].beam).toBeDefined();
+          expect(entries[0].beam?.[0]?.type).toBe('begin');
+        }
+        if (entries[1].type === 'note') {
+          expect(entries[1].beam).toBeDefined();
+          expect(entries[1].beam?.[0]?.type).toBe('end');
+        }
+      }
+    });
+
+    it('should add beam across multiple notes', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = addBeam(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        startNoteIndex: 0,
+        noteCount: 4, // 4 notes beamed together
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const entries = result.data.parts[0].measures[0].entries.filter(e => e.type === 'note' && !e.rest);
+        if (entries[0].type === 'note') {
+          expect(entries[0].beam?.[0]?.type).toBe('begin');
+        }
+        // Middle notes should continue
+        if (entries[1].type === 'note') {
+          expect(entries[1].beam?.[0]?.type).toBe('continue');
+        }
+        if (entries[2].type === 'note') {
+          expect(entries[2].beam?.[0]?.type).toBe('continue');
+        }
+        if (entries[3].type === 'note') {
+          expect(entries[3].beam?.[0]?.type).toBe('end');
+        }
+      }
+    });
+
+    it('should fail with invalid note count', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = addBeam(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        startNoteIndex: 0,
+        noteCount: 5, // Only 1 note
+      });
+
+      expect(result.success).toBe(false);
+    });
+  });
+
+  describe('removeBeam', () => {
+    it('should remove beam from notes', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // First add beam
+      const withBeam = addBeam(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        startNoteIndex: 0,
+        noteCount: 2,
+      });
+      expect(withBeam.success).toBe(true);
+      if (!withBeam.success) return;
+
+      // Then remove it - use noteIndex
+      const result = removeBeam(withBeam.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const entries = result.data.parts[0].measures[0].entries.filter(e => e.type === 'note' && !e.rest);
+        if (entries[0].type === 'note') {
+          expect(entries[0].beam).toBeUndefined();
+        }
+        if (entries[1].type === 'note') {
+          expect(entries[1].beam).toBeUndefined();
+        }
+      }
+    });
+
+    it('should fail when no beam exists', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = removeBeam(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        // Returns NOTE_NOT_FOUND or BEAM_NOT_FOUND depending on implementation
+        expect(result.errors[0].code).toMatch(/NOTE_NOT_FOUND|BEAM_NOT_FOUND/);
+      }
+    });
+  });
+
+  describe('autoBeam', () => {
+    it('should automatically beam notes in a measure', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = autoBeam(score, {
+        partIndex: 0,
+        measureIndex: 0,
+      });
+
+      expect(result.success).toBe(true);
+      // The result depends on note durations and time signature
+      // At minimum, it should return a valid score
+      if (result.success) {
+        expect(result.data.parts[0].measures[0]).toBeDefined();
+      }
+    });
+
+    it('should work with specific voice filter', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = autoBeam(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        voice: 1,
+      });
+
+      expect(result.success).toBe(true);
+    });
+  });
+});
+
+// ============================================================
+// Copy/Paste Operations Tests
+// ============================================================
+
+describe('Copy/Paste Operations', () => {
+  describe('copyNotes', () => {
+    it('should copy notes from a measure', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // Get divisions from the score to calculate positions
+      const divisions = score.parts[0].measures[0].attributes?.divisions ?? 1;
+
+      const result = copyNotes(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        startPosition: 0,
+        endPosition: divisions * 2, // Copy 2 beats worth
+        voice: 1,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.notes.length).toBeGreaterThan(0);
+        expect(result.data.source.partIndex).toBe(0);
+        expect(result.data.source.measureIndex).toBe(0);
+      }
+    });
+
+    it('should copy all notes in the range', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const divisions = score.parts[0].measures[0].attributes?.divisions ?? 1;
+
+      const result = copyNotes(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        startPosition: 0,
+        endPosition: divisions * 4, // Full measure (4 beats)
+        voice: 1,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.notes.length).toBeGreaterThan(0);
+      }
+    });
+
+    it('should fail with invalid measure index', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = copyNotes(score, {
+        partIndex: 0,
+        measureIndex: 99,
+        startPosition: 0,
+        endPosition: 4,
+        voice: 1,
+      });
+
+      expect(result.success).toBe(false);
+    });
+  });
+
+  describe('pasteNotes', () => {
+    it('should paste copied notes into a measure', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const divisions = score.parts[0].measures[0].attributes?.divisions ?? 1;
+
+      // First copy notes
+      const copyResult = copyNotes(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        startPosition: 0,
+        endPosition: divisions * 2,
+        voice: 1,
+      });
+      expect(copyResult.success).toBe(true);
+      if (!copyResult.success) return;
+
+      // Then paste to second measure (use correct param names)
+      const pasteResult = pasteNotes(score, {
+        partIndex: 0,
+        measureIndex: 1,
+        position: 0,
+        selection: copyResult.data,
+      });
+
+      expect(pasteResult.success).toBe(true);
+      if (pasteResult.success) {
+        const entries = pasteResult.data.parts[0].measures[1].entries.filter(e => e.type === 'note');
+        expect(entries.length).toBeGreaterThan(0);
+      }
+    });
+
+    it('should fail with invalid target measure', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const divisions = score.parts[0].measures[0].attributes?.divisions ?? 1;
+
+      const copyResult = copyNotes(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        startPosition: 0,
+        endPosition: divisions * 4,
+        voice: 1,
+      });
+      expect(copyResult.success).toBe(true);
+      if (!copyResult.success) return;
+
+      const pasteResult = pasteNotes(score, {
+        partIndex: 0,
+        measureIndex: 99, // Invalid measure
+        position: 0,
+        selection: copyResult.data,
+      });
+
+      expect(pasteResult.success).toBe(false);
+    });
+  });
+
+  describe('cutNotes', () => {
+    it('should cut notes and return selection', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const divisions = score.parts[0].measures[0].attributes?.divisions ?? 1;
+
+      // Count notes before cut
+      const notesBefore = score.parts[0].measures[0].entries.filter(e => e.type === 'note' && !e.rest).length;
+
+      const result = cutNotes(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        startPosition: 0,
+        endPosition: divisions * 2,
+        voice: 1,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        // Selection should have notes
+        expect(result.data.selection.notes.length).toBeGreaterThan(0);
+
+        // Original notes should be replaced with rests
+        const notesAfter = result.data.score.parts[0].measures[0].entries.filter(e => e.type === 'note' && !e.rest);
+        expect(notesAfter.length).toBeLessThan(notesBefore);
+      }
+    });
+
+    it('should allow paste after cut', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const divisions = score.parts[0].measures[0].attributes?.divisions ?? 1;
+
+      // Cut notes from first measure
+      const cutResult = cutNotes(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        startPosition: 0,
+        endPosition: divisions * 2,
+        voice: 1,
+      });
+      expect(cutResult.success).toBe(true);
+      if (!cutResult.success) return;
+
+      // Paste to second measure (use correct param names)
+      const pasteResult = pasteNotes(cutResult.data.score, {
+        partIndex: 0,
+        measureIndex: 1,
+        position: 0,
+        selection: cutResult.data.selection,
+      });
+
+      expect(pasteResult.success).toBe(true);
+    });
+  });
+
+  describe('copyNotesMultiMeasure', () => {
+    it('should copy notes across multiple measures', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = copyNotesMultiMeasure(score, {
+        partIndex: 0,
+        startMeasureIndex: 0,
+        endMeasureIndex: 1,
+        voice: 1,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.measures.length).toBe(2);
+      }
+    });
+
+    it('should fail with invalid measure range', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = copyNotesMultiMeasure(score, {
+        partIndex: 0,
+        startMeasureIndex: 1,
+        endMeasureIndex: 0, // Invalid: end before start
+        voice: 1,
+      });
+
+      expect(result.success).toBe(false);
+    });
+  });
+
+  describe('pasteNotesMultiMeasure', () => {
+    it('should paste multi-measure selection', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // Copy first 2 measures
+      const copyResult = copyNotesMultiMeasure(score, {
+        partIndex: 0,
+        startMeasureIndex: 0,
+        endMeasureIndex: 1,
+        voice: 1,
+      });
+      expect(copyResult.success).toBe(true);
+      if (!copyResult.success) return;
+
+      // Insert measures to have space for paste
+      const withMeasures = insertMeasure(score, { afterMeasure: 2 });
+      const withMeasures2 = insertMeasure(withMeasures, { afterMeasure: 3 });
+
+      // Paste to new location (use correct param names)
+      const pasteResult = pasteNotesMultiMeasure(withMeasures2, {
+        partIndex: 0,
+        startMeasureIndex: 2,
+        selection: copyResult.data,
+      });
+
+      expect(pasteResult.success).toBe(true);
     });
   });
 });
