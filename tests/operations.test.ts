@@ -93,6 +93,20 @@ import {
   addHarmony,
   removeHarmony,
   updateHarmony,
+  // Phase 5: Technical notations, Octave shift, Breath operations
+  addFingering,
+  removeFingering,
+  addBowing,
+  removeBowing,
+  addStringNumber,
+  removeStringNumber,
+  addOctaveShift,
+  stopOctaveShift,
+  removeOctaveShift,
+  addBreathMark,
+  removeBreathMark,
+  addCaesura,
+  removeCaesura,
   type OperationResult,
   type NoteSelection,
 } from '../src/operations';
@@ -4005,6 +4019,544 @@ describe('Expression/Performance Operations', () => {
       if (harmony?.type === 'harmony') {
         expect(harmony.bass).toBeUndefined();
       }
+    });
+  });
+
+  // ============================================================
+  // Phase 5: Technical Notations, Octave Shift, and Breath Operations
+  // ============================================================
+
+  describe('addFingering', () => {
+    it('should add fingering to a note', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = addFingering(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        fingering: '1',
+      });
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      const note = result.data.parts[0].measures[0].entries.find(e => e.type === 'note');
+      if (note?.type === 'note') {
+        expect(note.notations).toBeDefined();
+        const technical = note.notations?.find(n => n.type === 'technical' && n.technical === 'fingering');
+        expect(technical).toBeDefined();
+        if (technical?.type === 'technical' && technical.technical === 'fingering') {
+          expect(technical.fingering).toBe('1');
+        }
+      }
+    });
+
+    it('should add fingering with substitution flag', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = addFingering(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        fingering: '3',
+        substitution: true,
+      });
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      const note = result.data.parts[0].measures[0].entries.find(e => e.type === 'note');
+      if (note?.type === 'note') {
+        const technical = note.notations?.find(n => n.type === 'technical' && n.technical === 'fingering');
+        if (technical?.type === 'technical' && technical.technical === 'fingering') {
+          expect(technical.fingeringSubstitution).toBe(true);
+        }
+      }
+    });
+
+    it('should fail for invalid note index', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = addFingering(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 999,
+        fingering: '1',
+      });
+
+      expect(result.success).toBe(false);
+    });
+  });
+
+  describe('removeFingering', () => {
+    it('should remove fingering from a note', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // Add then remove
+      const addResult = addFingering(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        fingering: '1',
+      });
+      expect(addResult.success).toBe(true);
+      if (!addResult.success) return;
+
+      const removeResult = removeFingering(addResult.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+      expect(removeResult.success).toBe(true);
+      if (!removeResult.success) return;
+
+      const note = removeResult.data.parts[0].measures[0].entries.find(e => e.type === 'note');
+      if (note?.type === 'note') {
+        const technical = note.notations?.find(n => n.type === 'technical' && n.technical === 'fingering');
+        expect(technical).toBeUndefined();
+      }
+    });
+  });
+
+  describe('addBowing', () => {
+    it('should add up-bow to a note', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = addBowing(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        bowingType: 'up-bow',
+      });
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      const note = result.data.parts[0].measures[0].entries.find(e => e.type === 'note');
+      if (note?.type === 'note') {
+        expect(note.notations).toBeDefined();
+        const technical = note.notations?.find(n => n.type === 'technical' && n.technical === 'up-bow');
+        expect(technical).toBeDefined();
+      }
+    });
+
+    it('should add down-bow to a note', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = addBowing(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        bowingType: 'down-bow',
+      });
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      const note = result.data.parts[0].measures[0].entries.find(e => e.type === 'note');
+      if (note?.type === 'note') {
+        const technical = note.notations?.find(n => n.type === 'technical' && n.technical === 'down-bow');
+        expect(technical).toBeDefined();
+      }
+    });
+  });
+
+  describe('removeBowing', () => {
+    it('should remove bowing from a note', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // Add then remove
+      const addResult = addBowing(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        bowingType: 'up-bow',
+      });
+      expect(addResult.success).toBe(true);
+      if (!addResult.success) return;
+
+      const removeResult = removeBowing(addResult.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        bowingType: 'up-bow',
+      });
+      expect(removeResult.success).toBe(true);
+      if (!removeResult.success) return;
+
+      const note = removeResult.data.parts[0].measures[0].entries.find(e => e.type === 'note');
+      if (note?.type === 'note') {
+        const technical = note.notations?.find(n => n.type === 'technical' && n.technical === 'up-bow');
+        expect(technical).toBeUndefined();
+      }
+    });
+  });
+
+  describe('addStringNumber', () => {
+    it('should add string number to a note', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = addStringNumber(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        stringNumber: 1,
+      });
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      const note = result.data.parts[0].measures[0].entries.find(e => e.type === 'note');
+      if (note?.type === 'note') {
+        expect(note.notations).toBeDefined();
+        const technical = note.notations?.find(n => n.type === 'technical' && n.technical === 'string');
+        expect(technical).toBeDefined();
+        if (technical?.type === 'technical' && technical.technical === 'string') {
+          expect(technical.string).toBe(1);
+        }
+      }
+    });
+  });
+
+  describe('removeStringNumber', () => {
+    it('should remove string number from a note', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // Add then remove
+      const addResult = addStringNumber(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+        stringNumber: 1,
+      });
+      expect(addResult.success).toBe(true);
+      if (!addResult.success) return;
+
+      const removeResult = removeStringNumber(addResult.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+      expect(removeResult.success).toBe(true);
+      if (!removeResult.success) return;
+
+      const note = removeResult.data.parts[0].measures[0].entries.find(e => e.type === 'note');
+      if (note?.type === 'note') {
+        const technical = note.notations?.find(n => n.type === 'technical' && n.technical === 'string');
+        expect(technical).toBeUndefined();
+      }
+    });
+  });
+
+  describe('addOctaveShift', () => {
+    it('should add 8va (octave up shift)', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = addOctaveShift(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        position: 0,
+        shiftType: 'down', // down type = 8va (notes written higher)
+      });
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      const measure = result.data.parts[0].measures[0];
+      const direction = measure.entries.find(e => e.type === 'direction');
+      expect(direction).toBeDefined();
+      if (direction?.type === 'direction') {
+        const octaveShift = direction.directionTypes.find(dt => dt.kind === 'octave-shift');
+        expect(octaveShift).toBeDefined();
+        if (octaveShift?.kind === 'octave-shift') {
+          expect(octaveShift.type).toBe('down');
+          expect(octaveShift.size).toBe(8);
+        }
+      }
+    });
+
+    it('should add 8vb (octave down shift)', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = addOctaveShift(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        position: 0,
+        shiftType: 'up', // up type = 8vb (notes written lower)
+      });
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      const measure = result.data.parts[0].measures[0];
+      const direction = measure.entries.find(e => e.type === 'direction');
+      if (direction?.type === 'direction') {
+        const octaveShift = direction.directionTypes.find(dt => dt.kind === 'octave-shift');
+        if (octaveShift?.kind === 'octave-shift') {
+          expect(octaveShift.type).toBe('up');
+        }
+      }
+    });
+
+    it('should add 15ma (two octaves)', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = addOctaveShift(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        position: 0,
+        shiftType: 'down',
+        size: 15,
+      });
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      const measure = result.data.parts[0].measures[0];
+      const direction = measure.entries.find(e => e.type === 'direction');
+      if (direction?.type === 'direction') {
+        const octaveShift = direction.directionTypes.find(dt => dt.kind === 'octave-shift');
+        if (octaveShift?.kind === 'octave-shift') {
+          expect(octaveShift.size).toBe(15);
+        }
+      }
+    });
+  });
+
+  describe('stopOctaveShift', () => {
+    it('should stop an octave shift', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // Add then stop
+      const addResult = addOctaveShift(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        position: 0,
+        shiftType: 'down',
+      });
+      expect(addResult.success).toBe(true);
+      if (!addResult.success) return;
+
+      const stopResult = stopOctaveShift(addResult.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        position: 480, // Stop at end of measure
+      });
+
+      expect(stopResult.success).toBe(true);
+      if (!stopResult.success) return;
+
+      const measure = stopResult.data.parts[0].measures[0];
+      const directions = measure.entries.filter(e => e.type === 'direction');
+      // Should have two directions: start and stop
+      const stopDirection = directions.find(d =>
+        d.type === 'direction' &&
+        d.directionTypes.some(dt => dt.kind === 'octave-shift' && dt.type === 'stop')
+      );
+      expect(stopDirection).toBeDefined();
+    });
+  });
+
+  describe('removeOctaveShift', () => {
+    it('should remove an octave shift', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // Add then remove
+      const addResult = addOctaveShift(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        position: 0,
+        shiftType: 'down',
+      });
+      expect(addResult.success).toBe(true);
+      if (!addResult.success) return;
+
+      const removeResult = removeOctaveShift(addResult.data, {
+        partIndex: 0,
+        measureIndex: 0,
+      });
+
+      expect(removeResult.success).toBe(true);
+      if (!removeResult.success) return;
+
+      const measure = removeResult.data.parts[0].measures[0];
+      const octaveShift = measure.entries.find(e =>
+        e.type === 'direction' &&
+        e.directionTypes.some(dt => dt.kind === 'octave-shift')
+      );
+      expect(octaveShift).toBeUndefined();
+    });
+  });
+
+  describe('addBreathMark', () => {
+    it('should add a breath mark to a note', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = addBreathMark(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      const note = result.data.parts[0].measures[0].entries.find(e => e.type === 'note');
+      if (note?.type === 'note') {
+        expect(note.notations).toBeDefined();
+        const breathMark = note.notations?.find(n => n.type === 'articulation' && n.articulation === 'breath-mark');
+        expect(breathMark).toBeDefined();
+      }
+    });
+
+    it('should not add duplicate breath mark', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const firstResult = addBreathMark(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+      expect(firstResult.success).toBe(true);
+      if (!firstResult.success) return;
+
+      const secondResult = addBreathMark(firstResult.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+      expect(secondResult.success).toBe(false);
+    });
+  });
+
+  describe('removeBreathMark', () => {
+    it('should remove a breath mark from a note', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // Add then remove
+      const addResult = addBreathMark(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+      expect(addResult.success).toBe(true);
+      if (!addResult.success) return;
+
+      const removeResult = removeBreathMark(addResult.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+      expect(removeResult.success).toBe(true);
+      if (!removeResult.success) return;
+
+      const note = removeResult.data.parts[0].measures[0].entries.find(e => e.type === 'note');
+      if (note?.type === 'note') {
+        const breathMark = note.notations?.find(n => n.type === 'articulation' && n.articulation === 'breath-mark');
+        expect(breathMark).toBeUndefined();
+      }
+    });
+  });
+
+  describe('addCaesura', () => {
+    it('should add a caesura to a note', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = addCaesura(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      const note = result.data.parts[0].measures[0].entries.find(e => e.type === 'note');
+      if (note?.type === 'note') {
+        expect(note.notations).toBeDefined();
+        const caesura = note.notations?.find(n => n.type === 'articulation' && n.articulation === 'caesura');
+        expect(caesura).toBeDefined();
+      }
+    });
+
+    it('should not add duplicate caesura', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const firstResult = addCaesura(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+      expect(firstResult.success).toBe(true);
+      if (!firstResult.success) return;
+
+      const secondResult = addCaesura(firstResult.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+      expect(secondResult.success).toBe(false);
+    });
+  });
+
+  describe('removeCaesura', () => {
+    it('should remove a caesura from a note', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // Add then remove
+      const addResult = addCaesura(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+      expect(addResult.success).toBe(true);
+      if (!addResult.success) return;
+
+      const removeResult = removeCaesura(addResult.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+      expect(removeResult.success).toBe(true);
+      if (!removeResult.success) return;
+
+      const note = removeResult.data.parts[0].measures[0].entries.find(e => e.type === 'note');
+      if (note?.type === 'note') {
+        const caesura = note.notations?.find(n => n.type === 'articulation' && n.articulation === 'caesura');
+        expect(caesura).toBeUndefined();
+      }
+    });
+
+    it('should fail when caesura not found', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = removeCaesura(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        noteIndex: 0,
+      });
+      expect(result.success).toBe(false);
     });
   });
 });

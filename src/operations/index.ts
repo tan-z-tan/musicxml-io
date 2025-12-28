@@ -5401,5 +5401,853 @@ export function updateHarmony(
   return success(result);
 }
 
+// ============================================================
+// Phase 5: Technical Notations, Octave Shift, and Breath Operations
+// ============================================================
+
+export interface AddFingeringOptions {
+  partIndex: number;
+  measureIndex: number;
+  noteIndex: number;
+  fingering: string; // "1", "2", "3", "4", "5", or combinations
+  substitution?: boolean;
+  alternate?: boolean;
+  placement?: 'above' | 'below';
+}
+
+/**
+ * Add fingering notation to a note.
+ * Fingering is typically indicated 1,2,3,4,5.
+ */
+export function addFingering(
+  score: Score,
+  options: AddFingeringOptions
+): OperationResult<Score> {
+  const { partIndex, measureIndex, noteIndex, fingering, substitution = false, alternate = false, placement } = options;
+
+  if (partIndex < 0 || partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${partIndex} out of bounds`, { partIndex })]);
+  }
+
+  const part = score.parts[partIndex];
+  if (measureIndex < 0 || measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${measureIndex} out of bounds`, { partIndex, measureIndex })]);
+  }
+
+  const measure = part.measures[measureIndex];
+
+  // Find the target note
+  let noteCount = 0;
+  let targetEntryIndex = -1;
+
+  for (let i = 0; i < measure.entries.length; i++) {
+    const entry = measure.entries[i];
+    if (entry.type === 'note' && !entry.chord && !entry.rest) {
+      if (noteCount === noteIndex) {
+        targetEntryIndex = i;
+        break;
+      }
+      noteCount++;
+    }
+  }
+
+  if (targetEntryIndex < 0) {
+    return failure([operationError('NOTE_NOT_FOUND', `Note at index ${noteIndex} not found`, { partIndex, measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const resultNote = result.parts[partIndex].measures[measureIndex].entries[targetEntryIndex] as NoteEntry;
+
+  if (!resultNote.notations) {
+    resultNote.notations = [];
+  }
+
+  resultNote.notations.push({
+    type: 'technical',
+    technical: 'fingering',
+    fingering,
+    fingeringSubstitution: substitution || undefined,
+    fingeringAlternate: alternate || undefined,
+    placement,
+  });
+
+  return success(result);
+}
+
+export interface RemoveFingeringOptions {
+  partIndex: number;
+  measureIndex: number;
+  noteIndex: number;
+}
+
+/**
+ * Remove fingering notation from a note.
+ */
+export function removeFingering(
+  score: Score,
+  options: RemoveFingeringOptions
+): OperationResult<Score> {
+  const { partIndex, measureIndex, noteIndex } = options;
+
+  if (partIndex < 0 || partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${partIndex} out of bounds`, { partIndex })]);
+  }
+
+  const part = score.parts[partIndex];
+  if (measureIndex < 0 || measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${measureIndex} out of bounds`, { partIndex, measureIndex })]);
+  }
+
+  const measure = part.measures[measureIndex];
+
+  // Find the target note
+  let noteCount = 0;
+  let targetEntryIndex = -1;
+
+  for (let i = 0; i < measure.entries.length; i++) {
+    const entry = measure.entries[i];
+    if (entry.type === 'note' && !entry.chord && !entry.rest) {
+      if (noteCount === noteIndex) {
+        targetEntryIndex = i;
+        break;
+      }
+      noteCount++;
+    }
+  }
+
+  if (targetEntryIndex < 0) {
+    return failure([operationError('NOTE_NOT_FOUND', `Note at index ${noteIndex} not found`, { partIndex, measureIndex })]);
+  }
+
+  const targetEntry = measure.entries[targetEntryIndex];
+  if (targetEntry.type !== 'note' || !targetEntry.notations) {
+    return failure([operationError('NOTE_NOT_FOUND', `No notations found on note`, { partIndex, measureIndex })]);
+  }
+
+  const fingeringIndex = targetEntry.notations.findIndex(
+    n => n.type === 'technical' && n.technical === 'fingering'
+  );
+  if (fingeringIndex < 0) {
+    return failure([operationError('NOTE_NOT_FOUND', `No fingering found on note`, { partIndex, measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const resultNote = result.parts[partIndex].measures[measureIndex].entries[targetEntryIndex] as NoteEntry;
+  resultNote.notations!.splice(fingeringIndex, 1);
+
+  if (resultNote.notations!.length === 0) {
+    delete resultNote.notations;
+  }
+
+  return success(result);
+}
+
+export type BowingType = 'up-bow' | 'down-bow';
+
+export interface AddBowingOptions {
+  partIndex: number;
+  measureIndex: number;
+  noteIndex: number;
+  bowingType: BowingType;
+  placement?: 'above' | 'below';
+}
+
+/**
+ * Add bowing notation (up-bow or down-bow) to a note.
+ * Used for bowed string instruments.
+ */
+export function addBowing(
+  score: Score,
+  options: AddBowingOptions
+): OperationResult<Score> {
+  const { partIndex, measureIndex, noteIndex, bowingType, placement } = options;
+
+  if (partIndex < 0 || partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${partIndex} out of bounds`, { partIndex })]);
+  }
+
+  const part = score.parts[partIndex];
+  if (measureIndex < 0 || measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${measureIndex} out of bounds`, { partIndex, measureIndex })]);
+  }
+
+  const measure = part.measures[measureIndex];
+
+  // Find the target note
+  let noteCount = 0;
+  let targetEntryIndex = -1;
+
+  for (let i = 0; i < measure.entries.length; i++) {
+    const entry = measure.entries[i];
+    if (entry.type === 'note' && !entry.chord && !entry.rest) {
+      if (noteCount === noteIndex) {
+        targetEntryIndex = i;
+        break;
+      }
+      noteCount++;
+    }
+  }
+
+  if (targetEntryIndex < 0) {
+    return failure([operationError('NOTE_NOT_FOUND', `Note at index ${noteIndex} not found`, { partIndex, measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const resultNote = result.parts[partIndex].measures[measureIndex].entries[targetEntryIndex] as NoteEntry;
+
+  if (!resultNote.notations) {
+    resultNote.notations = [];
+  }
+
+  resultNote.notations.push({
+    type: 'technical',
+    technical: bowingType,
+    placement,
+  });
+
+  return success(result);
+}
+
+export interface RemoveBowingOptions {
+  partIndex: number;
+  measureIndex: number;
+  noteIndex: number;
+  bowingType?: BowingType; // If not specified, removes any bowing
+}
+
+/**
+ * Remove bowing notation from a note.
+ */
+export function removeBowing(
+  score: Score,
+  options: RemoveBowingOptions
+): OperationResult<Score> {
+  const { partIndex, measureIndex, noteIndex, bowingType } = options;
+
+  if (partIndex < 0 || partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${partIndex} out of bounds`, { partIndex })]);
+  }
+
+  const part = score.parts[partIndex];
+  if (measureIndex < 0 || measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${measureIndex} out of bounds`, { partIndex, measureIndex })]);
+  }
+
+  const measure = part.measures[measureIndex];
+
+  // Find the target note
+  let noteCount = 0;
+  let targetEntryIndex = -1;
+
+  for (let i = 0; i < measure.entries.length; i++) {
+    const entry = measure.entries[i];
+    if (entry.type === 'note' && !entry.chord && !entry.rest) {
+      if (noteCount === noteIndex) {
+        targetEntryIndex = i;
+        break;
+      }
+      noteCount++;
+    }
+  }
+
+  if (targetEntryIndex < 0) {
+    return failure([operationError('NOTE_NOT_FOUND', `Note at index ${noteIndex} not found`, { partIndex, measureIndex })]);
+  }
+
+  const targetEntry = measure.entries[targetEntryIndex];
+  if (targetEntry.type !== 'note' || !targetEntry.notations) {
+    return failure([operationError('NOTE_NOT_FOUND', `No notations found on note`, { partIndex, measureIndex })]);
+  }
+
+  const bowingIndex = targetEntry.notations.findIndex(n => {
+    if (n.type !== 'technical') return false;
+    if (bowingType) return n.technical === bowingType;
+    return n.technical === 'up-bow' || n.technical === 'down-bow';
+  });
+
+  if (bowingIndex < 0) {
+    return failure([operationError('NOTE_NOT_FOUND', `No bowing found on note`, { partIndex, measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const resultNote = result.parts[partIndex].measures[measureIndex].entries[targetEntryIndex] as NoteEntry;
+  resultNote.notations!.splice(bowingIndex, 1);
+
+  if (resultNote.notations!.length === 0) {
+    delete resultNote.notations;
+  }
+
+  return success(result);
+}
+
+export interface AddStringNumberOptions {
+  partIndex: number;
+  measureIndex: number;
+  noteIndex: number;
+  stringNumber: number;
+  placement?: 'above' | 'below';
+}
+
+/**
+ * Add string number notation to a note.
+ * Used for fretted instruments and bowed strings.
+ */
+export function addStringNumber(
+  score: Score,
+  options: AddStringNumberOptions
+): OperationResult<Score> {
+  const { partIndex, measureIndex, noteIndex, stringNumber, placement } = options;
+
+  if (partIndex < 0 || partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${partIndex} out of bounds`, { partIndex })]);
+  }
+
+  const part = score.parts[partIndex];
+  if (measureIndex < 0 || measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${measureIndex} out of bounds`, { partIndex, measureIndex })]);
+  }
+
+  if (stringNumber < 1) {
+    return failure([operationError('INVALID_POSITION', `String number must be positive`, { partIndex, measureIndex })]);
+  }
+
+  const measure = part.measures[measureIndex];
+
+  // Find the target note
+  let noteCount = 0;
+  let targetEntryIndex = -1;
+
+  for (let i = 0; i < measure.entries.length; i++) {
+    const entry = measure.entries[i];
+    if (entry.type === 'note' && !entry.chord && !entry.rest) {
+      if (noteCount === noteIndex) {
+        targetEntryIndex = i;
+        break;
+      }
+      noteCount++;
+    }
+  }
+
+  if (targetEntryIndex < 0) {
+    return failure([operationError('NOTE_NOT_FOUND', `Note at index ${noteIndex} not found`, { partIndex, measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const resultNote = result.parts[partIndex].measures[measureIndex].entries[targetEntryIndex] as NoteEntry;
+
+  if (!resultNote.notations) {
+    resultNote.notations = [];
+  }
+
+  resultNote.notations.push({
+    type: 'technical',
+    technical: 'string',
+    string: stringNumber,
+    placement,
+  });
+
+  return success(result);
+}
+
+export interface RemoveStringNumberOptions {
+  partIndex: number;
+  measureIndex: number;
+  noteIndex: number;
+}
+
+/**
+ * Remove string number notation from a note.
+ */
+export function removeStringNumber(
+  score: Score,
+  options: RemoveStringNumberOptions
+): OperationResult<Score> {
+  const { partIndex, measureIndex, noteIndex } = options;
+
+  if (partIndex < 0 || partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${partIndex} out of bounds`, { partIndex })]);
+  }
+
+  const part = score.parts[partIndex];
+  if (measureIndex < 0 || measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${measureIndex} out of bounds`, { partIndex, measureIndex })]);
+  }
+
+  const measure = part.measures[measureIndex];
+
+  // Find the target note
+  let noteCount = 0;
+  let targetEntryIndex = -1;
+
+  for (let i = 0; i < measure.entries.length; i++) {
+    const entry = measure.entries[i];
+    if (entry.type === 'note' && !entry.chord && !entry.rest) {
+      if (noteCount === noteIndex) {
+        targetEntryIndex = i;
+        break;
+      }
+      noteCount++;
+    }
+  }
+
+  if (targetEntryIndex < 0) {
+    return failure([operationError('NOTE_NOT_FOUND', `Note at index ${noteIndex} not found`, { partIndex, measureIndex })]);
+  }
+
+  const targetEntry = measure.entries[targetEntryIndex];
+  if (targetEntry.type !== 'note' || !targetEntry.notations) {
+    return failure([operationError('NOTE_NOT_FOUND', `No notations found on note`, { partIndex, measureIndex })]);
+  }
+
+  const stringIndex = targetEntry.notations.findIndex(
+    n => n.type === 'technical' && n.technical === 'string'
+  );
+
+  if (stringIndex < 0) {
+    return failure([operationError('NOTE_NOT_FOUND', `No string number found on note`, { partIndex, measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const resultNote = result.parts[partIndex].measures[measureIndex].entries[targetEntryIndex] as NoteEntry;
+  resultNote.notations!.splice(stringIndex, 1);
+
+  if (resultNote.notations!.length === 0) {
+    delete resultNote.notations;
+  }
+
+  return success(result);
+}
+
+export type OctaveShiftType = 'up' | 'down';
+
+export interface AddOctaveShiftOptions {
+  partIndex: number;
+  measureIndex: number;
+  position: number;
+  shiftType: OctaveShiftType;
+  size?: number; // 8 for one octave, 15 for two octaves
+}
+
+/**
+ * Add an octave shift (8va/8vb) direction.
+ * Type 'down' means notes appear higher than sounding (8va).
+ * Type 'up' means notes appear lower than sounding (8vb).
+ */
+export function addOctaveShift(
+  score: Score,
+  options: AddOctaveShiftOptions
+): OperationResult<Score> {
+  const { partIndex, measureIndex, position, shiftType, size = 8 } = options;
+
+  if (partIndex < 0 || partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${partIndex} out of bounds`, { partIndex })]);
+  }
+
+  const part = score.parts[partIndex];
+  if (measureIndex < 0 || measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${measureIndex} out of bounds`, { partIndex, measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const measure = result.parts[partIndex].measures[measureIndex];
+
+  const direction: DirectionEntry = {
+    type: 'direction',
+    directionTypes: [{
+      kind: 'octave-shift',
+      type: shiftType,
+      size,
+    }],
+    placement: shiftType === 'down' ? 'above' : 'below',
+  };
+
+  insertDirectionAtPosition(measure, direction, position);
+
+  return success(result);
+}
+
+export interface StopOctaveShiftOptions {
+  partIndex: number;
+  measureIndex: number;
+  position: number;
+  size?: number;
+}
+
+/**
+ * Stop an octave shift at the specified position.
+ */
+export function stopOctaveShift(
+  score: Score,
+  options: StopOctaveShiftOptions
+): OperationResult<Score> {
+  const { partIndex, measureIndex, position, size = 8 } = options;
+
+  if (partIndex < 0 || partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${partIndex} out of bounds`, { partIndex })]);
+  }
+
+  const part = score.parts[partIndex];
+  if (measureIndex < 0 || measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${measureIndex} out of bounds`, { partIndex, measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const measure = result.parts[partIndex].measures[measureIndex];
+
+  const direction: DirectionEntry = {
+    type: 'direction',
+    directionTypes: [{
+      kind: 'octave-shift',
+      type: 'stop',
+      size,
+    }],
+  };
+
+  insertDirectionAtPosition(measure, direction, position);
+
+  return success(result);
+}
+
+export interface RemoveOctaveShiftOptions {
+  partIndex: number;
+  measureIndex: number;
+  octaveShiftIndex?: number; // Index among octave-shift directions; removes first if not specified
+}
+
+/**
+ * Remove an octave shift direction from a measure.
+ */
+export function removeOctaveShift(
+  score: Score,
+  options: RemoveOctaveShiftOptions
+): OperationResult<Score> {
+  const { partIndex, measureIndex, octaveShiftIndex = 0 } = options;
+
+  if (partIndex < 0 || partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${partIndex} out of bounds`, { partIndex })]);
+  }
+
+  const part = score.parts[partIndex];
+  if (measureIndex < 0 || measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${measureIndex} out of bounds`, { partIndex, measureIndex })]);
+  }
+
+  const measure = part.measures[measureIndex];
+
+  // Find the octave-shift direction by index
+  let shiftCount = 0;
+  let targetEntryIndex = -1;
+
+  for (let i = 0; i < measure.entries.length; i++) {
+    const entry = measure.entries[i];
+    if (entry.type === 'direction') {
+      const hasOctaveShift = entry.directionTypes.some(dt => dt.kind === 'octave-shift');
+      if (hasOctaveShift) {
+        if (shiftCount === octaveShiftIndex) {
+          targetEntryIndex = i;
+          break;
+        }
+        shiftCount++;
+      }
+    }
+  }
+
+  if (targetEntryIndex < 0) {
+    return failure([operationError('NOTE_NOT_FOUND', `Octave shift at index ${octaveShiftIndex} not found`, { partIndex, measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  result.parts[partIndex].measures[measureIndex].entries.splice(targetEntryIndex, 1);
+
+  return success(result);
+}
+
+export type BreathMarkValue = 'comma' | 'tick' | 'upbow' | 'salzedo';
+
+export interface AddBreathMarkOptions {
+  partIndex: number;
+  measureIndex: number;
+  noteIndex: number;
+  breathMarkType?: BreathMarkValue;
+  placement?: 'above' | 'below';
+}
+
+/**
+ * Add a breath mark to a note.
+ * Breath marks indicate where a performer should breathe.
+ */
+export function addBreathMark(
+  score: Score,
+  options: AddBreathMarkOptions
+): OperationResult<Score> {
+  const { partIndex, measureIndex, noteIndex, placement = 'above' } = options;
+
+  if (partIndex < 0 || partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${partIndex} out of bounds`, { partIndex })]);
+  }
+
+  const part = score.parts[partIndex];
+  if (measureIndex < 0 || measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${measureIndex} out of bounds`, { partIndex, measureIndex })]);
+  }
+
+  const measure = part.measures[measureIndex];
+
+  // Find the target note
+  let noteCount = 0;
+  let targetEntryIndex = -1;
+
+  for (let i = 0; i < measure.entries.length; i++) {
+    const entry = measure.entries[i];
+    if (entry.type === 'note' && !entry.chord && !entry.rest) {
+      if (noteCount === noteIndex) {
+        targetEntryIndex = i;
+        break;
+      }
+      noteCount++;
+    }
+  }
+
+  if (targetEntryIndex < 0) {
+    return failure([operationError('NOTE_NOT_FOUND', `Note at index ${noteIndex} not found`, { partIndex, measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const resultNote = result.parts[partIndex].measures[measureIndex].entries[targetEntryIndex] as NoteEntry;
+
+  if (!resultNote.notations) {
+    resultNote.notations = [];
+  }
+
+  // Check if breath mark already exists
+  const existingBreathMark = resultNote.notations.find(
+    n => n.type === 'articulation' && n.articulation === 'breath-mark'
+  );
+  if (existingBreathMark) {
+    return failure([operationError('ARTICULATION_ALREADY_EXISTS', `Breath mark already exists on note`, { partIndex, measureIndex })]);
+  }
+
+  resultNote.notations.push({
+    type: 'articulation',
+    articulation: 'breath-mark',
+    placement,
+  });
+
+  return success(result);
+}
+
+export interface RemoveBreathMarkOptions {
+  partIndex: number;
+  measureIndex: number;
+  noteIndex: number;
+}
+
+/**
+ * Remove a breath mark from a note.
+ */
+export function removeBreathMark(
+  score: Score,
+  options: RemoveBreathMarkOptions
+): OperationResult<Score> {
+  const { partIndex, measureIndex, noteIndex } = options;
+
+  if (partIndex < 0 || partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${partIndex} out of bounds`, { partIndex })]);
+  }
+
+  const part = score.parts[partIndex];
+  if (measureIndex < 0 || measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${measureIndex} out of bounds`, { partIndex, measureIndex })]);
+  }
+
+  const measure = part.measures[measureIndex];
+
+  // Find the target note
+  let noteCount = 0;
+  let targetEntryIndex = -1;
+
+  for (let i = 0; i < measure.entries.length; i++) {
+    const entry = measure.entries[i];
+    if (entry.type === 'note' && !entry.chord && !entry.rest) {
+      if (noteCount === noteIndex) {
+        targetEntryIndex = i;
+        break;
+      }
+      noteCount++;
+    }
+  }
+
+  if (targetEntryIndex < 0) {
+    return failure([operationError('NOTE_NOT_FOUND', `Note at index ${noteIndex} not found`, { partIndex, measureIndex })]);
+  }
+
+  const targetEntry = measure.entries[targetEntryIndex];
+  if (targetEntry.type !== 'note' || !targetEntry.notations) {
+    return failure([operationError('ARTICULATION_NOT_FOUND', `No notations found on note`, { partIndex, measureIndex })]);
+  }
+
+  const breathMarkIndex = targetEntry.notations.findIndex(
+    n => n.type === 'articulation' && n.articulation === 'breath-mark'
+  );
+
+  if (breathMarkIndex < 0) {
+    return failure([operationError('ARTICULATION_NOT_FOUND', `No breath mark found on note`, { partIndex, measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const resultNote = result.parts[partIndex].measures[measureIndex].entries[targetEntryIndex] as NoteEntry;
+  resultNote.notations!.splice(breathMarkIndex, 1);
+
+  if (resultNote.notations!.length === 0) {
+    delete resultNote.notations;
+  }
+
+  return success(result);
+}
+
+export type CaesuraValue = 'normal' | 'thick' | 'short' | 'curved' | 'single';
+
+export interface AddCaesuraOptions {
+  partIndex: number;
+  measureIndex: number;
+  noteIndex: number;
+  caesuraType?: CaesuraValue;
+  placement?: 'above' | 'below';
+}
+
+/**
+ * Add a caesura to a note.
+ * A caesura indicates a brief, silent pause.
+ * It is notated using a "railroad tracks" symbol.
+ */
+export function addCaesura(
+  score: Score,
+  options: AddCaesuraOptions
+): OperationResult<Score> {
+  const { partIndex, measureIndex, noteIndex, placement = 'above' } = options;
+
+  if (partIndex < 0 || partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${partIndex} out of bounds`, { partIndex })]);
+  }
+
+  const part = score.parts[partIndex];
+  if (measureIndex < 0 || measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${measureIndex} out of bounds`, { partIndex, measureIndex })]);
+  }
+
+  const measure = part.measures[measureIndex];
+
+  // Find the target note
+  let noteCount = 0;
+  let targetEntryIndex = -1;
+
+  for (let i = 0; i < measure.entries.length; i++) {
+    const entry = measure.entries[i];
+    if (entry.type === 'note' && !entry.chord && !entry.rest) {
+      if (noteCount === noteIndex) {
+        targetEntryIndex = i;
+        break;
+      }
+      noteCount++;
+    }
+  }
+
+  if (targetEntryIndex < 0) {
+    return failure([operationError('NOTE_NOT_FOUND', `Note at index ${noteIndex} not found`, { partIndex, measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const resultNote = result.parts[partIndex].measures[measureIndex].entries[targetEntryIndex] as NoteEntry;
+
+  if (!resultNote.notations) {
+    resultNote.notations = [];
+  }
+
+  // Check if caesura already exists
+  const existingCaesura = resultNote.notations.find(
+    n => n.type === 'articulation' && n.articulation === 'caesura'
+  );
+  if (existingCaesura) {
+    return failure([operationError('ARTICULATION_ALREADY_EXISTS', `Caesura already exists on note`, { partIndex, measureIndex })]);
+  }
+
+  resultNote.notations.push({
+    type: 'articulation',
+    articulation: 'caesura',
+    placement,
+  });
+
+  return success(result);
+}
+
+export interface RemoveCaesuraOptions {
+  partIndex: number;
+  measureIndex: number;
+  noteIndex: number;
+}
+
+/**
+ * Remove a caesura from a note.
+ */
+export function removeCaesura(
+  score: Score,
+  options: RemoveCaesuraOptions
+): OperationResult<Score> {
+  const { partIndex, measureIndex, noteIndex } = options;
+
+  if (partIndex < 0 || partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${partIndex} out of bounds`, { partIndex })]);
+  }
+
+  const part = score.parts[partIndex];
+  if (measureIndex < 0 || measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${measureIndex} out of bounds`, { partIndex, measureIndex })]);
+  }
+
+  const measure = part.measures[measureIndex];
+
+  // Find the target note
+  let noteCount = 0;
+  let targetEntryIndex = -1;
+
+  for (let i = 0; i < measure.entries.length; i++) {
+    const entry = measure.entries[i];
+    if (entry.type === 'note' && !entry.chord && !entry.rest) {
+      if (noteCount === noteIndex) {
+        targetEntryIndex = i;
+        break;
+      }
+      noteCount++;
+    }
+  }
+
+  if (targetEntryIndex < 0) {
+    return failure([operationError('NOTE_NOT_FOUND', `Note at index ${noteIndex} not found`, { partIndex, measureIndex })]);
+  }
+
+  const targetEntry = measure.entries[targetEntryIndex];
+  if (targetEntry.type !== 'note' || !targetEntry.notations) {
+    return failure([operationError('ARTICULATION_NOT_FOUND', `No notations found on note`, { partIndex, measureIndex })]);
+  }
+
+  const caesuraIndex = targetEntry.notations.findIndex(
+    n => n.type === 'articulation' && n.articulation === 'caesura'
+  );
+
+  if (caesuraIndex < 0) {
+    return failure([operationError('ARTICULATION_NOT_FOUND', `No caesura found on note`, { partIndex, measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const resultNote = result.parts[partIndex].measures[measureIndex].entries[targetEntryIndex] as NoteEntry;
+  resultNote.notations!.splice(caesuraIndex, 1);
+
+  if (resultNote.notations!.length === 0) {
+    delete resultNote.notations;
+  }
+
+  return success(result);
+}
+
 // Re-exports
 export type { ValidationError } from '../validator';
