@@ -69,6 +69,8 @@ const transposed = transpose(score, 2);  // up 2 semitones
 const output = serialize(transposed);
 ```
 
+⚠️ **Warning**: This library's API is not yet stable and may change between versions.
+
 ### File I/O (Node.js)
 
 ```typescript
