@@ -380,8 +380,10 @@ function serializeSystemLayout(layout: SystemLayout, indent: string): string[] {
 function serializeCredit(credit: Credit, indent: string): string[] {
   const lines: string[] = [];
 
-  const pageAttr = credit.page !== undefined ? ` page="${credit.page}"` : '';
-  lines.push(`${indent}<credit${pageAttr}>`);
+  let attrs = '';
+  if (credit._id) attrs += ` id="${escapeXml(credit._id)}"`;
+  if (credit.page !== undefined) attrs += ` page="${credit.page}"`;
+  lines.push(`${indent}<credit${attrs}>`);
 
   if (credit.creditType) {
     for (const ct of credit.creditType) {
@@ -545,6 +547,7 @@ function serializePartGroup(group: PartGroup, indent: string): string[] {
 
   let attrs = ` type="${group.groupType}"`;
   if (group.number !== undefined) attrs += ` number="${group.number}"`;
+  if (group._id) attrs += ` id="${escapeXml(group._id)}"`;
   lines.push(`${indent}<part-group${attrs}>`);
 
   if (group.groupName) {
@@ -601,6 +604,7 @@ function serializeMeasure(measure: Measure, indent: string): string[] {
   const lines: string[] = [];
 
   let attrs = ` number="${measure.number}"`;
+  if (measure._id) attrs += ` id="${escapeXml(measure._id)}"`;
   if (measure.width !== undefined) attrs += ` width="${measure.width}"`;
   if (measure.implicit) attrs += ` implicit="yes"`;
   lines.push(`${indent}<measure${attrs}>`);
@@ -699,10 +703,11 @@ function serializePrint(print: Print, indent: string): string[] {
   return lines;
 }
 
-function serializeAttributes(attrs: MeasureAttributes, indent: string): string[] {
+function serializeAttributes(attrs: MeasureAttributes, indent: string, id?: string): string[] {
   const lines: string[] = [];
 
-  lines.push(`${indent}<attributes>`);
+  const idAttr = id ? ` id="${escapeXml(id)}"` : '';
+  lines.push(`${indent}<attributes${idAttr}>`);
 
   if (attrs.divisions !== undefined) {
     lines.push(`${indent}  <divisions>${attrs.divisions}</divisions>`);
@@ -886,7 +891,7 @@ function serializeEntry(entry: MeasureEntry, indent: string): string[] {
     case 'sound':
       return serializeSound(entry, indent);
     case 'attributes':
-      return serializeAttributes((entry as AttributesEntry).attributes, indent);
+      return serializeAttributes((entry as AttributesEntry).attributes, indent, (entry as AttributesEntry)._id);
     default:
       return [];
   }
@@ -897,6 +902,7 @@ function serializeNote(note: NoteEntry, indent: string): string[] {
 
   // Build note attributes
   const noteAttrs = buildAttrs({
+    'id': note._id,
     'default-x': note.defaultX,
     'default-y': note.defaultY,
     'relative-x': note.relativeX,
@@ -1466,7 +1472,8 @@ function serializeBackup(backup: BackupEntry, indent: string): string[] {
 function serializeForward(forward: ForwardEntry, indent: string): string[] {
   const lines: string[] = [];
 
-  lines.push(`${indent}<forward>`);
+  const idAttr = forward._id ? ` id="${escapeXml(forward._id)}"` : '';
+  lines.push(`${indent}<forward${idAttr}>`);
   lines.push(`${indent}  <duration>${forward.duration}</duration>`);
 
   if (forward.voice !== undefined) {
@@ -1486,6 +1493,7 @@ function serializeDirection(direction: DirectionEntry, indent: string): string[]
   const lines: string[] = [];
 
   let attrs = '';
+  if (direction._id) attrs += ` id="${escapeXml(direction._id)}"`;
   if (direction.placement) attrs += ` placement="${direction.placement}"`;
   if (direction.directive) attrs += ' directive="yes"';
   if (direction.system) attrs += ` system="${direction.system}"`;
@@ -1779,7 +1787,9 @@ function serializeDirectionType(dirType: DirectionType, indent: string): string[
 function serializeBarline(barline: Barline, indent: string): string[] {
   const lines: string[] = [];
 
-  lines.push(`${indent}<barline location="${barline.location}">`);
+  let attrs = ` location="${barline.location}"`;
+  if (barline._id) attrs += ` id="${escapeXml(barline._id)}"`;
+  lines.push(`${indent}<barline${attrs}>`);
 
   if (barline.barStyle) {
     lines.push(`${indent}  <bar-style>${barline.barStyle}</bar-style>`);
@@ -1917,6 +1927,7 @@ function serializeHarmony(harmony: HarmonyEntry, indent: string): string[] {
   const lines: string[] = [];
 
   const attrs = buildAttrs({
+    id: harmony._id,
     placement: harmony.placement,
     'print-frame': harmony.printFrame,
     'default-y': harmony.defaultY,
@@ -2012,6 +2023,7 @@ function serializeFiguredBass(fb: FiguredBassEntry, indent: string): string[] {
   const lines: string[] = [];
 
   let attrs = '';
+  if (fb._id) attrs += ` id="${escapeXml(fb._id)}"`;
   if (fb.parentheses) attrs += ' parentheses="yes"';
   lines.push(`${indent}<figured-bass${attrs}>`);
 
@@ -2049,6 +2061,7 @@ function serializeSound(sound: SoundEntry, indent: string): string[] {
   const lines: string[] = [];
   const attrs: string[] = [];
 
+  if (sound._id) attrs.push(`id="${escapeXml(sound._id)}"`);
   if (sound.tempo !== undefined) attrs.push(`tempo="${sound.tempo}"`);
   if (sound.dynamics !== undefined) attrs.push(`dynamics="${sound.dynamics}"`);
   if (sound.dacapo) attrs.push('dacapo="yes"');
@@ -2083,7 +2096,7 @@ function serializeSound(sound: SoundEntry, indent: string): string[] {
     }
     lines.push(`${indent}  </swing>`);
     lines.push(`${indent}</sound>`);
-  } else if (attrs.length === 0) {
+  } else if (attrs.length === 0 && !sound._id) {
     lines.push(`${indent}<sound/>`);
   } else {
     lines.push(`${indent}<sound${attrStr}/>`);
