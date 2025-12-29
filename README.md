@@ -103,7 +103,7 @@ import { findNotes, getAllNotes, getMeasureCount, getHarmonies } from 'musicxml-
 const notes = getAllNotes(score);
 const quarterNotes = findNotes(score, { noteType: 'quarter' });
 const count = getMeasureCount(score);
-const chords = getHarmonies(score);
+const harmonies = getHarmonies(score);  // chord symbols (C7, Dm, etc.)
 ```
 
 ### Accessors
@@ -112,8 +112,9 @@ Entry-level helpers for working with individual notes, directions, and parts:
 
 ```typescript
 import {
+  getAllNotes,
   isRest, isPitchedNote, hasTie, isChordNote,
-  getPartName, getPartInfo,
+  getPartName,
   getDirectionOfKind, getSoundTempo
 } from 'musicxml-io';
 
@@ -181,8 +182,10 @@ const { valid, errors } = validate(score);
 | `addNote(score, options)` | Add note |
 | `deleteNote(score, options)` | Delete note |
 | `addChordNote(score, options)` | Add to chord |
-| `changeKey(score, key, part, measure)` | Change key |
-| `changeTime(score, time, part, measure)` | Change time |
+| `modifyNotePitch(score, options)` | Change note pitch |
+| `modifyNoteDuration(score, options)` | Change note duration |
+| `changeKey(score, key, part, measure)` | Change key signature |
+| `changeTime(score, time, part, measure)` | Change time signature |
 | `insertMeasure(score, part, after)` | Insert measure |
 | `deleteMeasure(score, part, measure)` | Delete measure |
 
