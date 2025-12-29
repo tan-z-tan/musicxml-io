@@ -2,6 +2,7 @@
 // Score (ルート)
 // ============================================================
 export interface Score {
+  _id: string;
   metadata: ScoreMetadata;
   partList: PartListEntry[];
   parts: Part[];
@@ -97,6 +98,7 @@ export interface FontInfo {
 }
 
 export interface Credit {
+  _id: string;
   page?: number;
   creditType?: string[];
   creditWords?: CreditWords[];
@@ -122,6 +124,7 @@ export interface CreditWords {
 export type PartListEntry = PartInfo | PartGroup;
 
 export interface PartInfo {
+  _id: string;
   type: 'score-part';
   id: string;
   name?: string;
@@ -172,6 +175,7 @@ export interface MidiInstrument {
 }
 
 export interface PartGroup {
+  _id: string;
   type: 'part-group';
   groupType: 'start' | 'stop';
   number?: number;
@@ -188,11 +192,13 @@ export interface PartGroup {
 // Part / Measure
 // ============================================================
 export interface Part {
+  _id: string;
   id: string;
   measures: Measure[];
 }
 
 export interface Measure {
+  _id: string;
   number: string; // MusicXML spec: token type (string), e.g., "1", "X1", "1a"
   width?: number;
   implicit?: boolean;
@@ -309,6 +315,7 @@ export interface Transpose {
 }
 
 export interface Barline {
+  _id: string;
   location: 'left' | 'right' | 'middle';
   barStyle?: 'regular' | 'dotted' | 'dashed' | 'heavy' | 'light-light' | 'light-heavy' | 'heavy-light' | 'heavy-heavy' | 'tick' | 'short' | 'none';
   repeat?: {
@@ -327,11 +334,13 @@ export interface Barline {
 export type MeasureEntry = NoteEntry | BackupEntry | ForwardEntry | DirectionEntry | HarmonyEntry | FiguredBassEntry | SoundEntry | AttributesEntry;
 
 export interface AttributesEntry {
+  _id: string;
   type: 'attributes';
   attributes: MeasureAttributes;
 }
 
 export interface NoteEntry {
+  _id: string;
   type: 'note';
   pitch?: Pitch;
   rest?: RestInfo;
@@ -387,11 +396,13 @@ export interface NoteEntry {
 }
 
 export interface BackupEntry {
+  _id: string;
   type: 'backup';
   duration: number;
 }
 
 export interface ForwardEntry {
+  _id: string;
   type: 'forward';
   duration: number;
   voice?: number;
@@ -414,6 +425,7 @@ export interface DirectionSound {
 }
 
 export interface DirectionEntry {
+  _id: string;
   type: 'direction';
   directionTypes: DirectionType[];
   placement?: 'above' | 'below';
@@ -434,6 +446,7 @@ export interface Swing {
 }
 
 export interface SoundEntry {
+  _id: string;
   type: 'sound';
   tempo?: number;
   dynamics?: number;
@@ -451,6 +464,7 @@ export interface SoundEntry {
 }
 
 export interface HarmonyEntry {
+  _id: string;
   type: 'harmony';
   root: { rootStep: string; rootAlter?: number };
   kind: string;
@@ -491,6 +505,7 @@ export interface FrameNote {
 }
 
 export interface FiguredBassEntry {
+  _id: string;
   type: 'figured-bass';
   figures: Figure[];
   duration?: number;

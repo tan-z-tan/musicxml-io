@@ -154,6 +154,33 @@ import { transpose } from 'musicxml-io/operations';
 import { findNotes } from 'musicxml-io/query';
 ```
 
+## Unique Element IDs
+
+All elements in the Score structure have a unique `_id` property that is automatically generated when:
+- MusicXML is parsed/imported
+- New elements are created via operations
+
+The ID format is `"i" + nanoid(10)` (11 characters total), where:
+- `"i"` prefix ensures XML ID compatibility (IDs must start with a letter or underscore)
+- `nanoid(10)` generates a URL-safe unique identifier
+
+```typescript
+import { parse, generateId } from 'musicxml-io';
+
+const score = parse(xmlString);
+console.log(score._id);           // e.g., "iV1StGXR8_Z"
+console.log(score.parts[0]._id);  // e.g., "i2x4K9mL1Qp"
+
+// Generate IDs manually for custom elements
+const customId = generateId();    // e.g., "iAb3Cd5Ef7H"
+```
+
+This feature enables:
+- Tracking elements across transformations
+- Building element references in external systems
+- Implementing undo/redo functionality
+- Diffing and merging scores
+
 ## Round-trip Fidelity
 
 | Metric | Score |
