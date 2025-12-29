@@ -143,6 +143,50 @@ function cloneScore(score: Score): Score {
 }
 
 /**
+ * Clone a NoteEntry with a new _id
+ */
+function cloneNoteWithNewId(note: NoteEntry): NoteEntry {
+  const cloned: NoteEntry = JSON.parse(JSON.stringify(note));
+  cloned._id = generateId();
+  return cloned;
+}
+
+/**
+ * Clone a MeasureEntry with a new _id
+ */
+function cloneEntryWithNewId(entry: MeasureEntry): MeasureEntry {
+  const cloned: MeasureEntry = JSON.parse(JSON.stringify(entry));
+  cloned._id = generateId();
+  return cloned;
+}
+
+/**
+ * Clone a Measure with new _ids for itself and all entries
+ */
+function cloneMeasureWithNewIds(measure: Measure): Measure {
+  const cloned: Measure = JSON.parse(JSON.stringify(measure));
+  cloned._id = generateId();
+  cloned.entries = cloned.entries.map(entry => cloneEntryWithNewId(entry));
+  if (cloned.barlines) {
+    cloned.barlines = cloned.barlines.map(barline => ({
+      ...barline,
+      _id: generateId(),
+    }));
+  }
+  return cloned;
+}
+
+/**
+ * Clone a Part with new _ids for itself, all measures, and all entries
+ */
+function clonePartWithNewIds(part: Part): Part {
+  const cloned: Part = JSON.parse(JSON.stringify(part));
+  cloned._id = generateId();
+  cloned.measures = cloned.measures.map(measure => cloneMeasureWithNewIds(measure));
+  return cloned;
+}
+
+/**
  * Calculate measure duration from time signature
  */
 function getMeasureDuration(divisions: number, time: TimeSignature): number {
@@ -1337,7 +1381,7 @@ export function duplicatePart(
   const result = cloneScore(score);
 
   const sourcePart = result.parts[sourceIndex];
-  const newPart: Part = JSON.parse(JSON.stringify(sourcePart));
+  const newPart = clonePartWithNewIds(sourcePart);
   newPart.id = options.newPartId;
 
   const sourcePartInfo = result.partList.find(e => e.type === 'score-part' && e.id === options.sourcePartId) as PartInfo | undefined;
@@ -2939,8 +2983,8 @@ export function copyNotes(
 
           // Check if note overlaps with the selection range
           if (position < options.endPosition && noteEnd > options.startPosition) {
-            // Deep clone the note
-            const clonedNote: NoteEntry = JSON.parse(JSON.stringify(entry));
+            // Deep clone the note with new ID
+            const clonedNote = cloneNoteWithNewId(entry);
 
             // Clear notations that shouldn't be copied (like ties that might be broken)
             if (clonedNote.tie) {
@@ -2959,7 +3003,7 @@ export function copyNotes(
             const lastCopied = copiedNotes[copiedNotes.length - 1];
             if (lastCopied.note.voice === entry.voice &&
                 (options.staff === undefined || (lastCopied.note.staff ?? 1) === (entry.staff ?? 1))) {
-              const clonedNote: NoteEntry = JSON.parse(JSON.stringify(entry));
+              const clonedNote = cloneNoteWithNewId(entry);
               copiedNotes.push({
                 relativePosition: lastCopied.relativePosition,
                 note: clonedNote,
@@ -3083,8 +3127,8 @@ export function pasteNotes(
     for (const { relativePosition, note } of options.selection.notes) {
       const pastePosition = options.position + Math.max(0, relativePosition);
 
-      // Clone and update the note
-      const newNote: NoteEntry = JSON.parse(JSON.stringify(note));
+      // Clone with new ID and update the note
+      const newNote = cloneNoteWithNewId(note);
       newNote.voice = targetVoice;
       if (targetStaff !== undefined) {
         newNote.staff = targetStaff;
@@ -3132,7 +3176,7 @@ export function pasteNotes(
     for (const { relativePosition, note } of options.selection.notes) {
       const pastePosition = options.position + Math.max(0, relativePosition);
 
-      const newNote: NoteEntry = JSON.parse(JSON.stringify(note));
+      const newNote = cloneNoteWithNewId(note);
       newNote.voice = targetVoice;
       if (targetStaff !== undefined) {
         newNote.staff = targetStaff;
@@ -3324,14 +3368,14 @@ export function copyNotesMultiMeasure(
         if (entry.voice === options.voice &&
             (options.staff === undefined || (entry.staff ?? 1) === options.staff)) {
           if (!entry.chord && !entry.rest) {
-            const clonedNote: NoteEntry = JSON.parse(JSON.stringify(entry));
+            const clonedNote = cloneNoteWithNewId(entry);
             copiedNotes.push({
               relativePosition: position,
               note: clonedNote,
             });
             position += entry.duration;
           } else if (entry.chord && copiedNotes.length > 0) {
-            const clonedNote: NoteEntry = JSON.parse(JSON.stringify(entry));
+            const clonedNote = cloneNoteWithNewId(entry);
             copiedNotes.push({
               relativePosition: copiedNotes[copiedNotes.length - 1].relativePosition,
               note: clonedNote,
@@ -3427,7 +3471,7 @@ export function pasteNotesMultiMeasure(
 
     // Add pasted notes
     for (const { relativePosition, note } of measureData.notes) {
-      const newNote: NoteEntry = JSON.parse(JSON.stringify(note));
+      const newNote = cloneNoteWithNewId(note);
       newNote.voice = targetVoice;
       if (targetStaff !== undefined) {
         newNote.staff = targetStaff;
