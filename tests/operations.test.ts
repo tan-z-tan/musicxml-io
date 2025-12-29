@@ -59,6 +59,18 @@ import {
   // Expression/Performance operations
   addTempo,
   removeTempo,
+  modifyTempo,
+  modifyDynamics,
+  // Convenience aliases
+  addText,
+  setBeaming,
+  addChordSymbol,
+  removeChordSymbol,
+  updateChordSymbol,
+  changeClef,
+  setBarline,
+  addRepeat,
+  removeRepeat,
   addWedge,
   removeWedge,
   addFermata,
@@ -1480,6 +1492,99 @@ describe('Notation Operations', () => {
         expect(result.errors[0].code).toBe('DYNAMICS_NOT_FOUND');
       }
     });
+
+    it('should modify dynamics value', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // Add dynamics first
+      const withDynamics = addDynamics(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        position: 0,
+        dynamics: 'p',
+      });
+      expect(withDynamics.success).toBe(true);
+      if (!withDynamics.success) return;
+
+      // Modify to forte
+      const result = modifyDynamics(withDynamics.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        directionIndex: 0,
+        dynamics: 'f',
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const measure = result.data.parts[0].measures[0];
+        const dynamicsDirection = measure.entries.find(
+          e => e.type === 'direction' && e.directionTypes.some(dt => dt.kind === 'dynamics')
+        );
+        expect(dynamicsDirection).toBeDefined();
+        if (dynamicsDirection?.type === 'direction') {
+          const dynamicsType = dynamicsDirection.directionTypes.find(dt => dt.kind === 'dynamics');
+          expect(dynamicsType).toBeDefined();
+          if (dynamicsType?.kind === 'dynamics') {
+            expect(dynamicsType.value).toBe('f');
+          }
+        }
+      }
+    });
+
+    it('should modify dynamics placement', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // Add dynamics with placement below
+      const withDynamics = addDynamics(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        position: 0,
+        dynamics: 'mf',
+        placement: 'below',
+      });
+      expect(withDynamics.success).toBe(true);
+      if (!withDynamics.success) return;
+
+      // Modify placement to above
+      const result = modifyDynamics(withDynamics.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        directionIndex: 0,
+        dynamics: 'mf',
+        placement: 'above',
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const measure = result.data.parts[0].measures[0];
+        const dynamicsDirection = measure.entries.find(
+          e => e.type === 'direction' && e.directionTypes.some(dt => dt.kind === 'dynamics')
+        );
+        expect(dynamicsDirection).toBeDefined();
+        if (dynamicsDirection?.type === 'direction') {
+          expect(dynamicsDirection.placement).toBe('above');
+        }
+      }
+    });
+
+    it('should fail when modifying non-existent dynamics', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = modifyDynamics(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        directionIndex: 0,
+        dynamics: 'ff',
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.errors[0].code).toBe('DYNAMICS_NOT_FOUND');
+      }
+    });
   });
 
   describe('insertClefChange', () => {
@@ -2842,6 +2947,138 @@ describe('Expression/Performance Operations', () => {
           e => e.type === 'direction' && e.directionTypes.some(dt => dt.kind === 'metronome')
         );
         expect(tempoDirection).toBeUndefined();
+      }
+    });
+  });
+
+  describe('modifyTempo', () => {
+    it('should modify tempo BPM', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // First add tempo
+      const withTempo = addTempo(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        position: 0,
+        bpm: 100,
+        beatUnit: 'quarter',
+      });
+      expect(withTempo.success).toBe(true);
+      if (!withTempo.success) return;
+
+      // Modify BPM to 140
+      const result = modifyTempo(withTempo.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        bpm: 140,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const measure = result.data.parts[0].measures[0];
+        const tempoDirection = measure.entries.find(
+          e => e.type === 'direction' && e.directionTypes.some(dt => dt.kind === 'metronome')
+        );
+        expect(tempoDirection).toBeDefined();
+        if (tempoDirection?.type === 'direction') {
+          const metronome = tempoDirection.directionTypes.find(dt => dt.kind === 'metronome');
+          if (metronome?.kind === 'metronome') {
+            expect(metronome.perMinute).toBe(140);
+          }
+          // Check sound tempo was also updated
+          expect(tempoDirection.sound?.tempo).toBe(140);
+        }
+      }
+    });
+
+    it('should modify tempo beat unit', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // First add tempo with quarter note
+      const withTempo = addTempo(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        position: 0,
+        bpm: 120,
+        beatUnit: 'quarter',
+      });
+      expect(withTempo.success).toBe(true);
+      if (!withTempo.success) return;
+
+      // Change to half note
+      const result = modifyTempo(withTempo.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        beatUnit: 'half',
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const measure = result.data.parts[0].measures[0];
+        const tempoDirection = measure.entries.find(
+          e => e.type === 'direction' && e.directionTypes.some(dt => dt.kind === 'metronome')
+        );
+        if (tempoDirection?.type === 'direction') {
+          const metronome = tempoDirection.directionTypes.find(dt => dt.kind === 'metronome');
+          if (metronome?.kind === 'metronome') {
+            expect(metronome.beatUnit).toBe('half');
+          }
+        }
+      }
+    });
+
+    it('should add tempo text', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // First add tempo without text
+      const withTempo = addTempo(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        position: 0,
+        bpm: 120,
+      });
+      expect(withTempo.success).toBe(true);
+      if (!withTempo.success) return;
+
+      // Add text
+      const result = modifyTempo(withTempo.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        text: 'Allegro',
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const measure = result.data.parts[0].measures[0];
+        const tempoDirection = measure.entries.find(
+          e => e.type === 'direction' && e.directionTypes.some(dt => dt.kind === 'metronome')
+        );
+        if (tempoDirection?.type === 'direction') {
+          const words = tempoDirection.directionTypes.find(dt => dt.kind === 'words');
+          expect(words).toBeDefined();
+          if (words?.kind === 'words') {
+            expect(words.text).toBe('Allegro');
+          }
+        }
+      }
+    });
+
+    it('should fail when modifying non-existent tempo', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = modifyTempo(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        bpm: 120,
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.errors[0].code).toBe('TEMPO_NOT_FOUND');
       }
     });
   });
@@ -4557,6 +4794,215 @@ describe('Expression/Performance Operations', () => {
         noteIndex: 0,
       });
       expect(result.success).toBe(false);
+    });
+  });
+
+  // ============================================================
+  // Convenience Alias Tests
+  // ============================================================
+
+  describe('Convenience Aliases', () => {
+    it('addText should be an alias for addTextDirection', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = addText(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        position: 0,
+        text: 'dolce',
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const measure = result.data.parts[0].measures[0];
+        const textDirection = measure.entries.find(
+          e => e.type === 'direction' && e.directionTypes.some(dt => dt.kind === 'words')
+        );
+        expect(textDirection).toBeDefined();
+      }
+    });
+
+    it('setBeaming should be an alias for autoBeam', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = setBeaming(score, {
+        partIndex: 0,
+        measureIndex: 0,
+      });
+
+      expect(result.success).toBe(true);
+    });
+
+    it('addChordSymbol should be an alias for addHarmony', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = addChordSymbol(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        position: 0,
+        root: { step: 'C' },
+        kind: 'major',
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const measure = result.data.parts[0].measures[0];
+        const harmony = measure.entries.find(e => e.type === 'harmony');
+        expect(harmony).toBeDefined();
+      }
+    });
+
+    it('changeClef should be an alias for insertClefChange', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = changeClef(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        position: 0,
+        clef: { sign: 'F', line: 4 },
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const clef = result.data.parts[0].measures[0].attributes?.clef?.[0];
+        expect(clef?.sign).toBe('F');
+      }
+    });
+
+    it('setBarline should be an alias for changeBarline', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = setBarline(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        location: 'right',
+        barStyle: 'light-heavy',
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const measure = result.data.parts[0].measures[0];
+        const barline = measure.barlines?.find(b => b.location === 'right');
+        expect(barline?.barStyle).toBe('light-heavy');
+      }
+    });
+
+    it('addRepeat should be an alias for addRepeatBarline', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const result = addRepeat(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        direction: 'forward',
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const measure = result.data.parts[0].measures[0];
+        const repeatBarline = measure.barlines?.find(b => b.repeat);
+        expect(repeatBarline).toBeDefined();
+        expect(repeatBarline?.repeat?.direction).toBe('forward');
+      }
+    });
+
+    it('removeChordSymbol should be an alias for removeHarmony', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // First add a chord symbol
+      const withChord = addChordSymbol(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        position: 0,
+        root: { step: 'G' },
+        kind: 'major',
+      });
+      expect(withChord.success).toBe(true);
+      if (!withChord.success) return;
+
+      // Then remove it
+      const result = removeChordSymbol(withChord.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        harmonyIndex: 0,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const measure = result.data.parts[0].measures[0];
+        const harmony = measure.entries.find(e => e.type === 'harmony');
+        expect(harmony).toBeUndefined();
+      }
+    });
+
+    it('updateChordSymbol should be an alias for updateHarmony', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // First add a chord symbol
+      const withChord = addChordSymbol(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        position: 0,
+        root: { step: 'D' },
+        kind: 'minor',
+      });
+      expect(withChord.success).toBe(true);
+      if (!withChord.success) return;
+
+      // Update it
+      const result = updateChordSymbol(withChord.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        harmonyIndex: 0,
+        root: { step: 'E' },
+        kind: 'major',
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const measure = result.data.parts[0].measures[0];
+        const harmony = measure.entries.find(e => e.type === 'harmony');
+        if (harmony?.type === 'harmony') {
+          // HarmonyEntry uses rootStep, not step
+          expect(harmony.root.rootStep).toBe('E');
+          expect(harmony.kind).toBe('major');
+        }
+      }
+    });
+
+    it('removeRepeat should be an alias for removeRepeatBarline', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // First add a repeat (forward goes to left barline)
+      const withRepeat = addRepeat(score, {
+        partIndex: 0,
+        measureIndex: 0,
+        direction: 'forward',
+      });
+      expect(withRepeat.success).toBe(true);
+      if (!withRepeat.success) return;
+
+      // Then remove it (forward barline is at 'left' location)
+      const result = removeRepeat(withRepeat.data, {
+        partIndex: 0,
+        measureIndex: 0,
+        location: 'left',
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const measure = result.data.parts[0].measures[0];
+        const repeatBarline = measure.barlines?.find(b => b.repeat);
+        expect(repeatBarline).toBeUndefined();
+      }
     });
   });
 });
