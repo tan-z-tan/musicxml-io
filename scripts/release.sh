@@ -18,6 +18,46 @@ success() { echo -e "${GREEN}✅ $1${NC}"; }
 warning() { echo -e "${YELLOW}⚠️  $1${NC}"; }
 error() { echo -e "${RED}❌ $1${NC}"; exit 1; }
 
+# ============================================
+# Pre-flight checks (authentication validation)
+# ============================================
+info "Running pre-flight checks..."
+
+# Check npm authentication
+info "Checking npm authentication..."
+if ! npm whoami &> /dev/null; then
+    error "npm authentication failed. Please run 'npm login' first."
+fi
+NPM_USER=$(npm whoami)
+success "npm authenticated as: $NPM_USER"
+
+# Check gh CLI authentication
+info "Checking GitHub CLI authentication..."
+if ! command -v gh &> /dev/null; then
+    warning "gh CLI not found. GitHub Release will be skipped."
+    GH_AVAILABLE=false
+else
+    if ! gh auth status &> /dev/null; then
+        error "GitHub CLI not authenticated. Please run 'gh auth login' first."
+    fi
+    GH_AVAILABLE=true
+    success "GitHub CLI authenticated"
+fi
+
+# Check npm publish access (dry-run to verify permissions)
+info "Verifying npm publish permissions..."
+PACKAGE_NAME=$(node -p "require('./package.json').name")
+if npm access list collaborators "$PACKAGE_NAME" 2>/dev/null | grep -q "$NPM_USER"; then
+    success "npm publish access verified for $PACKAGE_NAME"
+else
+    # If package doesn't exist yet or access check fails, try a different approach
+    # Just warn but don't fail - the actual publish will fail if there's an issue
+    warning "Could not verify npm publish access (this is OK for new packages)"
+fi
+
+success "All pre-flight checks passed!"
+echo ""
+
 # Validate version type
 VERSION_TYPE=${1:-patch}
 if [[ ! "$VERSION_TYPE" =~ ^(patch|minor|major)$ ]]; then
@@ -114,7 +154,7 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     success "Published to npm! 🎉"
 
     # 13. Create GitHub Release
-    if command -v gh &> /dev/null; then
+    if [[ "$GH_AVAILABLE" == "true" ]]; then
         info "Creating GitHub Release..."
 
         # Get previous tag for changelog
@@ -134,7 +174,7 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
             && success "GitHub Release created" \
             || warning "Failed to create GitHub Release (you can create it manually)"
     else
-        warning "gh CLI not found. Skipping GitHub Release creation."
+        warning "GitHub Release skipped (gh CLI not available or not authenticated)"
         echo "  Install gh: https://cli.github.com/"
         echo "  Then run: gh release create $NEW_VERSION --title \"Release ${NEW_VERSION}\" --generate-notes"
     fi
