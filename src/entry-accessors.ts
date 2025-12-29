@@ -2,7 +2,7 @@
  * Entry-level accessors for DirectionEntry, NoteEntry, and PartInfo
  *
  * These are simple helper functions for working with individual entries,
- * complementing the score-level accessors in ./accessors.
+ * complementing the score-level query functions in ./query.
  */
 
 import type {

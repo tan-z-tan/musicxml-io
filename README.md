@@ -190,12 +190,16 @@ const { valid, errors } = validate(score);
 
 | Function | Description |
 |----------|-------------|
-| `getAllNotes(score)` | All notes |
-| `findNotes(score, filter)` | Filter notes |
-| `getMeasure(part, number)` | Get measure |
-| `getMeasureCount(part)` | Measure count |
-| `getChords(measure)` | Chord groups |
-| `countNotes(score)` | Notes per part |
+| `getAllNotes(score)` | All notes with context |
+| `findNotes(score, filter)` | Filter notes by criteria |
+| `getMeasure(score, { part, measure })` | Get measure by number |
+| `getMeasureByIndex(score, { part, measureIndex })` | Get measure by index |
+| `getMeasureCount(score)` | Total measure count |
+| `getChords(measure)` | Chord groups in measure |
+| `countNotes(score)` | Total note count |
+| `getHarmonies(score)` | All chord symbols |
+| `getDynamics(score)` | All dynamics markings |
+| `getTempoMarkings(score)` | All tempo markings |
 
 ### Accessors
 
