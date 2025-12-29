@@ -1,6 +1,6 @@
 {
   "name": "musicxml-io",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "description": "Parse and serialize MusicXML (.xml/.mxl) with high round-trip fidelity",
   "author": "tan-z-tan",
   "license": "MIT",
