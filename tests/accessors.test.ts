@@ -18,7 +18,7 @@ import {
   isRestMeasure,
   getNormalizedPosition,
   getNormalizedDuration,
-} from '../src/accessors';
+} from '../src/query';
 
 const fixturesPath = join(__dirname, 'fixtures');
 

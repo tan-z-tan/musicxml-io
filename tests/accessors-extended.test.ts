@@ -60,7 +60,7 @@ import {
   getPartByIndex,
   getPartCount,
   getPartIds,
-} from '../src/accessors';
+} from '../src/query';
 import type { NoteEntry, NoteWithContext } from '../src/types';
 
 const fixturesPath = join(__dirname, 'fixtures');
