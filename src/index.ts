@@ -79,8 +79,9 @@ export { parse, parseCompressed, isCompressed, parseAuto } from './importers';
 export { serialize, serializeCompressed, exportMidi } from './exporters';
 export type { SerializeOptions, MidiExportOptions } from './exporters';
 
-// Accessors (re-export for convenience)
+// Query (all read operations)
 export {
+  // Measure access
   getNotesForVoice,
   getNotesForStaff,
   groupByVoice,
@@ -96,7 +97,7 @@ export {
   isRestMeasure,
   getNormalizedPosition,
   getNormalizedDuration,
-  // Phase 1: Staff Enhancement
+  // Staff
   getEntriesForStaff,
   buildVoiceToStaffMap,
   buildVoiceToStaffMapForPart,
@@ -105,7 +106,7 @@ export {
   getClefForStaff,
   getVoicesForStaff,
   getStaffRange,
-  // Phase 2: Position and Voice Line
+  // Position and Voice Line
   getEntriesAtPosition,
   getNotesAtPosition,
   getEntriesInRange,
@@ -113,12 +114,12 @@ export {
   getVerticalSlice,
   getVoiceLine,
   getVoiceLineInRange,
-  // Phase 3: Navigation
+  // Navigation
   iterateEntries,
   getNextNote,
   getPrevNote,
   getAdjacentNotes,
-  // Phase 4: Direction and Expression
+  // Direction and Expression
   getDirections,
   getDirectionsAtPosition,
   findDirectionsByType,
@@ -127,20 +128,20 @@ export {
   getPedalMarkings,
   getWedges,
   getOctaveShifts,
-  // Phase 5: Groups and Spans
+  // Groups and Spans
   getTiedNoteGroups,
   getSlurSpans,
   getTupletGroups,
   getBeamGroups,
   findNotesWithNotation,
-  // Phase 6: Harmony and Lyrics
+  // Harmony and Lyrics
   getHarmonies,
   getHarmonyAtPosition,
   getChordProgression,
   getLyrics,
   getLyricText,
   getVerseCount,
-  // Phase 7: Structure
+  // Structure
   getRepeatStructure,
   findBarlines,
   getEndings,
@@ -148,15 +149,11 @@ export {
   getTimeChanges,
   getClefChanges,
   getStructuralChanges,
-  // Phase 8: Additional Utilities
+  // Part utilities
   getPartByIndex,
   getPartCount,
   getPartIds,
-} from './accessors';
-export type { VoiceFilter, NormalizedPositionOptions } from './accessors';
-
-// Query (re-export for convenience)
-export {
+  // Score-level queries
   getMeasure,
   getMeasureByIndex,
   getMeasureCount,
@@ -172,7 +169,7 @@ export {
   countNotes,
   scoresEqual,
 } from './query';
-export type { PitchRange, FindNotesFilter, RoundtripMetrics } from './query';
+export type { VoiceFilter, NormalizedPositionOptions, PitchRange, FindNotesFilter, RoundtripMetrics } from './query';
 
 // Operations (re-export for convenience)
 export {
