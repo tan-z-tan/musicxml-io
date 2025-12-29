@@ -13,24 +13,45 @@ TypeScript library for parsing and serializing MusicXML.
 │   .xml / .mxl   │─────▶│      Score      │─────▶│   .xml / .mxl   │
 └─────────────────┘      │                 │      └─────────────────┘
                    parse │   ┌─────────┐   │ serialize
-                         │   │ parts  │    │      ┌─────────────────┐
-                         │   │  └─measures │   　　|     MIDI        │
+                         │   │ parts   │   │      ┌─────────────────┐
+                         │   │  └─measures │      │     MIDI        │
                          │   │    └─entries│─────▶│   .mid          │
                          │   └─────────┘   │      └─────────────────┘
                          │                 │ exportMidi
                          └────────┬────────┘
                                   │
-                    ┌─────────────┼─────────────┐
-                    │             │             │
-                    ▼             ▼             ▼
-              ┌──────────┐ ┌──────────┐ ┌──────────┐
-              │ Query    │ │Operations│ │ Validate │
-              │          │ │          │ │          │
-              │findNotes │ │transpose │ │validate  │
-              │getMeasure│ │addNote   │ │isValid   │
-              │countNotes│ │changeKey │ │assertValid
-              └──────────┘ └──────────┘ └──────────┘
+              ┌───────────────────┼───────────────────┐
+              │                   │                   │
+              ▼                   ▼                   ▼
+     ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
+     │ QUERIES         │ │ OPERATIONS      │ │ ACCESSORS       │
+     │                 │ │                 │ │                 │
+     │ Score-level     │ │ Score mutation  │ │ Entry-level     │
+     │ read operations │ │ operations      │ │ helpers         │
+     │                 │ │                 │ │                 │
+     │ getMeasure()    │ │ transpose()     │ │ isRest()        │
+     │ findNotes()     │ │ addNote()       │ │ isPitchedNote() │
+     │ getAllNotes()   │ │ changeKey()     │ │ getPartName()   │
+     │ getHarmonies()  │ │ insertMeasure() │ │ hasTie()        │
+     └─────────────────┘ └─────────────────┘ └─────────────────┘
+                                  │
+                                  ▼
+                         ┌─────────────────┐
+                         │ VALIDATE        │
+                         │                 │
+                         │ validate()      │
+                         │ isValid()       │
+                         │ assertValid()   │
+                         └─────────────────┘
 ```
+
+### Module Structure
+
+| Module | File | Description |
+|--------|------|-------------|
+| Query | `src/query/index.ts` | Score-level read operations (get, find, iterate) |
+| Operations | `src/operations/index.ts` | Score mutation operations (add, delete, modify) |
+| Accessors | `src/entry-accessors.ts` | Entry-level helpers for notes, directions, parts |
 
 ## Install
 
@@ -77,11 +98,48 @@ const waltz = changeTime(score, { beats: 3, beatType: 4 }, 0, 1);
 ### Query
 
 ```typescript
-import { findNotes, getAllNotes, getMeasureCount } from 'musicxml-io';
+import { findNotes, getAllNotes, getMeasureCount, getHarmonies } from 'musicxml-io';
 
 const notes = getAllNotes(score);
-const quarterNotes = findNotes(score, { type: 'quarter' });
-const count = getMeasureCount(score.parts[0]);
+const quarterNotes = findNotes(score, { noteType: 'quarter' });
+const count = getMeasureCount(score);
+const chords = getHarmonies(score);
+```
+
+### Accessors
+
+Entry-level helpers for working with individual notes, directions, and parts:
+
+```typescript
+import {
+  isRest, isPitchedNote, hasTie, isChordNote,
+  getPartName, getPartInfo,
+  getDirectionOfKind, getSoundTempo
+} from 'musicxml-io';
+
+// NoteEntry helpers
+for (const item of getAllNotes(score)) {
+  if (isRest(item.note)) continue;
+  if (isPitchedNote(item.note)) {
+    console.log(`${item.note.pitch!.step}${item.note.pitch!.octave}`);
+  }
+  if (hasTie(item.note)) console.log('Tied note');
+  if (isChordNote(item.note)) console.log('Part of chord');
+}
+
+// PartInfo helpers
+const partName = getPartName(score, 'P1'); // 'Piano'
+
+// DirectionEntry helpers
+for (const entry of measure.entries) {
+  if (entry.type === 'direction') {
+    const dynamics = getDirectionOfKind(entry, 'dynamics');
+    if (dynamics) console.log(dynamics.value); // 'ff', 'pp', etc.
+
+    const tempo = getSoundTempo(entry);
+    if (tempo) console.log(`Tempo: ${tempo} BPM`);
+  }
+}
 ```
 
 ### MIDI Export
@@ -139,6 +197,52 @@ const { valid, errors } = validate(score);
 | `getChords(measure)` | Chord groups |
 | `countNotes(score)` | Notes per part |
 
+### Accessors
+
+Entry-level helpers for individual notes, directions, and parts.
+
+**NoteEntry**
+
+| Function | Description |
+|----------|-------------|
+| `isRest(note)` | Check if rest |
+| `isPitchedNote(note)` | Check if has pitch |
+| `isUnpitchedNote(note)` | Check if percussion |
+| `isChordNote(note)` | Check if part of chord |
+| `isGraceNote(note)` | Check if grace note |
+| `isCueNote(note)` | Check if cue note |
+| `hasTie(note)` | Check if tied |
+| `hasTieStart(note)` | Check if tie starts |
+| `hasTieStop(note)` | Check if tie stops |
+| `hasBeam(note)` | Check if beamed |
+| `hasLyrics(note)` | Check if has lyrics |
+| `hasNotations(note)` | Check if has notations |
+| `hasTuplet(note)` | Check if in tuplet |
+
+**DirectionEntry**
+
+| Function | Description |
+|----------|-------------|
+| `getDirectionOfKind(entry, kind)` | Get first direction type |
+| `getDirectionsOfKind(entry, kind)` | Get all direction types |
+| `hasDirectionOfKind(entry, kind)` | Check if has type |
+| `getSoundTempo(entry)` | Get tempo from sound |
+| `getSoundDynamics(entry)` | Get dynamics (0-127) |
+| `getSoundDamperPedal(entry)` | Get damper pedal state |
+| `getSoundSoftPedal(entry)` | Get soft pedal state |
+| `getSoundSostenutoPedal(entry)` | Get sostenuto pedal state |
+
+**PartInfo**
+
+| Function | Description |
+|----------|-------------|
+| `getPartInfo(score, id)` | Get part info by ID |
+| `getPartName(score, id)` | Get part name |
+| `getPartAbbreviation(score, id)` | Get part abbreviation |
+| `getAllPartInfos(score)` | Get all part infos |
+| `getPartNameMap(score)` | Get ID to name map |
+| `isPartInfo(entry)` | Type guard for PartInfo |
+
 ### Validate
 
 | Function | Description |
@@ -152,6 +256,7 @@ const { valid, errors } = validate(score);
 ```typescript
 import { transpose } from 'musicxml-io/operations';
 import { findNotes } from 'musicxml-io/query';
+import { isRest, getPartName } from 'musicxml-io/entry-accessors';
 ```
 
 ## Unique Element IDs
