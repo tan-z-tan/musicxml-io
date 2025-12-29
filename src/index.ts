@@ -199,6 +199,42 @@ export {
   getMeasureEndPosition,
 } from './utils';
 
+// Entry-level accessors (for DirectionEntry, NoteEntry, PartInfo)
+export {
+  // DirectionEntry - Generic
+  getDirectionOfKind,
+  getDirectionsOfKind,
+  hasDirectionOfKind,
+  // DirectionEntry - Sound
+  getSoundTempo,
+  getSoundDynamics,
+  getSoundDamperPedal,
+  getSoundSoftPedal,
+  getSoundSostenutoPedal,
+  // NoteEntry
+  isRest,
+  isPitchedNote,
+  isUnpitchedNote,
+  isChordNote,
+  isGraceNote,
+  hasTie,
+  hasTieStart,
+  hasTieStop,
+  isCueNote,
+  hasBeam,
+  hasLyrics,
+  hasNotations,
+  hasTuplet,
+  // PartList
+  isPartInfo,
+  getPartInfo,
+  getPartName,
+  getPartAbbreviation,
+  getAllPartInfos,
+  getPartNameMap,
+} from './entry-accessors';
+export type { DirectionTypeOfKind } from './entry-accessors';
+
 // ID generation
 export { generateId } from './id';
 
