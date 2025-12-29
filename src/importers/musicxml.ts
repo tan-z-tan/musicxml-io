@@ -1,4 +1,5 @@
 import { XMLParser } from 'fast-xml-parser';
+import { generateId } from '../id';
 import type {
   Score,
   ScoreMetadata,
@@ -192,6 +193,7 @@ function parseScorePartwise(elements: OrderedElement[]): Score {
   const credits = parseCredits(elements);
 
   return {
+    _id: generateId(),
     metadata,
     partList,
     parts,
@@ -451,7 +453,7 @@ function parseSystemLayout(elements: OrderedElement[]): SystemLayout {
 
 function parseCredits(elements: OrderedElement[]): Credit[] | undefined {
   const credits = collectElements(elements, 'credit', (content, attrs) => {
-    const credit: Credit = {};
+    const credit: Credit = { _id: generateId() };
     if (attrs['page']) credit.page = parseInt(attrs['page'], 10);
     const types = collectElements(content, 'credit-type', (c) => extractText(c));
     const words = collectElements(content, 'credit-words', (c, a) => {
@@ -497,6 +499,7 @@ function parsePartList(elements: OrderedElement[]): PartListEntry[] {
       const content = el['score-part'] as OrderedElement[];
 
       const partInfo: PartInfo = {
+        _id: generateId(),
         type: 'score-part',
         id: attrs['id'] || '',
       };
@@ -607,6 +610,7 @@ function parsePartList(elements: OrderedElement[]): PartListEntry[] {
       const content = el['part-group'] as OrderedElement[];
 
       const group: PartGroup = {
+        _id: generateId(),
         type: 'part-group',
         groupType: attrs['type'] === 'stop' ? 'stop' : 'start',
       };
@@ -652,6 +656,7 @@ function parseParts(elements: OrderedElement[]): Part[] {
       const content = el['part'] as OrderedElement[];
 
       const part: Part = {
+        _id: generateId(),
         id: attrs['id'] || '',
         measures: [],
       };
@@ -673,6 +678,7 @@ function parseParts(elements: OrderedElement[]): Part[] {
 
 function parseMeasure(elements: OrderedElement[], attrs: Record<string, string>): Measure {
   const measure: Measure = {
+    _id: generateId(),
     number: attrs['number'] || '0', // Keep as string per MusicXML spec (token type)
     entries: [],
   };
@@ -693,6 +699,7 @@ function parseMeasure(elements: OrderedElement[], attrs: Record<string, string>)
       } else {
         // Mid-measure attributes go into entries
         const attrEntry: AttributesEntry = {
+          _id: generateId(),
           type: 'attributes',
           attributes: parsedAttrs,
         };
@@ -977,6 +984,7 @@ function parseTranspose(elements: OrderedElement[]): Transpose {
 
 function parseNote(elements: OrderedElement[], attrs: Record<string, string>): NoteEntry {
   const note: NoteEntry = {
+    _id: generateId(),
     type: 'note',
     duration: getElementTextAsInt(elements, 'duration', 0)!,
     voice: getElementTextAsInt(elements, 'voice', 1)!,
@@ -1662,6 +1670,7 @@ function parseLyric(elements: OrderedElement[], attrs: Record<string, string>): 
 
 function parseBackup(elements: OrderedElement[]): BackupEntry {
   return {
+    _id: generateId(),
     type: 'backup',
     duration: parseInt(getElementText(elements, 'duration') || '0', 10),
   };
@@ -1669,6 +1678,7 @@ function parseBackup(elements: OrderedElement[]): BackupEntry {
 
 function parseForward(elements: OrderedElement[]): ForwardEntry {
   const forward: ForwardEntry = {
+    _id: generateId(),
     type: 'forward',
     duration: parseInt(getElementText(elements, 'duration') || '0', 10),
   };
@@ -1684,6 +1694,7 @@ function parseForward(elements: OrderedElement[]): ForwardEntry {
 
 function parseDirection(elements: OrderedElement[], attrs: Record<string, string>): DirectionEntry {
   const direction: DirectionEntry = {
+    _id: generateId(),
     type: 'direction',
     directionTypes: [],
   };
@@ -2101,7 +2112,7 @@ function parseDirectionType(elements: OrderedElement[]): DirectionType | null {
 function parseBarline(elements: OrderedElement[], attrs: Record<string, string>): Barline {
   const location = (attrs['location'] || 'right') as Barline['location'];
 
-  const barline: Barline = { location };
+  const barline: Barline = { _id: generateId(), location };
 
   const barStyle = getElementText(elements, 'bar-style');
   if (barStyle && isValidBarStyle(barStyle)) {
@@ -2275,6 +2286,7 @@ function parseMeasureStyle(elements: OrderedElement[], attrs: Record<string, str
 
 function parseHarmony(elements: OrderedElement[], attrs: Record<string, string>): HarmonyEntry {
   const harmony: HarmonyEntry = {
+    _id: generateId(),
     type: 'harmony',
     root: { rootStep: 'C' },
     kind: 'major',
@@ -2420,6 +2432,7 @@ function parseHarmony(elements: OrderedElement[], attrs: Record<string, string>)
 
 function parseFiguredBass(elements: OrderedElement[], attrs: Record<string, string>): FiguredBassEntry {
   const fb: FiguredBassEntry = {
+    _id: generateId(),
     type: 'figured-bass',
     figures: [],
   };
@@ -2474,6 +2487,7 @@ function parseFiguredBass(elements: OrderedElement[], attrs: Record<string, stri
 
 function parseSound(elements: OrderedElement[], attrs: Record<string, string>): SoundEntry {
   const sound: SoundEntry = {
+    _id: generateId(),
     type: 'sound',
   };
 

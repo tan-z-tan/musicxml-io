@@ -199,6 +199,9 @@ export {
   getMeasureEndPosition,
 } from './utils';
 
+// ID generation
+export { generateId } from './id';
+
 // Validator
 export {
   validate,

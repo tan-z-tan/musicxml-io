@@ -24,7 +24,9 @@ import type {
   HarmonyEntry,
   SoundEntry,
   NoteType,
+  Barline,
 } from '../types';
+import { generateId } from '../id';
 import {
   STEPS,
   STEP_SEMITONES,
@@ -233,6 +235,7 @@ function hasNotesInRange(
  */
 function createRest(duration: number, voice: number, staff?: number): NoteEntry {
   return {
+    _id: generateId(),
     type: 'note',
     rest: { displayStep: undefined, displayOctave: undefined },
     duration,
@@ -322,10 +325,11 @@ function rebuildMeasureWithVoice(
     const diff = targetPos - currentPosition;
 
     if (diff < 0) {
-      result.push({ type: 'backup', duration: -diff });
+      result.push({ _id: generateId(), type: 'backup', duration: -diff });
       currentPosition = targetPos;
     } else if (diff > 0) {
       result.push({
+        _id: generateId(),
         type: 'forward',
         duration: diff,
         voice: entry.type === 'note' ? entry.voice : 1,
@@ -425,6 +429,7 @@ export function insertNote(
 
   // Create new note
   const newNote: NoteEntry = {
+    _id: generateId(),
     type: 'note',
     pitch: options.pitch,
     duration: options.duration,
@@ -586,6 +591,7 @@ export function addChord(
 
   // Create chord note
   const chordNote: NoteEntry = {
+    _id: generateId(),
     type: 'note',
     pitch: options.pitch,
     duration: targetEntry.duration,
@@ -1146,7 +1152,7 @@ export function addVoice(
   // Add backup to go to start, then add rest
   const currentEnd = getMeasureEndPosition(measure);
   if (currentEnd > 0) {
-    measure.entries.push({ type: 'backup', duration: currentEnd });
+    measure.entries.push({ _id: generateId(), type: 'backup', duration: currentEnd });
   }
   measure.entries.push(rest);
 
@@ -1240,6 +1246,7 @@ export function addPart(
   const insertIndex = options.insertIndex ?? result.parts.length;
 
   const partInfo: PartInfo = {
+    _id: generateId(),
     type: 'score-part',
     id: options.id,
     name: options.name,
@@ -1262,14 +1269,14 @@ export function addPart(
 
   // Create new part with measures
   const measureCount = result.parts.length > 0 ? result.parts[0].measures.length : 1;
-  const newPart: Part = { id: options.id, measures: [] };
+  const newPart: Part = { _id: generateId(), id: options.id, measures: [] };
 
   for (let i = 0; i < measureCount; i++) {
     const measureNumber = result.parts.length > 0
       ? result.parts[0].measures[i]?.number ?? String(i + 1)
       : String(i + 1);
 
-    const measure: Measure = { number: measureNumber, entries: [] };
+    const measure: Measure = { _id: generateId(), number: measureNumber, entries: [] };
 
     if (i === 0) {
       measure.attributes = {
@@ -1336,6 +1343,7 @@ export function duplicatePart(
   const sourcePartInfo = result.partList.find(e => e.type === 'score-part' && e.id === options.sourcePartId) as PartInfo | undefined;
 
   const newPartInfo: PartInfo = {
+    _id: generateId(),
     type: 'score-part',
     id: options.newPartId,
     name: options.newPartName ?? sourcePartInfo?.name,
@@ -1493,7 +1501,7 @@ export function insertMeasure(score: Score, options: { afterMeasure: string | nu
     const numericPart = parseInt(targetMeasure, 10);
     const newMeasureNumber = String(isNaN(numericPart) ? insertIndex + 2 : numericPart + 1);
 
-    const newMeasure: Measure = { number: newMeasureNumber, entries: [] };
+    const newMeasure: Measure = { _id: generateId(), number: newMeasureNumber, entries: [] };
 
     if (options.copyAttributes && part.measures[insertIndex].attributes) {
       newMeasure.attributes = { ...part.measures[insertIndex].attributes };
@@ -1989,6 +1997,7 @@ export function addDynamics(
 
   // Create direction entry with dynamics
   const directionEntry: DirectionEntry = {
+    _id: generateId(),
     type: 'direction',
     directionTypes: [{
       kind: 'dynamics',
@@ -2118,6 +2127,7 @@ export function insertClefChange(
   } else {
     // Insert mid-measure as AttributesEntry
     const attributesEntry: AttributesEntry = {
+      _id: generateId(),
       type: 'attributes',
       attributes: {
         clef: [options.clef],
@@ -3524,6 +3534,7 @@ export function addTempo(
   }
 
   const direction: DirectionEntry = {
+    _id: generateId(),
     type: 'direction',
     directionTypes,
     placement: options.placement ?? 'above',
@@ -3632,6 +3643,7 @@ export function addWedge(
   // Add start wedge
   const startMeasure = result.parts[options.partIndex].measures[options.startMeasureIndex];
   const startDirection: DirectionEntry = {
+    _id: generateId(),
     type: 'direction',
     directionTypes: [{
       kind: 'wedge',
@@ -3645,6 +3657,7 @@ export function addWedge(
   // Add stop wedge
   const endMeasure = result.parts[options.partIndex].measures[options.endMeasureIndex];
   const endDirection: DirectionEntry = {
+    _id: generateId(),
     type: 'direction',
     directionTypes: [{
       kind: 'wedge',
@@ -3980,6 +3993,7 @@ export function addPedal(
   const measure = result.parts[options.partIndex].measures[options.measureIndex];
 
   const direction: DirectionEntry = {
+    _id: generateId(),
     type: 'direction',
     directionTypes: [{
       kind: 'pedal',
@@ -4082,6 +4096,7 @@ export function addTextDirection(
   const measure = result.parts[options.partIndex].measures[options.measureIndex];
 
   const direction: DirectionEntry = {
+    _id: generateId(),
     type: 'direction',
     directionTypes: [{
       kind: 'words',
@@ -4126,6 +4141,7 @@ export function addRehearsalMark(
   const measure = result.parts[options.partIndex].measures[options.measureIndex];
 
   const direction: DirectionEntry = {
+    _id: generateId(),
     type: 'direction',
     directionTypes: [{
       kind: 'rehearsal',
@@ -4229,6 +4245,7 @@ export function addRepeatBarline(
     }
 
     measure.barlines.push({
+      _id: generateId(),
       location,
       barStyle,
       repeat: {
@@ -4337,9 +4354,9 @@ export function addEnding(
     }
 
     // Find or create barline at this location
-    let barline = measure.barlines.find(b => b.location === location);
+    let barline: Barline | undefined = measure.barlines.find(b => b.location === location);
     if (!barline) {
-      barline = { location };
+      barline = { _id: generateId(), location };
       measure.barlines.push(barline);
     }
 
@@ -4448,9 +4465,9 @@ export function changeBarline(
     }
 
     // Find or create barline at this location
-    let barline = measure.barlines.find(b => b.location === location);
+    let barline: Barline | undefined = measure.barlines.find(b => b.location === location);
     if (!barline) {
-      barline = { location };
+      barline = { _id: generateId(), location };
       measure.barlines.push(barline);
     }
 
@@ -4488,6 +4505,7 @@ export function addSegno(
   const measure = result.parts[partIndex].measures[measureIndex];
 
   const direction: DirectionEntry = {
+    _id: generateId(),
     type: 'direction',
     directionTypes: [{ kind: 'segno' }],
     placement: 'above',
@@ -4526,6 +4544,7 @@ export function addCoda(
   const measure = result.parts[partIndex].measures[measureIndex];
 
   const direction: DirectionEntry = {
+    _id: generateId(),
     type: 'direction',
     directionTypes: [{ kind: 'coda' }],
     placement: 'above',
@@ -4568,6 +4587,7 @@ export function addDaCapo(
   const insertPos = position ?? measureDuration;
 
   const direction: DirectionEntry = {
+    _id: generateId(),
     type: 'direction',
     directionTypes: [{ kind: 'words', text: 'D.C.' }],
     placement: 'above',
@@ -4577,6 +4597,7 @@ export function addDaCapo(
 
   // Add sound element
   const sound: SoundEntry = {
+    _id: generateId(),
     type: 'sound',
     dacapo: true,
   };
@@ -4610,6 +4631,7 @@ export function addDalSegno(
   const insertPos = position ?? measureDuration;
 
   const direction: DirectionEntry = {
+    _id: generateId(),
     type: 'direction',
     directionTypes: [{ kind: 'words', text: 'D.S.' }],
     placement: 'above',
@@ -4619,6 +4641,7 @@ export function addDalSegno(
 
   // Add sound element
   const sound: SoundEntry = {
+    _id: generateId(),
     type: 'sound',
     dalsegno: 'segno',
   };
@@ -4652,6 +4675,7 @@ export function addFine(
   const insertPos = position ?? measureDuration;
 
   const direction: DirectionEntry = {
+    _id: generateId(),
     type: 'direction',
     directionTypes: [{ kind: 'words', text: 'Fine' }],
     placement: 'above',
@@ -4661,6 +4685,7 @@ export function addFine(
 
   // Add sound element
   const sound: SoundEntry = {
+    _id: generateId(),
     type: 'sound',
     fine: true,
   };
@@ -4694,6 +4719,7 @@ export function addToCoda(
   const insertPos = position ?? measureDuration;
 
   const direction: DirectionEntry = {
+    _id: generateId(),
     type: 'direction',
     directionTypes: [{ kind: 'words', text: 'To Coda' }],
     placement: 'above',
@@ -4703,6 +4729,7 @@ export function addToCoda(
 
   // Add sound element
   const sound: SoundEntry = {
+    _id: generateId(),
     type: 'sound',
     tocoda: 'coda',
   };
@@ -4772,6 +4799,7 @@ export function addGraceNote(
   const resultMeasure = result.parts[partIndex].measures[measureIndex];
 
   const graceNote: NoteEntry = {
+    _id: generateId(),
     type: 'note',
     pitch,
     duration: 0, // Grace notes have no duration
@@ -5198,6 +5226,7 @@ export function addHarmony(
   const measure = result.parts[partIndex].measures[measureIndex];
 
   const harmony: HarmonyEntry = {
+    _id: generateId(),
     type: 'harmony',
     root: {
       rootStep: root.step.toUpperCase(),
@@ -5847,6 +5876,7 @@ export function addOctaveShift(
   const measure = result.parts[partIndex].measures[measureIndex];
 
   const direction: DirectionEntry = {
+    _id: generateId(),
     type: 'direction',
     directionTypes: [{
       kind: 'octave-shift',
@@ -5890,6 +5920,7 @@ export function stopOctaveShift(
   const measure = result.parts[partIndex].measures[measureIndex];
 
   const direction: DirectionEntry = {
+    _id: generateId(),
     type: 'direction',
     directionTypes: [{
       kind: 'octave-shift',
