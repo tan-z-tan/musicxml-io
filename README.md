@@ -181,15 +181,42 @@ const { valid, errors } = validate(score);
 | Function | Description |
 |----------|-------------|
 | `transpose(score, semitones)` | Transpose pitches |
-| `addNote(score, options)` | Add note |
-| `deleteNote(score, options)` | Delete note |
-| `addChordNote(score, options)` | Add to chord |
-| `modifyNotePitch(score, options)` | Change note pitch |
-| `modifyNoteDuration(score, options)` | Change note duration |
+| `insertNote(score, options)` | Insert note at position |
+| `removeNote(score, options)` | Remove note (replace with rest) |
+| `addChord(score, options)` | Add note to chord |
+| `setNotePitch(score, options)` | Change note pitch |
+| `changeNoteDuration(score, options)` | Change note duration |
+| `addVoice(score, options)` | Add voice to measure |
+| `addPart(score, options)` | Add part to score |
+| `removePart(score, options)` | Remove part from score |
+| `setStaves(score, options)` | Set staff count |
 | `changeKey(score, key, part, measure)` | Change key signature |
 | `changeTime(score, time, part, measure)` | Change time signature |
 | `insertMeasure(score, part, after)` | Insert measure |
 | `deleteMeasure(score, part, measure)` | Delete measure |
+| `addTie(score, options)` | Add tie between notes |
+| `addSlur(score, options)` | Add slur between notes |
+| `addArticulation(score, options)` | Add staccato, accent, etc. |
+| `addDynamics(score, options)` | Add dynamics (f, p, etc.) |
+| `modifyDynamics(score, options)` | Modify dynamics |
+| `addTempo(score, options)` | Add tempo marking |
+| `modifyTempo(score, options)` | Modify tempo |
+| `addOrnament(score, options)` | Add trill, turn, etc. |
+| `addText(score, options)` | Add text direction |
+| `addLyric(score, options)` | Add lyric to note |
+| `autoBeam(score, options)` | Auto-beam notes |
+| `createTuplet(score, options)` | Create tuplet |
+| `addChordSymbol(score, options)` | Add chord symbol |
+| `changeClef(score, options)` | Change clef |
+| `setBarline(score, options)` | Change barline style |
+| `addRepeat(score, options)` | Add repeat barline |
+| `addEnding(score, options)` | Add first/second ending |
+| `addFermata(score, options)` | Add fermata |
+| `addWedge(score, options)` | Add crescendo/diminuendo |
+| `addPedal(score, options)` | Add pedal marking |
+| `addGraceNote(score, options)` | Add grace note |
+
+See [OPERATIONS.md](OPERATIONS.md) for the complete list.
 
 ### Query
 

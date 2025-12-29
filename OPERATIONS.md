@@ -26,238 +26,378 @@ This ensures:
 - On failure, detailed validation errors are provided
 - No invalid scores are ever returned
 
-### Validation Strategy
-- Operations validate the affected parts of the score after mutation
-- Use `validateMeasureLocal()` for single-measure operations (fast)
-- Use `validate()` for cross-measure/cross-part operations
-- Critical errors block the operation; warnings are allowed
-
 ---
 
-## Phase 1: Note Operations ✅
+## Note Operations
 
 Piano Roll style note manipulation.
 
-| Operation | Description | Status |
-|-----------|-------------|--------|
-| `insertNote` | Insert note at position (replaces rests, errors on note conflict) | ✅ |
-| `removeNote` | Remove note and replace with rest | ✅ |
-| `addChord` | Add chord note to existing note | ✅ |
-| `setNotePitch` | Change note pitch | ✅ |
-| `changeNoteDuration` | Change duration (consumes/fills adjacent space) | ✅ |
-| `transpose` | Transpose all notes by semitones | ✅ |
-
-### Note Operation Errors
-- `NOTE_CONFLICT` - Cannot insert note: conflicts with existing note
-- `EXCEEDS_MEASURE` - Note duration would exceed measure capacity
-- `INVALID_POSITION` - Position is invalid (negative)
-- `INVALID_DURATION` - Duration is invalid (zero or negative)
-- `NOTE_NOT_FOUND` - Note index not found
+| Operation | Description |
+|-----------|-------------|
+| `insertNote` | Insert note at position (replaces rests, errors on note conflict) |
+| `removeNote` | Remove note and replace with rest |
+| `addChord` | Add chord note to existing note |
+| `setNotePitch` | Change note pitch |
+| `setNotePitchBySemitone` | Set pitch using MIDI semitone value |
+| `shiftNotePitch` | Shift pitch by interval |
+| `changeNoteDuration` | Change duration (consumes/fills adjacent space) |
+| `raiseAccidental` | Raise note by semitone (add sharp) |
+| `lowerAccidental` | Lower note by semitone (add flat) |
+| `transpose` | Transpose all notes by semitones |
 
 ---
 
-## Phase 2: Voice Operations ✅
+## Voice Operations
 
-| Operation | Description | Status |
-|-----------|-------------|--------|
-| `addVoice` | Add new voice to measure (filled with rest) | ✅ |
-
----
-
-## Phase 3: Part Operations ✅
-
-Part-level manipulation.
-
-| Operation | Description | Status |
-|-----------|-------------|--------|
-| `addPart` | Add a new part to the score | ✅ |
-| `removePart` | Remove a part from the score | ✅ |
-| `duplicatePart` | Duplicate an existing part | ✅ |
-
-### Part Operation Errors
-- `PART_NOT_FOUND` - Part not found
-- `DUPLICATE_PART_ID` - Part ID already exists
+| Operation | Description |
+|-----------|-------------|
+| `addVoice` | Add new voice to measure (filled with rest) |
 
 ---
 
-## Phase 4: Staff Operations ✅
+## Part Operations
 
-Staff management within parts (e.g., piano grand staff).
-
-| Operation | Description | Status |
-|-----------|-------------|--------|
-| `setStaves` | Set the number of staves for a part | ✅ |
-| `moveNoteToStaff` | Move a note to a different staff | ✅ |
-
-### Staff Operation Errors
-- `INVALID_STAFF` - Staff number is invalid
-- `STAFF_EXCEEDS_STAVES` - Target staff number exceeds declared staves
+| Operation | Description |
+|-----------|-------------|
+| `addPart` | Add a new part to the score |
+| `removePart` | Remove a part from the score |
+| `duplicatePart` | Duplicate an existing part |
 
 ---
 
-## Phase 5: Measure Operations (Legacy)
+## Staff Operations
 
-These operations exist without Result pattern (for backwards compatibility).
+| Operation | Description |
+|-----------|-------------|
+| `setStaves` | Set the number of staves for a part |
+| `moveNoteToStaff` | Move a note to a different staff |
 
-| Operation | Description | Status |
-|-----------|-------------|--------|
-| `insertMeasure` | Insert measure after specified measure | ✅ |
-| `deleteMeasure` | Delete a measure | ✅ |
-| `changeKey` | Change key signature | ✅ |
-| `changeTime` | Change time signature | ✅ |
+---
+
+## Measure Operations
+
+| Operation | Description |
+|-----------|-------------|
+| `insertMeasure` | Insert measure after specified measure |
+| `deleteMeasure` | Delete a measure |
+| `changeKey` | Change key signature |
+| `changeTime` | Change time signature |
+
+---
+
+## Tie Operations
+
+| Operation | Description |
+|-----------|-------------|
+| `addTie` | Add tie between two notes |
+| `removeTie` | Remove tie from note |
+
+---
+
+## Slur Operations
+
+| Operation | Description |
+|-----------|-------------|
+| `addSlur` | Add slur between notes |
+| `removeSlur` | Remove slur from note |
+
+---
+
+## Articulation Operations
+
+| Operation | Description |
+|-----------|-------------|
+| `addArticulation` | Add articulation (staccato, accent, tenuto, marcato, etc.) |
+| `removeArticulation` | Remove articulation from note |
+
+---
+
+## Dynamics Operations
+
+| Operation | Alias | Description |
+|-----------|-------|-------------|
+| `addDynamics` | - | Add dynamics marking (pp, p, mp, mf, f, ff, etc.) |
+| `removeDynamics` | - | Remove dynamics direction |
+| `modifyDynamics` | - | Modify existing dynamics value or placement |
+
+---
+
+## Tempo Operations
+
+| Operation | Alias | Description |
+|-----------|-------|-------------|
+| `addTempo` | - | Add tempo marking with metronome/text |
+| `removeTempo` | - | Remove tempo direction |
+| `modifyTempo` | - | Modify existing tempo (BPM, beat unit, text) |
+
+---
+
+## Ornament Operations
+
+| Operation | Description |
+|-----------|-------------|
+| `addOrnament` | Add ornament (trill, turn, mordent, inverted-mordent, tremolo, etc.) |
+| `removeOrnament` | Remove ornament from note |
+
+---
+
+## Text / Lyric Operations
+
+| Operation | Alias | Description |
+|-----------|-------|-------------|
+| `addTextDirection` | `addText` | Add text direction (expression text, performance instruction) |
+| `addRehearsalMark` | - | Add rehearsal mark |
+| `addLyric` | - | Add lyric to note with verse number |
+| `removeLyric` | - | Remove lyric from note |
+| `updateLyric` | - | Update existing lyric text |
+
+---
+
+## Beam Operations
+
+| Operation | Alias | Description |
+|-----------|-------|-------------|
+| `addBeam` | - | Add beam to note |
+| `removeBeam` | - | Remove beam from note |
+| `autoBeam` | `setBeaming` | Automatic beaming based on time signature |
+
+---
+
+## Tuplet Operations
+
+| Operation | Description |
+|-----------|-------------|
+| `createTuplet` | Create tuplet grouping (triplets, quintuplets, etc.) |
+| `removeTuplet` | Remove tuplet from notes |
+
+---
+
+## Harmony (Chord Symbol) Operations
+
+| Operation | Alias | Description |
+|-----------|-------|-------------|
+| `addHarmony` | `addChordSymbol` | Add chord symbol (C, Dm, G7, etc.) |
+| `removeHarmony` | `removeChordSymbol` | Remove chord symbol |
+| `updateHarmony` | `updateChordSymbol` | Update existing chord symbol |
+
+---
+
+## Clef Operations
+
+| Operation | Alias | Description |
+|-----------|-------|-------------|
+| `insertClefChange` | `changeClef` | Insert clef change mid-measure/mid-part |
+
+---
+
+## Barline / Repeat Operations
+
+| Operation | Alias | Description |
+|-----------|-------|-------------|
+| `changeBarline` | `setBarline` | Change barline style |
+| `addRepeatBarline` | `addRepeat` | Add repeat barline (forward/backward) |
+| `removeRepeatBarline` | `removeRepeat` | Remove repeat barline |
+| `addEnding` | - | Add first/second ending |
+| `removeEnding` | - | Remove ending |
+| `addSegno` | - | Add segno symbol |
+| `addCoda` | - | Add coda symbol |
+| `addDaCapo` | - | Add "Da Capo" navigation |
+| `addDalSegno` | - | Add "Dal Segno" navigation |
+| `addFine` | - | Add "Fine" ending marker |
+| `addToCoda` | - | Add "To Coda" navigation |
+
+---
+
+## Grace Note Operations
+
+| Operation | Description |
+|-----------|-------------|
+| `addGraceNote` | Add grace note to position |
+| `removeGraceNote` | Remove grace note |
+| `convertToGrace` | Convert regular note to grace note |
+
+---
+
+## Expression / Performance Operations
+
+| Operation | Description |
+|-----------|-------------|
+| `addWedge` | Add crescendo/diminuendo wedge |
+| `removeWedge` | Remove wedge |
+| `addFermata` | Add fermata symbol |
+| `removeFermata` | Remove fermata |
+| `addPedal` | Add pedal marking |
+| `removePedal` | Remove pedal |
+
+---
+
+## Technical Notation Operations
+
+| Operation | Description |
+|-----------|-------------|
+| `addFingering` | Add fingering number |
+| `removeFingering` | Remove fingering |
+| `addBowing` | Add bowing direction (up-bow/down-bow) |
+| `removeBowing` | Remove bowing |
+| `addStringNumber` | Add string number for string instruments |
+| `removeStringNumber` | Remove string number |
+
+---
+
+## Octave Shift Operations
+
+| Operation | Description |
+|-----------|-------------|
+| `addOctaveShift` | Add octave shift (8va/8vb) |
+| `stopOctaveShift` | Stop octave shift |
+| `removeOctaveShift` | Remove octave shift |
+
+---
+
+## Breath / Caesura Operations
+
+| Operation | Description |
+|-----------|-------------|
+| `addBreathMark` | Add breath mark |
+| `removeBreathMark` | Remove breath mark |
+| `addCaesura` | Add caesura marking |
+| `removeCaesura` | Remove caesura |
+
+---
+
+## Copy / Paste Operations
+
+| Operation | Description |
+|-----------|-------------|
+| `copyNotes` | Copy notes from selection |
+| `pasteNotes` | Paste notes at position |
+| `cutNotes` | Cut notes |
+| `copyNotesMultiMeasure` | Copy multiple measures |
+| `pasteNotesMultiMeasure` | Paste multiple measures |
 
 ---
 
 ## API Usage Examples
 
-### Inserting a Note
+### Adding Dynamics
 ```typescript
-import { insertNote } from 'musicxml-io/operations';
+import { addDynamics, modifyDynamics } from 'musicxml-io';
 
-const result = insertNote(score, {
+// Add forte marking
+const result = addDynamics(score, {
   partIndex: 0,
   measureIndex: 0,
-  voice: 1,
   position: 0,
-  pitch: { step: 'C', octave: 4 },
-  duration: 4,
-  noteType: 'quarter',
+  dynamics: 'f',
+  placement: 'below',
 });
 
-if (result.success) {
-  console.log('Note inserted successfully');
-  score = result.data;
-} else {
-  // Handle errors like NOTE_CONFLICT or EXCEEDS_MEASURE
-  console.error('Failed to insert note:', result.errors);
-}
-```
-
-### Adding a Chord Note
-```typescript
-import { addChord } from 'musicxml-io/operations';
-
-const result = addChord(score, {
+// Later, change to piano
+const modified = modifyDynamics(result.data, {
   partIndex: 0,
   measureIndex: 0,
-  noteIndex: 0,  // Add chord to first note
-  pitch: { step: 'E', octave: 4 },
+  directionIndex: 0,
+  dynamics: 'p',
 });
-
-if (result.success) {
-  score = result.data;
-}
 ```
 
-### Changing Note Duration
+### Adding Tempo
 ```typescript
-import { changeNoteDuration } from 'musicxml-io/operations';
+import { addTempo, modifyTempo } from 'musicxml-io';
 
-// Extend a quarter note to half note
-// Automatically consumes following rests/notes
-const result = changeNoteDuration(score, {
+// Add Allegro tempo marking
+const result = addTempo(score, {
   partIndex: 0,
   measureIndex: 0,
-  noteIndex: 0,
-  newDuration: 8,  // Half note
-  noteType: 'half',
+  position: 0,
+  bpm: 120,
+  beatUnit: 'quarter',
+  text: 'Allegro',
 });
 
-if (result.success) {
-  score = result.data;
-}
-```
-
-### Adding a Voice
-```typescript
-import { addVoice } from 'musicxml-io/operations';
-
-// Add voice 2 to measure (filled with whole-measure rest)
-const result = addVoice(score, {
+// Later, change to 140 BPM
+const modified = modifyTempo(result.data, {
   partIndex: 0,
   measureIndex: 0,
-  voice: 2,
+  bpm: 140,
 });
-
-if (result.success) {
-  score = result.data;
-}
 ```
 
-### Adding a Part
+### Adding Articulations
 ```typescript
-import { addPart } from 'musicxml-io/operations';
+import { addArticulation } from 'musicxml-io';
 
-const result = addPart(score, {
-  id: 'P2',
-  name: 'Violin',
-});
-
-if (result.success) {
-  score = result.data;
-}
-```
-
-### Moving a Note to Different Staff
-```typescript
-import { moveNoteToStaff } from 'musicxml-io/operations';
-
-const result = moveNoteToStaff(score, {
+const result = addArticulation(score, {
   partIndex: 0,
   measureIndex: 0,
   noteIndex: 0,
-  targetStaff: 2,
+  articulation: 'staccato',
+});
+```
+
+### Adding Chord Symbols
+```typescript
+import { addChordSymbol } from 'musicxml-io';
+
+const result = addChordSymbol(score, {
+  partIndex: 0,
+  measureIndex: 0,
+  position: 0,
+  root: { step: 'C' },
+  kind: 'dominant-seventh', // C7
+});
+```
+
+### Adding Repeat Barlines
+```typescript
+import { addRepeat, addEnding } from 'musicxml-io';
+
+// Add forward repeat at measure start
+const withRepeat = addRepeat(score, {
+  partIndex: 0,
+  measureIndex: 0,
+  direction: 'forward',
 });
 
-if (result.success) {
-  score = result.data;
-}
+// Add first ending
+const withEnding = addEnding(withRepeat.data, {
+  partIndex: 0,
+  measureIndex: 3,
+  endingNumber: '1',
+  type: 'start',
+});
 ```
 
 ---
 
-## Validation Integration
+## Error Codes
 
-### How Operations Use Validator
-
-1. **Clone the score** (immutable pattern)
-2. **Apply the mutation**
-3. **Validate the affected area**
-   - For single-measure ops: `validateMeasureLocal()`
-   - For cross-measure ops: `validate()` with focused options
-4. **Return Result**
-   - Success: return new score
-   - Failure: return validation errors
-
-### Validation Options for Operations
-
-Operations use focused validation to be efficient:
-```typescript
-const opts: LocalValidateOptions = {
-  checkMeasureDuration: true,
-  checkPosition: true,
-  checkVoiceStaff: true,
-  checkBeams: false,  // Not affected by note add
-  checkTuplets: false, // Not affected by note add
-};
-```
-
----
-
-## Error Handling
-
-All operations return structured errors:
-```typescript
-interface ValidationError {
-  code: ValidationErrorCode;
-  level: 'error' | 'warning' | 'info';
-  message: string;
-  location: ValidationLocation;
-  details?: Record<string, unknown>;
-}
-```
-
-Only `level: 'error'` blocks operations. Warnings and infos are allowed.
+| Code | Description |
+|------|-------------|
+| `NOTE_CONFLICT` | Cannot insert note: conflicts with existing note |
+| `EXCEEDS_MEASURE` | Note duration would exceed measure capacity |
+| `INVALID_POSITION` | Position is invalid (negative) |
+| `INVALID_DURATION` | Duration is invalid (zero or negative) |
+| `NOTE_NOT_FOUND` | Note index not found |
+| `PART_NOT_FOUND` | Part not found |
+| `MEASURE_NOT_FOUND` | Measure not found |
+| `INVALID_STAFF` | Staff number is invalid |
+| `DUPLICATE_PART_ID` | Part ID already exists |
+| `TIE_ALREADY_EXISTS` | Tie already exists |
+| `TIE_NOT_FOUND` | Tie not found |
+| `TIE_PITCH_MISMATCH` | Tie notes have different pitches |
+| `SLUR_ALREADY_EXISTS` | Slur already exists |
+| `SLUR_NOT_FOUND` | Slur not found |
+| `ARTICULATION_ALREADY_EXISTS` | Articulation already exists |
+| `ARTICULATION_NOT_FOUND` | Articulation not found |
+| `DYNAMICS_NOT_FOUND` | Dynamics not found |
+| `TEMPO_NOT_FOUND` | Tempo marking not found |
+| `HARMONY_NOT_FOUND` | Harmony/chord symbol not found |
+| `INVALID_CLEF` | Invalid clef sign |
+| `REPEAT_ALREADY_EXISTS` | Repeat barline already exists |
+| `REPEAT_NOT_FOUND` | Repeat barline not found |
+| `ENDING_ALREADY_EXISTS` | Ending already exists |
+| `ENDING_NOT_FOUND` | Ending not found |
 
 ---
 

@@ -523,16 +523,18 @@ export function insertNote(
   return success(result, errors.filter(e => e.level !== 'error'));
 }
 
+export interface RemoveNoteOptions {
+  partIndex: number;
+  measureIndex: number;
+  noteIndex: number;
+}
+
 /**
  * Remove a note and replace with rest
  */
 export function removeNote(
   score: Score,
-  options: {
-    partIndex: number;
-    measureIndex: number;
-    noteIndex: number;
-  }
+  options: RemoveNoteOptions
 ): OperationResult<Score> {
   if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
     return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
@@ -588,17 +590,19 @@ export function removeNote(
   return success(result);
 }
 
+export interface AddChordOptions {
+  partIndex: number;
+  measureIndex: number;
+  noteIndex: number;
+  pitch: Pitch;
+}
+
 /**
  * Add a chord note to an existing note
  */
 export function addChord(
   score: Score,
-  options: {
-    partIndex: number;
-    measureIndex: number;
-    noteIndex: number;
-    pitch: Pitch;
-  }
+  options: AddChordOptions
 ): OperationResult<Score> {
   if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
     return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
@@ -662,6 +666,15 @@ export function addChord(
   return success(result);
 }
 
+export interface ChangeNoteDurationOptions {
+  partIndex: number;
+  measureIndex: number;
+  noteIndex: number;
+  newDuration: number;
+  noteType?: NoteEntry['noteType'];
+  dots?: number;
+}
+
 /**
  * Change note duration with proper handling of following notes
  * - If longer: consumes following rests/notes, returns error if would overwrite notes
@@ -669,14 +682,7 @@ export function addChord(
  */
 export function changeNoteDuration(
   score: Score,
-  options: {
-    partIndex: number;
-    measureIndex: number;
-    noteIndex: number;
-    newDuration: number;
-    noteType?: NoteEntry['noteType'];
-    dots?: number;
-  }
+  options: ChangeNoteDurationOptions
 ): OperationResult<Score> {
   if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
     return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
@@ -818,17 +824,19 @@ export function changeNoteDuration(
   return success(result, errors.filter(e => e.level !== 'error'));
 }
 
+export interface SetNotePitchOptions {
+  partIndex: number;
+  measureIndex: number;
+  noteIndex: number;
+  pitch: Pitch;
+}
+
 /**
  * Set note pitch (simple pitch change, no validation needed)
  */
 export function setNotePitch(
   score: Score,
-  options: {
-    partIndex: number;
-    measureIndex: number;
-    noteIndex: number;
-    pitch: Pitch;
-  }
+  options: SetNotePitchOptions
 ): OperationResult<Score> {
   if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
     return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
@@ -1150,17 +1158,19 @@ export function lowerAccidental(
 // Voice Operations
 // ============================================================
 
+export interface AddVoiceOptions {
+  partIndex: number;
+  measureIndex: number;
+  voice: number;
+  staff?: number;
+}
+
 /**
  * Add a new voice to a measure, filled with a whole-measure rest
  */
 export function addVoice(
   score: Score,
-  options: {
-    partIndex: number;
-    measureIndex: number;
-    voice: number;
-    staff?: number;
-  }
+  options: AddVoiceOptions
 ): OperationResult<Score> {
   if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
     return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
@@ -1365,9 +1375,15 @@ export function removePart(score: Score, partId: string): OperationResult<Score>
   return success(result);
 }
 
+export interface DuplicatePartOptions {
+  sourcePartId: string;
+  newPartId: string;
+  newPartName?: string;
+}
+
 export function duplicatePart(
   score: Score,
-  options: { sourcePartId: string; newPartId: string; newPartName?: string }
+  options: DuplicatePartOptions
 ): OperationResult<Score> {
   const sourceIndex = score.parts.findIndex(p => p.id === options.sourcePartId);
   if (sourceIndex === -1) {
@@ -1410,9 +1426,16 @@ export function duplicatePart(
 // Staff Operations
 // ============================================================
 
+export interface SetStavesOptions {
+  partIndex: number;
+  staves: number;
+  clefs?: Clef[];
+  fromMeasure?: number;
+}
+
 export function setStaves(
   score: Score,
-  options: { partIndex: number; staves: number; clefs?: Clef[]; fromMeasure?: number }
+  options: SetStavesOptions
 ): OperationResult<Score> {
   if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
     return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
@@ -1457,9 +1480,16 @@ export function setStaves(
   return success(result, validationResult.warnings);
 }
 
+export interface MoveNoteToStaffOptions {
+  partIndex: number;
+  measureIndex: number;
+  noteIndex: number;
+  targetStaff: number;
+}
+
 export function moveNoteToStaff(
   score: Score,
-  options: { partIndex: number; measureIndex: number; noteIndex: number; targetStaff: number }
+  options: MoveNoteToStaffOptions
 ): OperationResult<Score> {
   if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
     return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
@@ -2106,6 +2136,74 @@ export function removeDynamics(
   }
 
   measure.entries.splice(targetIndex, 1);
+
+  return success(result);
+}
+
+export interface ModifyDynamicsOptions {
+  partIndex: number;
+  measureIndex: number;
+  /** Index of the dynamics direction to modify (among dynamics directions in the measure) */
+  directionIndex: number;
+  /** New dynamics value */
+  dynamics: DynamicsValue;
+  /** New placement (optional) */
+  placement?: 'above' | 'below';
+}
+
+/**
+ * Modify an existing dynamics marking in a measure
+ */
+export function modifyDynamics(
+  score: Score,
+  options: ModifyDynamicsOptions
+): OperationResult<Score> {
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  if (options.measureIndex < 0 || options.measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const measure = result.parts[options.partIndex].measures[options.measureIndex];
+
+  // Find dynamics directions
+  let dynamicsCount = 0;
+  let targetIndex = -1;
+
+  for (let i = 0; i < measure.entries.length; i++) {
+    const entry = measure.entries[i];
+    if (entry.type === 'direction') {
+      const hasDynamics = entry.directionTypes.some(dt => dt.kind === 'dynamics');
+      if (hasDynamics) {
+        if (dynamicsCount === options.directionIndex) {
+          targetIndex = i;
+          break;
+        }
+        dynamicsCount++;
+      }
+    }
+  }
+
+  if (targetIndex === -1) {
+    return failure([operationError('DYNAMICS_NOT_FOUND', `Dynamics direction index ${options.directionIndex} not found`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const direction = measure.entries[targetIndex] as DirectionEntry;
+
+  // Update dynamics value
+  const dynamicsType = direction.directionTypes.find(dt => dt.kind === 'dynamics');
+  if (dynamicsType && dynamicsType.kind === 'dynamics') {
+    dynamicsType.value = options.dynamics;
+  }
+
+  // Update placement if specified
+  if (options.placement !== undefined) {
+    direction.placement = options.placement;
+  }
 
   return success(result);
 }
@@ -3636,6 +3734,106 @@ export function removeTempo(
   }
 
   measure.entries.splice(tempoDirectionIndices[targetIndex], 1);
+
+  return success(result);
+}
+
+export interface ModifyTempoOptions {
+  partIndex: number;
+  measureIndex: number;
+  /** Index of the tempo direction to modify (among tempo directions in the measure) */
+  directionIndex?: number;
+  /** New BPM value */
+  bpm?: number;
+  /** New beat unit */
+  beatUnit?: 'whole' | 'half' | 'quarter' | 'eighth' | '16th' | '32nd' | '64th';
+  /** Beat unit dot */
+  beatUnitDot?: boolean;
+  /** New tempo text (e.g., 'Allegro') */
+  text?: string;
+  /** Placement */
+  placement?: 'above' | 'below';
+}
+
+/**
+ * Modify an existing tempo marking in a measure
+ */
+export function modifyTempo(
+  score: Score,
+  options: ModifyTempoOptions
+): OperationResult<Score> {
+  if (options.partIndex < 0 || options.partIndex >= score.parts.length) {
+    return failure([operationError('PART_NOT_FOUND', `Part index ${options.partIndex} out of bounds`, { partIndex: options.partIndex })]);
+  }
+
+  const part = score.parts[options.partIndex];
+  if (options.measureIndex < 0 || options.measureIndex >= part.measures.length) {
+    return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const result = cloneScore(score);
+  const measure = result.parts[options.partIndex].measures[options.measureIndex];
+
+  // Find tempo directions
+  const tempoDirectionIndices: number[] = [];
+  for (let i = 0; i < measure.entries.length; i++) {
+    const entry = measure.entries[i];
+    if (entry.type === 'direction' && entry.directionTypes.some(dt => dt.kind === 'metronome')) {
+      tempoDirectionIndices.push(i);
+    }
+  }
+
+  if (tempoDirectionIndices.length === 0) {
+    return failure([operationError('TEMPO_NOT_FOUND', 'No tempo marking found in measure', { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const targetIndex = options.directionIndex ?? 0;
+  if (targetIndex < 0 || targetIndex >= tempoDirectionIndices.length) {
+    return failure([operationError('TEMPO_NOT_FOUND', `Tempo direction index ${targetIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
+  }
+
+  const direction = measure.entries[tempoDirectionIndices[targetIndex]] as DirectionEntry;
+
+  // Update metronome
+  const metronome = direction.directionTypes.find(dt => dt.kind === 'metronome');
+  if (metronome && metronome.kind === 'metronome') {
+    if (options.bpm !== undefined) {
+      metronome.perMinute = options.bpm;
+    }
+    if (options.beatUnit !== undefined) {
+      metronome.beatUnit = options.beatUnit;
+    }
+    if (options.beatUnitDot !== undefined) {
+      metronome.beatUnitDot = options.beatUnitDot;
+    }
+  }
+
+  // Update or add words
+  if (options.text !== undefined) {
+    const wordsIndex = direction.directionTypes.findIndex(dt => dt.kind === 'words');
+    if (wordsIndex >= 0) {
+      const words = direction.directionTypes[wordsIndex];
+      if (words.kind === 'words') {
+        words.text = options.text;
+      }
+    } else if (options.text) {
+      direction.directionTypes.push({
+        kind: 'words',
+        text: options.text,
+        fontWeight: 'bold',
+      });
+    }
+  }
+
+  // Update sound tempo
+  if (options.bpm !== undefined && direction.sound) {
+    direction.sound.tempo = options.bpm;
+  }
+
+  // Update placement
+  if (options.placement !== undefined) {
+    direction.placement = options.placement;
+  }
 
   return success(result);
 }
@@ -6318,6 +6516,64 @@ export function removeCaesura(
 
   return success(result);
 }
+
+// ============================================================
+// Convenience Aliases
+// ============================================================
+
+/**
+ * Add text to the score. Alias for addTextDirection.
+ */
+export const addText = addTextDirection;
+export type AddTextOptions = AddTextDirectionOptions;
+
+/**
+ * Set beaming for notes. Alias for autoBeam.
+ */
+export const setBeaming = autoBeam;
+export type SetBeamingOptions = AutoBeamOptions;
+
+/**
+ * Add a chord symbol. Alias for addHarmony.
+ */
+export const addChordSymbol = addHarmony;
+export type AddChordSymbolOptions = AddHarmonyOptions;
+
+/**
+ * Remove a chord symbol. Alias for removeHarmony.
+ */
+export const removeChordSymbol = removeHarmony;
+export type RemoveChordSymbolOptions = RemoveHarmonyOptions;
+
+/**
+ * Update a chord symbol. Alias for updateHarmony.
+ */
+export const updateChordSymbol = updateHarmony;
+export type UpdateChordSymbolOptions = UpdateHarmonyOptions;
+
+/**
+ * Change the clef at a position. Alias for insertClefChange.
+ */
+export const changeClef = insertClefChange;
+export type ChangeClefOptions = InsertClefChangeOptions;
+
+/**
+ * Set barline style. Alias for changeBarline.
+ */
+export const setBarline = changeBarline;
+export type SetBarlineOptions = ChangeBarlineOptions;
+
+/**
+ * Add a repeat barline. Alias for addRepeatBarline.
+ */
+export const addRepeat = addRepeatBarline;
+export type AddRepeatOptions = AddRepeatBarlineOptions;
+
+/**
+ * Remove a repeat barline. Alias for removeRepeatBarline.
+ */
+export const removeRepeat = removeRepeatBarline;
+export type RemoveRepeatOptions = RemoveRepeatBarlineOptions;
 
 // Re-exports
 export type { ValidationError } from '../validator';
