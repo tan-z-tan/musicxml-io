@@ -330,6 +330,50 @@ This feature enables:
 | Node coverage | 99.9% |
 | Attribute coverage | 95.9% |
 
+## Contributing
+
+Contributions are welcome! Whether it's bug reports, feature requests, documentation improvements, or code contributions, we appreciate your help in making this library better.
+
+### Development Setup
+
+```bash
+# Clone the repository
+git clone https://github.com/tan-z-tan/musicxml-io.git
+cd musicxml-io
+
+# Install dependencies
+npm install
+
+# Run tests
+npm test
+
+# Build
+npm run build
+
+# Type check
+npm run typecheck
+
+# Lint
+npm run lint
+```
+
+### How to Contribute
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Make your changes
+4. Run tests to ensure everything works (`npm test`)
+5. Commit your changes (`git commit -m 'Add amazing feature'`)
+6. Push to the branch (`git push origin feature/amazing-feature`)
+7. Open a Pull Request
+
+### Guidelines
+
+- Write tests for new features
+- Follow the existing code style
+- Update documentation as needed
+- Keep PRs focused on a single change
+
 ## License
 
 MIT
