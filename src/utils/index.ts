@@ -11,6 +11,50 @@ const SHARP_ORDER: Pitch['step'][] = ['F', 'C', 'G', 'D', 'A', 'E', 'B'];
 // Flat order for key signatures (fifths < 0)
 const FLAT_ORDER: Pitch['step'][] = ['B', 'E', 'A', 'D', 'G', 'C', 'F'];
 
+/**
+ * Standard key signatures mapped by name.
+ * Includes all major and minor keys from -7 to +7 fifths.
+ */
+export const KEY_SIGNATURES: Record<string, KeySignature> = {
+  // Major keys (sharps)
+  'C major': { fifths: 0, mode: 'major' },
+  'G major': { fifths: 1, mode: 'major' },
+  'D major': { fifths: 2, mode: 'major' },
+  'A major': { fifths: 3, mode: 'major' },
+  'E major': { fifths: 4, mode: 'major' },
+  'B major': { fifths: 5, mode: 'major' },
+  'F# major': { fifths: 6, mode: 'major' },
+  'C# major': { fifths: 7, mode: 'major' },
+
+  // Major keys (flats)
+  'F major': { fifths: -1, mode: 'major' },
+  'Bb major': { fifths: -2, mode: 'major' },
+  'Eb major': { fifths: -3, mode: 'major' },
+  'Ab major': { fifths: -4, mode: 'major' },
+  'Db major': { fifths: -5, mode: 'major' },
+  'Gb major': { fifths: -6, mode: 'major' },
+  'Cb major': { fifths: -7, mode: 'major' },
+
+  // Minor keys (sharps)
+  'A minor': { fifths: 0, mode: 'minor' },
+  'E minor': { fifths: 1, mode: 'minor' },
+  'B minor': { fifths: 2, mode: 'minor' },
+  'F# minor': { fifths: 3, mode: 'minor' },
+  'C# minor': { fifths: 4, mode: 'minor' },
+  'G# minor': { fifths: 5, mode: 'minor' },
+  'D# minor': { fifths: 6, mode: 'minor' },
+  'A# minor': { fifths: 7, mode: 'minor' },
+
+  // Minor keys (flats)
+  'D minor': { fifths: -1, mode: 'minor' },
+  'G minor': { fifths: -2, mode: 'minor' },
+  'C minor': { fifths: -3, mode: 'minor' },
+  'F minor': { fifths: -4, mode: 'minor' },
+  'Bb minor': { fifths: -5, mode: 'minor' },
+  'Eb minor': { fifths: -6, mode: 'minor' },
+  'Ab minor': { fifths: -7, mode: 'minor' },
+};
+
 /** Convert pitch to semitone value (MIDI-like) */
 export function pitchToSemitone(pitch: Pitch): number {
   return pitch.octave * 12 + STEP_SEMITONES[pitch.step] + (pitch.alter ?? 0);

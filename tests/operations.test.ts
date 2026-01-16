@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { parse } from '../src';
+import { parse, KEY_SIGNATURES } from '../src';
 import {
   transpose,
   addNote,
@@ -5003,6 +5003,83 @@ describe('Expression/Performance Operations', () => {
         const repeatBarline = measure.barlines?.find(b => b.repeat);
         expect(repeatBarline).toBeUndefined();
       }
+    });
+  });
+
+  describe('KEY_SIGNATURES constant', () => {
+    it('should have correct fifths for major keys with sharps', () => {
+      expect(KEY_SIGNATURES['C major']).toEqual({ fifths: 0, mode: 'major' });
+      expect(KEY_SIGNATURES['G major']).toEqual({ fifths: 1, mode: 'major' });
+      expect(KEY_SIGNATURES['D major']).toEqual({ fifths: 2, mode: 'major' });
+      expect(KEY_SIGNATURES['A major']).toEqual({ fifths: 3, mode: 'major' });
+      expect(KEY_SIGNATURES['E major']).toEqual({ fifths: 4, mode: 'major' });
+      expect(KEY_SIGNATURES['B major']).toEqual({ fifths: 5, mode: 'major' });
+      expect(KEY_SIGNATURES['F# major']).toEqual({ fifths: 6, mode: 'major' });
+      expect(KEY_SIGNATURES['C# major']).toEqual({ fifths: 7, mode: 'major' });
+    });
+
+    it('should have correct fifths for major keys with flats', () => {
+      expect(KEY_SIGNATURES['F major']).toEqual({ fifths: -1, mode: 'major' });
+      expect(KEY_SIGNATURES['Bb major']).toEqual({ fifths: -2, mode: 'major' });
+      expect(KEY_SIGNATURES['Eb major']).toEqual({ fifths: -3, mode: 'major' });
+      expect(KEY_SIGNATURES['Ab major']).toEqual({ fifths: -4, mode: 'major' });
+      expect(KEY_SIGNATURES['Db major']).toEqual({ fifths: -5, mode: 'major' });
+      expect(KEY_SIGNATURES['Gb major']).toEqual({ fifths: -6, mode: 'major' });
+      expect(KEY_SIGNATURES['Cb major']).toEqual({ fifths: -7, mode: 'major' });
+    });
+
+    it('should have correct fifths for minor keys with sharps', () => {
+      expect(KEY_SIGNATURES['A minor']).toEqual({ fifths: 0, mode: 'minor' });
+      expect(KEY_SIGNATURES['E minor']).toEqual({ fifths: 1, mode: 'minor' });
+      expect(KEY_SIGNATURES['B minor']).toEqual({ fifths: 2, mode: 'minor' });
+      expect(KEY_SIGNATURES['F# minor']).toEqual({ fifths: 3, mode: 'minor' });
+      expect(KEY_SIGNATURES['C# minor']).toEqual({ fifths: 4, mode: 'minor' });
+      expect(KEY_SIGNATURES['G# minor']).toEqual({ fifths: 5, mode: 'minor' });
+      expect(KEY_SIGNATURES['D# minor']).toEqual({ fifths: 6, mode: 'minor' });
+      expect(KEY_SIGNATURES['A# minor']).toEqual({ fifths: 7, mode: 'minor' });
+    });
+
+    it('should have correct fifths for minor keys with flats', () => {
+      expect(KEY_SIGNATURES['D minor']).toEqual({ fifths: -1, mode: 'minor' });
+      expect(KEY_SIGNATURES['G minor']).toEqual({ fifths: -2, mode: 'minor' });
+      expect(KEY_SIGNATURES['C minor']).toEqual({ fifths: -3, mode: 'minor' });
+      expect(KEY_SIGNATURES['F minor']).toEqual({ fifths: -4, mode: 'minor' });
+      expect(KEY_SIGNATURES['Bb minor']).toEqual({ fifths: -5, mode: 'minor' });
+      expect(KEY_SIGNATURES['Eb minor']).toEqual({ fifths: -6, mode: 'minor' });
+      expect(KEY_SIGNATURES['Ab minor']).toEqual({ fifths: -7, mode: 'minor' });
+    });
+
+    it('should work with changeKey operation', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // Use KEY_SIGNATURES constant with changeKey
+      const updated = changeKey(score, KEY_SIGNATURES['Gb major'], { fromMeasure: 1 });
+      expect(updated.parts[0].measures[0].attributes?.key?.fifths).toBe(-6);
+      expect(updated.parts[0].measures[0].attributes?.key?.mode).toBe('major');
+    });
+
+    it('should support 7-accidental keys', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // Test C# major (7 sharps)
+      const sharpKey = changeKey(score, KEY_SIGNATURES['C# major'], { fromMeasure: 1 });
+      expect(sharpKey.parts[0].measures[0].attributes?.key?.fifths).toBe(7);
+
+      // Test Cb major (7 flats)
+      const flatKey = changeKey(score, KEY_SIGNATURES['Cb major'], { fromMeasure: 1 });
+      expect(flatKey.parts[0].measures[0].attributes?.key?.fifths).toBe(-7);
+
+      // Test A# minor (7 sharps)
+      const sharpMinor = changeKey(score, KEY_SIGNATURES['A# minor'], { fromMeasure: 1 });
+      expect(sharpMinor.parts[0].measures[0].attributes?.key?.fifths).toBe(7);
+      expect(sharpMinor.parts[0].measures[0].attributes?.key?.mode).toBe('minor');
+
+      // Test Ab minor (7 flats)
+      const flatMinor = changeKey(score, KEY_SIGNATURES['Ab minor'], { fromMeasure: 1 });
+      expect(flatMinor.parts[0].measures[0].attributes?.key?.fifths).toBe(-7);
+      expect(flatMinor.parts[0].measures[0].attributes?.key?.mode).toBe('minor');
     });
   });
 });

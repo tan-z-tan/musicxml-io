@@ -442,6 +442,7 @@ export { parseFile, serializeToFile, decodeBuffer } from './file';
 export {
   STEPS,
   STEP_SEMITONES,
+  KEY_SIGNATURES,
   pitchToSemitone,
   getMeasureEndPosition,
 } from './utils';
