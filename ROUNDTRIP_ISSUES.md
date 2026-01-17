@@ -54,26 +54,32 @@ The DOCTYPE declaration is always normalized to MusicXML 4.0, regardless of the 
 <!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 4.0 Partwise//EN" ...>
 ```
 
-### 4. `other-dynamics` Not Preserved in Direction Types (BUG)
+### 4. `other-dynamics` Not Preserved in Direction Types (FIXED)
 **Severity: Medium**
 **Impact: Data loss**
+**Status: ✅ FIXED**
 
-Location: `src/importers/musicxml.ts:parseDirectionTypes()` (lines 1784-1805)
+Location: `src/importers/musicxml.ts:parseDirectionTypes()` (lines 1784-1823)
 
-The `<other-dynamics>` element within direction-type is not parsed. Only standard dynamics values are processed.
+The `<other-dynamics>` element within direction-type is now correctly parsed and serialized.
 
 ```xml
-<!-- Original - this is lost -->
+<!-- Original -->
 <direction>
   <direction-type>
     <dynamics><other-dynamics>abc-ffz</other-dynamics></dynamics>
   </direction-type>
 </direction>
 
-<!-- After roundtrip - direction is missing -->
+<!-- After roundtrip - correctly preserved -->
+<direction>
+  <direction-type>
+    <dynamics>
+      <other-dynamics>abc-ffz</other-dynamics>
+    </dynamics>
+  </direction-type>
+</direction>
 ```
-
-**Fix Required:** Add `other-dynamics` handling in `parseDirectionTypes()` function.
 
 ### 5. Attribute Order Changes (Non-issue)
 **Severity: None**
