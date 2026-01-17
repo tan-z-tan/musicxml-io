@@ -1615,6 +1615,7 @@ function serializeDirectionType(dirType: DirectionType, indent: string): string[
       if (dirType.defaultX !== undefined) wordAttrs += ` default-x="${dirType.defaultX}"`;
       if (dirType.defaultY !== undefined) wordAttrs += ` default-y="${dirType.defaultY}"`;
       if (dirType.relativeX !== undefined) wordAttrs += ` relative-x="${dirType.relativeX}"`;
+      if (dirType.relativeY !== undefined) wordAttrs += ` relative-y="${dirType.relativeY}"`;
       if (dirType.fontFamily) wordAttrs += ` font-family="${escapeXml(dirType.fontFamily)}"`;
       if (dirType.fontSize) wordAttrs += ` font-size="${escapeXml(dirType.fontSize)}"`;
       if (dirType.fontStyle) wordAttrs += ` font-style="${escapeXml(dirType.fontStyle)}"`;
