@@ -1727,8 +1727,8 @@ function parseDirection(elements: OrderedElement[], attrs: Record<string, string
   // Direction types
   for (const el of elements) {
     if (el['direction-type']) {
-      const parsed = parseDirectionType(el['direction-type'] as OrderedElement[]);
-      if (parsed) {
+      const parsedTypes = parseDirectionTypes(el['direction-type'] as OrderedElement[]);
+      for (const parsed of parsedTypes) {
         direction.directionTypes.push(parsed);
       }
     }
@@ -1771,7 +1771,14 @@ function parseDirection(elements: OrderedElement[], attrs: Record<string, string
   return direction;
 }
 
-function parseDirectionType(elements: OrderedElement[]): DirectionType | null {
+/**
+ * Parse direction-type elements and return all direction types found.
+ * A single direction-type can contain multiple elements (e.g., multiple words),
+ * and we need to return all of them.
+ */
+function parseDirectionTypes(elements: OrderedElement[]): DirectionType[] {
+  const results: DirectionType[] = [];
+
   for (const el of elements) {
     // Dynamics
     if (el['dynamics']) {
@@ -1791,10 +1798,12 @@ function parseDirectionType(elements: OrderedElement[]): DirectionType | null {
             if (dynAttrs['default-y']) result.defaultY = parseFloat(dynAttrs['default-y']);
             if (dynAttrs['relative-x']) result.relativeX = parseFloat(dynAttrs['relative-x']);
             if (dynAttrs['halign']) result.halign = dynAttrs['halign'];
-            return result;
+            results.push(result);
+            break; // Only one dynamics value per dynamics element
           }
         }
       }
+      continue; // Continue to next element in direction-type
     }
 
     // Wedge
@@ -1806,8 +1815,9 @@ function parseDirectionType(elements: OrderedElement[]): DirectionType | null {
         if (wedgeAttrs['spread']) result.spread = parseFloat(wedgeAttrs['spread']);
         if (wedgeAttrs['default-y']) result.defaultY = parseFloat(wedgeAttrs['default-y']);
         if (wedgeAttrs['relative-x']) result.relativeX = parseFloat(wedgeAttrs['relative-x']);
-        return result;
+        results.push(result);
       }
+      continue;
     }
 
     // Metronome
@@ -1853,30 +1863,32 @@ function parseDirectionType(elements: OrderedElement[]): DirectionType | null {
         if (metAttrs['default-y']) result.defaultY = parseFloat(metAttrs['default-y']);
         if (metAttrs['font-family']) result.fontFamily = metAttrs['font-family'];
         if (metAttrs['font-size']) result.fontSize = metAttrs['font-size'];
-        return result;
+        results.push(result);
       }
+      continue;
     }
 
-    // Words
+    // Words - collect all words elements in this direction-type
     if (el['words']) {
       const a = getAttributes(el);
       const text = extractText(el['words'] as OrderedElement[]);
-      if (text) {
-        const result: DirectionType = { kind: 'words', text };
-        if (a['default-x']) result.defaultX = parseFloat(a['default-x']);
-        if (a['default-y']) result.defaultY = parseFloat(a['default-y']);
-        if (a['relative-x']) result.relativeX = parseFloat(a['relative-x']);
-        if (a['font-family']) result.fontFamily = a['font-family'];
-        if (a['font-size']) result.fontSize = a['font-size'];
-        if (a['font-style']) result.fontStyle = a['font-style'];
-        if (a['font-weight']) result.fontWeight = a['font-weight'];
-        if (a['xml:lang']) result.xmlLang = a['xml:lang'];
-        if (a['justify']) result.justify = a['justify'];
-        if (a['color']) result.color = a['color'];
-        if (a['xml:space']) result.xmlSpace = a['xml:space'];
-        if (a['halign']) result.halign = a['halign'];
-        return result;
-      }
+      // Include words even if text is empty - preserve styling info
+      const result: DirectionType = { kind: 'words', text: text || '' };
+      if (a['default-x']) result.defaultX = parseFloat(a['default-x']);
+      if (a['default-y']) result.defaultY = parseFloat(a['default-y']);
+      if (a['relative-x']) result.relativeX = parseFloat(a['relative-x']);
+      if (a['relative-y']) result.relativeY = parseFloat(a['relative-y']);
+      if (a['font-family']) result.fontFamily = a['font-family'];
+      if (a['font-size']) result.fontSize = a['font-size'];
+      if (a['font-style']) result.fontStyle = a['font-style'];
+      if (a['font-weight']) result.fontWeight = a['font-weight'];
+      if (a['xml:lang']) result.xmlLang = a['xml:lang'];
+      if (a['justify']) result.justify = a['justify'];
+      if (a['color']) result.color = a['color'];
+      if (a['xml:space']) result.xmlSpace = a['xml:space'];
+      if (a['halign']) result.halign = a['halign'];
+      results.push(result);
+      continue;
     }
 
     // Rehearsal
@@ -1890,8 +1902,9 @@ function parseDirectionType(elements: OrderedElement[]): DirectionType | null {
         if (a['default-y']) result.defaultY = parseFloat(a['default-y']);
         if (a['font-size']) result.fontSize = a['font-size'];
         if (a['font-weight']) result.fontWeight = a['font-weight'];
-        return result;
+        results.push(result);
       }
+      continue;
     }
 
     // Bracket
@@ -1905,8 +1918,9 @@ function parseDirectionType(elements: OrderedElement[]): DirectionType | null {
         if (bracketAttrs['line-type']) result.lineType = bracketAttrs['line-type'] as 'solid' | 'dashed' | 'dotted' | 'wavy';
         if (bracketAttrs['default-y']) result.defaultY = parseFloat(bracketAttrs['default-y']);
         if (bracketAttrs['relative-x']) result.relativeX = parseFloat(bracketAttrs['relative-x']);
-        return result;
+        results.push(result);
       }
+      continue;
     }
 
     // Dashes
@@ -1919,8 +1933,9 @@ function parseDirectionType(elements: OrderedElement[]): DirectionType | null {
         if (dashAttrs['dash-length']) result.dashLength = parseFloat(dashAttrs['dash-length']);
         if (dashAttrs['default-y']) result.defaultY = parseFloat(dashAttrs['default-y']);
         if (dashAttrs['space-length']) result.spaceLength = parseFloat(dashAttrs['space-length']);
-        return result;
+        results.push(result);
       }
+      continue;
     }
 
     // Accordion registration
@@ -1942,7 +1957,8 @@ function parseDirectionType(elements: OrderedElement[]): DirectionType | null {
           result.low = true;
         }
       }
-      return result;
+      results.push(result);
+      continue;
     }
 
     // Other direction
@@ -1956,34 +1972,41 @@ function parseDirectionType(elements: OrderedElement[]): DirectionType | null {
           if (otherAttrs['default-y']) result.defaultY = parseFloat(otherAttrs['default-y']);
           if (otherAttrs['halign']) result.halign = otherAttrs['halign'];
           if (otherAttrs['print-object'] === 'no') result.printObject = false;
-          return result;
+          results.push(result);
+          break;
         }
       }
+      continue;
     }
 
     // Segno
     if (el['segno'] !== undefined) {
-      return { kind: 'segno' };
+      results.push({ kind: 'segno' });
+      continue;
     }
 
     // Coda
     if (el['coda'] !== undefined) {
-      return { kind: 'coda' };
+      results.push({ kind: 'coda' });
+      continue;
     }
 
     // Eyeglasses
     if (el['eyeglasses'] !== undefined) {
-      return { kind: 'eyeglasses' };
+      results.push({ kind: 'eyeglasses' });
+      continue;
     }
 
     // Damp
     if (el['damp'] !== undefined) {
-      return { kind: 'damp' };
+      results.push({ kind: 'damp' });
+      continue;
     }
 
     // Damp-all
     if (el['damp-all'] !== undefined) {
-      return { kind: 'damp-all' };
+      results.push({ kind: 'damp-all' });
+      continue;
     }
 
     // Scordatura
@@ -2008,7 +2031,8 @@ function parseDirectionType(elements: OrderedElement[]): DirectionType | null {
           }
         }
       }
-      return { kind: 'scordatura', accords: accords.length > 0 ? accords : undefined };
+      results.push({ kind: 'scordatura', accords: accords.length > 0 ? accords : undefined });
+      continue;
     }
 
     // Harp pedals
@@ -2028,17 +2052,19 @@ function parseDirectionType(elements: OrderedElement[]): DirectionType | null {
           }
         }
       }
-      return { kind: 'harp-pedals', pedalTunings: pedalTunings.length > 0 ? pedalTunings : undefined };
+      results.push({ kind: 'harp-pedals', pedalTunings: pedalTunings.length > 0 ? pedalTunings : undefined });
+      continue;
     }
 
     // Image
     if (el['image'] !== undefined) {
       const imgAttrs = getAttributes(el);
-      return {
+      results.push({
         kind: 'image',
         source: imgAttrs['source'],
         type: imgAttrs['type'],
-      };
+      });
+      continue;
     }
 
     // Pedal
@@ -2052,8 +2078,9 @@ function parseDirectionType(elements: OrderedElement[]): DirectionType | null {
         if (pedalAttrs['default-y']) result.defaultY = parseFloat(pedalAttrs['default-y']);
         if (pedalAttrs['relative-x']) result.relativeX = parseFloat(pedalAttrs['relative-x']);
         if (pedalAttrs['halign']) result.halign = pedalAttrs['halign'];
-        return result;
+        results.push(result);
       }
+      continue;
     }
 
     // Octave shift
@@ -2063,8 +2090,9 @@ function parseDirectionType(elements: OrderedElement[]): DirectionType | null {
       if (shiftType === 'up' || shiftType === 'down' || shiftType === 'stop') {
         const result: DirectionType = { kind: 'octave-shift', type: shiftType };
         if (shiftAttrs['size']) result.size = parseInt(shiftAttrs['size'], 10);
-        return result;
+        results.push(result);
       }
+      continue;
     }
 
     // Swing
@@ -2102,11 +2130,12 @@ function parseDirectionType(elements: OrderedElement[]): DirectionType | null {
         }
       }
 
-      return result;
+      results.push(result);
+      continue;
     }
   }
 
-  return null;
+  return results;
 }
 
 function parseBarline(elements: OrderedElement[], attrs: Record<string, string>): Barline {

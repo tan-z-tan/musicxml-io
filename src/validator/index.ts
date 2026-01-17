@@ -640,15 +640,17 @@ export function validateBeams(
 ): ValidationError[] {
   const errors: ValidationError[] = [];
 
-  // Track open beams by beam number and voice
-  const openBeams = new Map<string, number>(); // key -> entryIndex
+  // Track open beams by beam number and voice (NOT staff, as beams can span across staves)
+  // Store entryIndex and staff for error reporting
+  const openBeams = new Map<string, { entryIndex: number; staff: number }>(); // key -> { entryIndex, staff }
 
   for (let entryIndex = 0; entryIndex < measure.entries.length; entryIndex++) {
     const entry = measure.entries[entryIndex];
     if (entry.type !== 'note' || !entry.beam) continue;
 
     for (const beam of entry.beam) {
-      const beamKey = `${beam.number}-${entry.voice}-${entry.staff ?? 1}`;
+      // Key is beam number + voice only (not staff) to support cross-staff beaming
+      const beamKey = `${beam.number}-${entry.voice}`;
 
       if (beam.type === 'begin') {
         if (openBeams.has(beamKey)) {
@@ -660,7 +662,7 @@ export function validateBeams(
             details: { beamNumber: beam.number },
           });
         }
-        openBeams.set(beamKey, entryIndex);
+        openBeams.set(beamKey, { entryIndex, staff: entry.staff ?? 1 });
       } else if (beam.type === 'end') {
         if (!openBeams.has(beamKey)) {
           errors.push({
@@ -679,8 +681,8 @@ export function validateBeams(
   }
 
   // Report unclosed beams
-  for (const [beamKey, startIndex] of openBeams.entries()) {
-    const [beamNumber, voice, staff] = beamKey.split('-').map(Number);
+  for (const [beamKey, { entryIndex: startIndex, staff }] of openBeams.entries()) {
+    const [beamNumber, voice] = beamKey.split('-').map(Number);
     errors.push({
       code: 'BEAM_BEGIN_WITHOUT_END',
       level: 'error',
