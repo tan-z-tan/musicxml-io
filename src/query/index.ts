@@ -1004,6 +1004,7 @@ export function getDynamics(
             if (dirType.kind === 'dynamics') {
               results.push({
                 dynamic: dirType.value,
+                otherDynamics: dirType.otherDynamics,
                 direction: entry,
                 part,
                 partIndex,

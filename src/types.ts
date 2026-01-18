@@ -972,7 +972,8 @@ export type DirectionKind = DirectionType['kind'];
  * Dynamic marking with context
  */
 export interface DynamicWithContext {
-  dynamic: DynamicsValue;
+  dynamic?: DynamicsValue;
+  otherDynamics?: string;
   direction: DirectionEntry;
   part: Part;
   partIndex: number;
