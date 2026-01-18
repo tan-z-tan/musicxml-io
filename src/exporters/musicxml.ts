@@ -1572,7 +1572,12 @@ function serializeDirectionType(dirType: DirectionType, indent: string): string[
       if (dirType.relativeX !== undefined) dynAttrs += ` relative-x="${dirType.relativeX}"`;
       if (dirType.halign) dynAttrs += ` halign="${dirType.halign}"`;
       lines.push(`${indent}  <dynamics${dynAttrs}>`);
-      lines.push(`${indent}    <${dirType.value}/>`);
+      if (dirType.value) {
+        lines.push(`${indent}    <${dirType.value}/>`);
+      }
+      if (dirType.otherDynamics) {
+        lines.push(`${indent}    <other-dynamics>${escapeXml(dirType.otherDynamics)}</other-dynamics>`);
+      }
       lines.push(`${indent}  </dynamics>`);
       break;
     }

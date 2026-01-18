@@ -1791,6 +1791,8 @@ function parseDirectionTypes(elements: OrderedElement[]): DirectionType[] {
         'sf', 'sfz', 'sffz', 'sfp', 'sfpp', 'fp', 'rf', 'rfz', 'fz', 'n', 'pf',
       ];
       for (const dyn of dynContent) {
+        // Check for standard dynamics
+        let foundStandard = false;
         for (const dv of dynamicsValues) {
           if (dyn[dv] !== undefined) {
             const result: DirectionType = { kind: 'dynamics', value: dv };
@@ -1799,7 +1801,21 @@ function parseDirectionTypes(elements: OrderedElement[]): DirectionType[] {
             if (dynAttrs['relative-x']) result.relativeX = parseFloat(dynAttrs['relative-x']);
             if (dynAttrs['halign']) result.halign = dynAttrs['halign'];
             results.push(result);
+            foundStandard = true;
             break; // Only one dynamics value per dynamics element
+          }
+        }
+        // Check for other-dynamics
+        if (!foundStandard && dyn['other-dynamics'] !== undefined) {
+          const otherDynContent = dyn['other-dynamics'] as OrderedElement[];
+          const otherDynText = extractText(otherDynContent);
+          if (otherDynText) {
+            const result: DirectionType = { kind: 'dynamics', otherDynamics: otherDynText };
+            if (dynAttrs['default-x']) result.defaultX = parseFloat(dynAttrs['default-x']);
+            if (dynAttrs['default-y']) result.defaultY = parseFloat(dynAttrs['default-y']);
+            if (dynAttrs['relative-x']) result.relativeX = parseFloat(dynAttrs['relative-x']);
+            if (dynAttrs['halign']) result.halign = dynAttrs['halign'];
+            results.push(result);
           }
         }
       }
