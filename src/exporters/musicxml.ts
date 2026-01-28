@@ -36,6 +36,7 @@ import type {
   TechnicalNotation,
   DisplayText,
   AttributesEntry,
+  GroupingEntry,
 } from '../types';
 import {
   validate,
@@ -258,6 +259,11 @@ function serializeDefaults(defaults: Defaults, indent: string): string[] {
         lines.push(`${indent}${indent}${indent}<distance type="${escapeXml(d.type)}">${d.value}</distance>`);
       }
     }
+    if (app['glyphs']) {
+      for (const g of app['glyphs'] as Array<{ type: string; value: string }>) {
+        lines.push(`${indent}${indent}${indent}<glyph type="${escapeXml(g.type)}">${escapeXml(g.value)}</glyph>`);
+      }
+    }
     lines.push(`${indent}${indent}</appearance>`);
   }
 
@@ -372,6 +378,37 @@ function serializeSystemLayout(layout: SystemLayout, indent: string): string[] {
     lines.push(`${indent}  <top-system-distance>${layout.topSystemDistance}</top-system-distance>`);
   }
 
+  if (layout.systemDividers) {
+    lines.push(`${indent}  <system-dividers>`);
+    if (layout.systemDividers.leftDivider) {
+      let attrs = '';
+      if (layout.systemDividers.leftDivider.printObject !== undefined) {
+        attrs += ` print-object="${layout.systemDividers.leftDivider.printObject ? 'yes' : 'no'}"`;
+      }
+      if (layout.systemDividers.leftDivider.halign) {
+        attrs += ` halign="${layout.systemDividers.leftDivider.halign}"`;
+      }
+      if (layout.systemDividers.leftDivider.valign) {
+        attrs += ` valign="${layout.systemDividers.leftDivider.valign}"`;
+      }
+      lines.push(`${indent}    <left-divider${attrs}/>`);
+    }
+    if (layout.systemDividers.rightDivider) {
+      let attrs = '';
+      if (layout.systemDividers.rightDivider.printObject !== undefined) {
+        attrs += ` print-object="${layout.systemDividers.rightDivider.printObject ? 'yes' : 'no'}"`;
+      }
+      if (layout.systemDividers.rightDivider.halign) {
+        attrs += ` halign="${layout.systemDividers.rightDivider.halign}"`;
+      }
+      if (layout.systemDividers.rightDivider.valign) {
+        attrs += ` valign="${layout.systemDividers.rightDivider.valign}"`;
+      }
+      lines.push(`${indent}    <right-divider${attrs}/>`);
+    }
+    lines.push(`${indent}  </system-dividers>`);
+  }
+
   lines.push(`${indent}</system-layout>`);
 
   return lines;
@@ -396,6 +433,7 @@ function serializeCredit(credit: Credit, indent: string): string[] {
       let attrs = '';
       if (cw.defaultX !== undefined) attrs += ` default-x="${cw.defaultX}"`;
       if (cw.defaultY !== undefined) attrs += ` default-y="${cw.defaultY}"`;
+      if (cw.fontFamily) attrs += ` font-family="${escapeXml(cw.fontFamily)}"`;
       if (cw.fontSize) attrs += ` font-size="${escapeXml(cw.fontSize)}"`;
       if (cw.fontWeight) attrs += ` font-weight="${escapeXml(cw.fontWeight)}"`;
       if (cw.fontStyle) attrs += ` font-style="${escapeXml(cw.fontStyle)}"`;
@@ -767,6 +805,7 @@ function serializeKey(key: KeySignature, indent: string): string[] {
   let keyAttrs = '';
   if (key.number !== undefined) keyAttrs += ` number="${key.number}"`;
   if (key.printObject === false) keyAttrs += ' print-object="no"';
+  else if (key.printObject === true) keyAttrs += ' print-object="yes"';
   lines.push(`${indent}<key${keyAttrs}>`);
 
   // Cancel (for key changes)
@@ -848,6 +887,7 @@ function serializeClef(clef: Clef, indent: string): string[] {
 
   let attrs = clef.staff ? ` number="${clef.staff}"` : '';
   if (clef.printObject === false) attrs += ' print-object="no"';
+  else if (clef.printObject === true) attrs += ' print-object="yes"';
   if (clef.afterBarline) attrs += ' after-barline="yes"';
   lines.push(`${indent}<clef${attrs}>`);
   lines.push(`${indent}  <sign>${clef.sign}</sign>`);
@@ -892,6 +932,12 @@ function serializeEntry(entry: MeasureEntry, indent: string): string[] {
       return serializeSound(entry, indent);
     case 'attributes':
       return serializeAttributes((entry as AttributesEntry).attributes, indent, (entry as AttributesEntry)._id);
+    case 'grouping': {
+      const grp = entry as GroupingEntry;
+      let grpAttrs = ` type="${grp.groupingType}"`;
+      if (grp.number) grpAttrs += ` number="${grp.number}"`;
+      return [`${indent}<grouping${grpAttrs}/>`];
+    }
     default:
       return [];
   }
@@ -909,6 +955,7 @@ function serializeNote(note: NoteEntry, indent: string): string[] {
     'relative-y': note.relativeY,
     'dynamics': note.dynamics,
     'print-object': note.printObject === false ? false : undefined,
+    'print-dot': note.printDot !== undefined ? note.printDot : undefined,
     'print-spacing': note.printSpacing,
   });
   lines.push(`${indent}<note${noteAttrs}>`);
@@ -916,7 +963,7 @@ function serializeNote(note: NoteEntry, indent: string): string[] {
   // Grace note
   if (note.grace) {
     const graceAttrs = buildAttrs({
-      'slash': note.grace.slash || undefined,
+      'slash': note.grace.slash !== undefined ? note.grace.slash : undefined,
       'steal-time-previous': note.grace.stealTimePrevious,
       'steal-time-following': note.grace.stealTimeFollowing,
     });
@@ -1243,7 +1290,18 @@ function serializeNotationsGroup(notations: Notation[], indent: string): string[
       let attrs = '';
       if (notation.direction) attrs += ` direction="${notation.direction}"`;
       if (notation.number !== undefined) attrs += ` number="${notation.number}"`;
+      if (notation.defaultX !== undefined) attrs += ` default-x="${notation.defaultX}"`;
+      if (notation.defaultY !== undefined) attrs += ` default-y="${notation.defaultY}"`;
       lines.push(`${indent}  <arpeggiate${attrs}/>`);
+    } else if (notation.type === 'non-arpeggiate') {
+      let attrs = ` type="${notation.nonArpeggiateType}"`;
+      if (notation.number !== undefined) attrs += ` number="${notation.number}"`;
+      if (notation.placement) attrs += ` placement="${notation.placement}"`;
+      lines.push(`${indent}  <non-arpeggiate${attrs}/>`);
+    } else if (notation.type === 'accidental-mark') {
+      let attrs = '';
+      if (notation.placement) attrs += ` placement="${notation.placement}"`;
+      lines.push(`${indent}  <accidental-mark${attrs}>${escapeXml(notation.value)}</accidental-mark>`);
     } else if (notation.type === 'glissando') {
       let attrs = ` type="${notation.glissandoType}"`;
       if (notation.number !== undefined) attrs += ` number="${notation.number}"`;
@@ -1257,7 +1315,11 @@ function serializeNotationsGroup(notations: Notation[], indent: string): string[
       let attrs = ` type="${notation.slideType}"`;
       if (notation.number !== undefined) attrs += ` number="${notation.number}"`;
       if (notation.lineType) attrs += ` line-type="${notation.lineType}"`;
-      lines.push(`${indent}  <slide${attrs}/>`);
+      if (notation.text) {
+        lines.push(`${indent}  <slide${attrs}>${escapeXml(notation.text)}</slide>`);
+      } else {
+        lines.push(`${indent}  <slide${attrs}/>`);
+      }
     }
   }
 
@@ -1347,8 +1409,8 @@ function serializeNotationsGroup(notations: Notation[], indent: string): string[
           if (techNotation.release) {
             lines.push(`${indent}      <release/>`);
           }
-          if (techNotation.withBar !== undefined) {
-            lines.push(`${indent}      <with-bar>${techNotation.withBar}</with-bar>`);
+          if (techNotation.withBar) {
+            lines.push(`${indent}      <with-bar/>`);
           }
           lines.push(`${indent}    </bend>`);
         } else if (tech.technical === 'harmonic') {
@@ -1367,8 +1429,10 @@ function serializeNotationsGroup(notations: Notation[], indent: string): string[
             lines.push(`${indent}    <harmonic${placementAttr}/>`);
           }
         } else if (tech.technical === 'hammer-on' || tech.technical === 'pull-off') {
-          let attrs = placementAttr;
+          let attrs = '';
+          if (techNotation.number !== undefined) attrs += ` number="${techNotation.number}"`;
           if (techNotation.startStop) attrs += ` type="${techNotation.startStop}"`;
+          attrs += placementAttr;
           if (techNotation.text !== undefined) {
             lines.push(`${indent}    <${tech.technical}${attrs}>${escapeXml(techNotation.text)}</${tech.technical}>`);
           } else {
@@ -1432,8 +1496,8 @@ function serializeLyric(lyric: Lyric, indent: string): string[] {
         lines.push(`${indent}  <elision/>`);
       }
     }
-  } else {
-    // Single text element
+  } else if (lyric.syllabic || lyric.text) {
+    // Single text element (skip for extend-only lyrics with no text content)
     if (lyric.syllabic) {
       lines.push(`${indent}  <syllabic>${lyric.syllabic}</syllabic>`);
     }
@@ -1802,12 +1866,21 @@ function serializeBarline(barline: Barline, indent: string): string[] {
   }
 
   if (barline.ending) {
-    lines.push(`${indent}  <ending number="${barline.ending.number}" type="${barline.ending.type}"/>`);
+    let endingAttrs = ` number="${barline.ending.number}" type="${barline.ending.type}"`;
+    if (barline.ending.defaultY !== undefined) endingAttrs += ` default-y="${barline.ending.defaultY}"`;
+    if (barline.ending.endLength !== undefined) endingAttrs += ` end-length="${barline.ending.endLength}"`;
+    if (barline.ending.text) {
+      lines.push(`${indent}  <ending${endingAttrs}>${escapeXml(barline.ending.text)}</ending>`);
+    } else {
+      lines.push(`${indent}  <ending${endingAttrs}/>`);
+    }
   }
 
   if (barline.repeat) {
-    const timesAttr = barline.repeat.times !== undefined ? ` times="${barline.repeat.times}"` : '';
-    lines.push(`${indent}  <repeat direction="${barline.repeat.direction}"${timesAttr}/>`);
+    let repeatAttrs = ` direction="${barline.repeat.direction}"`;
+    if (barline.repeat.times !== undefined) repeatAttrs += ` times="${barline.repeat.times}"`;
+    if (barline.repeat.winged) repeatAttrs += ` winged="${barline.repeat.winged}"`;
+    lines.push(`${indent}  <repeat${repeatAttrs}/>`);
   }
 
   lines.push(`${indent}</barline>`);
@@ -1866,6 +1939,7 @@ function serializeStaffDetails(sd: StaffDetails, indent: string): string[] {
     'number': sd.number,
     'show-frets': sd.showFrets,
     'print-object': sd.printObject,
+    'print-spacing': sd.printSpacing,
   });
   lines.push(`${indent}<staff-details${attrs}>`);
 
@@ -1952,17 +2026,25 @@ function serializeHarmony(harmony: HarmonyEntry, indent: string): string[] {
 
   // Kind
   let kindAttrs = '';
-  if (harmony.kindText) kindAttrs += ` text="${escapeXml(harmony.kindText)}"`;
+  if (harmony.kindText !== undefined) kindAttrs += ` text="${escapeXml(harmony.kindText)}"`;
+  if (harmony.kindHalign) kindAttrs += ` halign="${escapeXml(harmony.kindHalign)}"`;
   lines.push(`${indent}  <kind${kindAttrs}>${escapeXml(harmony.kind)}</kind>`);
 
   // Bass
   if (harmony.bass) {
-    lines.push(`${indent}  <bass>`);
+    let bassAttrs = '';
+    if (harmony.bass.arrangement) bassAttrs += ` arrangement="${escapeXml(harmony.bass.arrangement)}"`;
+    lines.push(`${indent}  <bass${bassAttrs}>`);
     lines.push(`${indent}    <bass-step>${harmony.bass.bassStep}</bass-step>`);
     if (harmony.bass.bassAlter !== undefined) {
       lines.push(`${indent}    <bass-alter>${harmony.bass.bassAlter}</bass-alter>`);
     }
     lines.push(`${indent}  </bass>`);
+  }
+
+  // Inversion
+  if (harmony.inversion !== undefined) {
+    lines.push(`${indent}  <inversion>${harmony.inversion}</inversion>`);
   }
 
   // Degrees

@@ -88,6 +88,10 @@ export interface SystemLayout {
   systemMargins?: { leftMargin?: number; rightMargin?: number };
   systemDistance?: number;
   topSystemDistance?: number;
+  systemDividers?: {
+    leftDivider?: { printObject?: boolean; halign?: string; valign?: string };
+    rightDivider?: { printObject?: boolean; halign?: string; valign?: string };
+  };
 }
 
 export interface FontInfo {
@@ -109,6 +113,7 @@ export interface CreditWords {
   text: string;
   defaultX?: number;
   defaultY?: number;
+  fontFamily?: string;
   fontSize?: string;
   fontWeight?: string;
   fontStyle?: string;
@@ -252,6 +257,7 @@ export interface StaffDetails {
   staffSizeScaling?: number;
   showFrets?: 'numbers' | 'letters';
   printObject?: boolean;
+  printSpacing?: boolean;
 }
 
 export interface StaffTuning {
@@ -321,17 +327,21 @@ export interface Barline {
   repeat?: {
     direction: 'forward' | 'backward';
     times?: number;
+    winged?: string;
   };
   ending?: {
     number: string;
     type: 'start' | 'stop' | 'discontinue';
+    text?: string;
+    defaultY?: number;
+    endLength?: number;
   };
 }
 
 // ============================================================
 // MeasureEntry (MusicXML順序を保持するフラット構造)
 // ============================================================
-export type MeasureEntry = NoteEntry | BackupEntry | ForwardEntry | DirectionEntry | HarmonyEntry | FiguredBassEntry | SoundEntry | AttributesEntry;
+export type MeasureEntry = NoteEntry | BackupEntry | ForwardEntry | DirectionEntry | HarmonyEntry | FiguredBassEntry | SoundEntry | AttributesEntry | GroupingEntry;
 
 export interface AttributesEntry {
   _id: string;
@@ -354,6 +364,7 @@ export interface NoteEntry {
   dynamics?: number; // MIDI dynamics for playback
   printObject?: boolean;
   printSpacing?: boolean;
+  printDot?: boolean;
 
   // Layout attributes
   defaultX?: number;
@@ -463,13 +474,22 @@ export interface SoundEntry {
   sostenutoPedal?: boolean | 'yes' | 'no';
 }
 
+export interface GroupingEntry {
+  _id: string;
+  type: 'grouping';
+  groupingType: 'start' | 'stop' | 'single';
+  number?: string;
+}
+
 export interface HarmonyEntry {
   _id: string;
   type: 'harmony';
   root: { rootStep: string; rootAlter?: number };
   kind: string;
   kindText?: string;
-  bass?: { bassStep: string; bassAlter?: number };
+  kindHalign?: string;
+  bass?: { bassStep: string; bassAlter?: number; arrangement?: string };
+  inversion?: number;
   degrees?: HarmonyDegree[];
   frame?: HarmonyFrame;
   staff?: number;
@@ -606,6 +626,8 @@ export type Notation =
   | DynamicsNotation
   | FermataNotation
   | ArpeggiateNotation
+  | NonArpeggiateNotation
+  | AccidentalMarkNotation
   | GlissandoNotation
   | SlideNotation
   | OtherNotation;
@@ -672,7 +694,7 @@ export interface TechnicalNotation extends BaseNotation {
   bendAlter?: number;
   preBend?: boolean;
   release?: boolean;
-  withBar?: number;
+  withBar?: boolean;
   // For harmonic
   harmonicNatural?: boolean;
   harmonicArtificial?: boolean;
@@ -681,6 +703,7 @@ export interface TechnicalNotation extends BaseNotation {
   soundingPitch?: boolean;
   // For hammer-on, pull-off
   startStop?: 'start' | 'stop';
+  number?: number;
   // For heel, toe
   substitution?: boolean;
   // Positioning
@@ -748,6 +771,19 @@ export interface ArpeggiateNotation extends BaseNotation {
   type: 'arpeggiate';
   direction?: 'up' | 'down';
   number?: number;
+  defaultX?: number;
+  defaultY?: number;
+}
+
+export interface NonArpeggiateNotation extends BaseNotation {
+  type: 'non-arpeggiate';
+  nonArpeggiateType: 'top' | 'bottom';
+  number?: number;
+}
+
+export interface AccidentalMarkNotation extends BaseNotation {
+  type: 'accidental-mark';
+  value: string;
 }
 
 export interface GlissandoNotation extends BaseNotation {
@@ -763,6 +799,7 @@ export interface SlideNotation extends BaseNotation {
   slideType: 'start' | 'stop';
   number?: number;
   lineType?: 'solid' | 'dashed' | 'dotted' | 'wavy';
+  text?: string;
 }
 
 export interface OtherNotation extends BaseNotation {

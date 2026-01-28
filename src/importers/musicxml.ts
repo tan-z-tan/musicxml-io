@@ -63,6 +63,8 @@ import type {
   OrnamentNotation,
   ArticulationNotation,
   DynamicsNotation,
+  GroupingEntry,
+  SlideNotation,
 } from '../types';
 
 // Parser with preserveOrder to maintain element order
@@ -386,9 +388,12 @@ function parseDefaults(elements: OrderedElement[]): Defaults | undefined {
       ({ type: a['type'] || '', value: parseFloat(extractText(c)) || 0 }));
     const distances = collectElements(appContent, 'distance', (c, a) =>
       ({ type: a['type'] || '', value: parseFloat(extractText(c)) || 0 }));
+    const glyphs = collectElements(appContent, 'glyph', (c, a) =>
+      ({ type: a['type'] || '', value: extractText(c) }));
     if (lineWidths.length > 0) appearance['line-widths'] = lineWidths;
     if (noteSizes.length > 0) appearance['note-sizes'] = noteSizes;
     if (distances.length > 0) appearance['distances'] = distances;
+    if (glyphs.length > 0) appearance['glyphs'] = glyphs;
     return Object.keys(appearance).length > 0 ? appearance : undefined;
   });
   if (appResult) defaults.appearance = appResult;
@@ -448,6 +453,30 @@ function parseSystemLayout(elements: OrderedElement[]): SystemLayout {
   const topDist = getElementText(elements, 'top-system-distance');
   if (topDist) layout.topSystemDistance = parseFloat(topDist);
 
+  // Parse system-dividers
+  const dividers = getElementContent(elements, 'system-dividers');
+  if (dividers) {
+    layout.systemDividers = {};
+    for (const el of dividers) {
+      if (el['left-divider']) {
+        const attrs = getAttributes(el);
+        layout.systemDividers.leftDivider = {
+          printObject: attrs['print-object'] === 'yes' ? true : attrs['print-object'] === 'no' ? false : undefined,
+          halign: attrs['halign'],
+          valign: attrs['valign'],
+        };
+      }
+      if (el['right-divider']) {
+        const attrs = getAttributes(el);
+        layout.systemDividers.rightDivider = {
+          printObject: attrs['print-object'] === 'yes' ? true : attrs['print-object'] === 'no' ? false : undefined,
+          halign: attrs['halign'],
+          valign: attrs['valign'],
+        };
+      }
+    }
+  }
+
   return layout;
 }
 
@@ -460,6 +489,7 @@ function parseCredits(elements: OrderedElement[]): Credit[] | undefined {
       const cw: CreditWords = { text: extractText(c) };
       if (a['default-x']) cw.defaultX = parseFloat(a['default-x']);
       if (a['default-y']) cw.defaultY = parseFloat(a['default-y']);
+      if (a['font-family']) cw.fontFamily = a['font-family'];
       if (a['font-size']) cw.fontSize = a['font-size'];
       if (a['font-weight']) cw.fontWeight = a['font-weight'];
       if (a['font-style']) cw.fontStyle = a['font-style'];
@@ -723,6 +753,15 @@ function parseMeasure(elements: OrderedElement[], attrs: Record<string, string>)
       measure.entries.push(parseFiguredBass(el['figured-bass'] as OrderedElement[], getAttributes(el)));
     } else if (el['sound']) {
       measure.entries.push(parseSound(el['sound'] as OrderedElement[], getAttributes(el)));
+    } else if (el['grouping'] !== undefined) {
+      const grpAttrs = getAttributes(el);
+      const grouping: GroupingEntry = {
+        _id: generateId(),
+        type: 'grouping',
+        groupingType: (grpAttrs['type'] as 'start' | 'stop' | 'single') || 'start',
+      };
+      if (grpAttrs['number']) grouping.number = grpAttrs['number'];
+      measure.entries.push(grouping);
     }
   }
 
@@ -809,6 +848,7 @@ function parseAttributes(elements: OrderedElement[]): MeasureAttributes {
       const key = parseKeySignature(keyContent);
       if (keyAttrs['number']) key.number = parseInt(keyAttrs['number'], 10);
       if (keyAttrs['print-object'] === 'no') key.printObject = false;
+      else if (keyAttrs['print-object'] === 'yes') key.printObject = true;
       keys.push(key);
     }
   }
@@ -933,6 +973,7 @@ function parseKeySignature(elements: OrderedElement[]): KeySignature {
   const keyOctaves = collectElements(elements, 'key-octave', (c, a) => {
     const ko: KeyOctave = { number: parseInt(a['number'] || '1', 10), octave: parseInt(extractText(c), 10) };
     if (a['cancel'] === 'yes') ko.cancel = true;
+    else if (a['cancel'] === 'no') ko.cancel = false;
     return ko;
   });
 
@@ -960,6 +1001,8 @@ function parseClef(elements: OrderedElement[], attrs: Record<string, string>): C
 
   if (attrs['print-object'] === 'no') {
     clef.printObject = false;
+  } else if (attrs['print-object'] === 'yes') {
+    clef.printObject = true;
   }
   if (attrs['after-barline'] === 'yes') {
     clef.afterBarline = true;
@@ -997,6 +1040,8 @@ function parseNote(elements: OrderedElement[], attrs: Record<string, string>): N
   if (attrs['relative-y']) note.relativeY = parseFloat(attrs['relative-y']);
   if (attrs['dynamics']) note.dynamics = parseFloat(attrs['dynamics']);
   if (attrs['print-object'] === 'no') note.printObject = false;
+  if (attrs['print-dot'] === 'no') note.printDot = false;
+  if (attrs['print-dot'] === 'yes') note.printDot = true;
   if (attrs['print-spacing'] === 'yes') note.printSpacing = true;
   if (attrs['print-spacing'] === 'no') note.printSpacing = false;
 
@@ -1147,6 +1192,7 @@ function parseNote(elements: OrderedElement[], attrs: Record<string, string>): N
       const graceAttrs = getAttributes(el);
       note.grace = {};
       if (graceAttrs['slash'] === 'yes') note.grace.slash = true;
+      else if (graceAttrs['slash'] === 'no') note.grace.slash = false;
       if (graceAttrs['steal-time-previous']) {
         note.grace.stealTimePrevious = parseFloat(graceAttrs['steal-time-previous']);
       }
@@ -1425,8 +1471,7 @@ function parseNotations(elements: OrderedElement[], notationsIndex: number = 0):
           if (bendAlter) techNotation.bendAlter = parseFloat(bendAlter);
           if (hasElement(bendContent, 'pre-bend')) techNotation.preBend = true;
           if (hasElement(bendContent, 'release')) techNotation.release = true;
-          const withBar = getElementText(bendContent, 'with-bar');
-          if (withBar) techNotation.withBar = parseFloat(withBar);
+          if (hasElement(bendContent, 'with-bar')) techNotation.withBar = true;
           notations.push(techNotation);
         }
         // Handle other technical elements
@@ -1462,12 +1507,13 @@ function parseNotations(elements: OrderedElement[], notationsIndex: number = 0):
               if (hasElement(techElContent, 'touching-pitch')) notation.touchingPitch = true;
               if (hasElement(techElContent, 'sounding-pitch')) notation.soundingPitch = true;
             }
-            // Handle hammer-on/pull-off type attribute
+            // Handle hammer-on/pull-off type and number attributes
             if (techType === 'hammer-on' || techType === 'pull-off') {
               const typeAttr = techAttrs['type'];
               if (typeAttr === 'start' || typeAttr === 'stop') {
                 notation.startStop = typeAttr;
               }
+              if (techAttrs['number']) notation.number = parseInt(techAttrs['number'], 10);
             }
             // Handle fingering substitution/alternate
             if (techType === 'fingering') {
@@ -1533,10 +1579,32 @@ function parseNotations(elements: OrderedElement[], notationsIndex: number = 0):
       notations.push(fermataNotation);
     } else if (el['arpeggiate'] !== undefined) {
       const arpAttrs = getAttributes(el);
-      notations.push({
+      const arpNotation: any = {
         type: 'arpeggiate',
         direction: arpAttrs['direction'] as 'up' | 'down' | undefined,
         number: arpAttrs['number'] ? parseInt(arpAttrs['number'], 10) : undefined,
+        notationsIndex,
+      };
+      if (arpAttrs['default-x']) arpNotation.defaultX = parseFloat(arpAttrs['default-x']);
+      if (arpAttrs['default-y']) arpNotation.defaultY = parseFloat(arpAttrs['default-y']);
+      notations.push(arpNotation);
+    } else if (el['non-arpeggiate'] !== undefined) {
+      const nonArpAttrs = getAttributes(el);
+      notations.push({
+        type: 'non-arpeggiate',
+        nonArpeggiateType: nonArpAttrs['type'] as 'top' | 'bottom',
+        number: nonArpAttrs['number'] ? parseInt(nonArpAttrs['number'], 10) : undefined,
+        placement: nonArpAttrs['placement'] as 'above' | 'below' | undefined,
+        notationsIndex,
+      });
+    } else if (el['accidental-mark']) {
+      const amAttrs = getAttributes(el);
+      const amContent = el['accidental-mark'] as OrderedElement[];
+      const value = extractText(amContent);
+      notations.push({
+        type: 'accidental-mark',
+        value,
+        placement: amAttrs['placement'] as 'above' | 'below' | undefined,
         notationsIndex,
       });
     } else if (el['glissando']) {
@@ -1559,13 +1627,17 @@ function parseNotations(elements: OrderedElement[], notationsIndex: number = 0):
       });
     } else if (el['slide']) {
       const slideAttrs = getAttributes(el);
-      notations.push({
+      const slideContent = el['slide'] as OrderedElement[];
+      const slideText = extractText(slideContent);
+      const slideNotation: SlideNotation = {
         type: 'slide',
         slideType: slideAttrs['type'] === 'stop' ? 'stop' : 'start',
         number: slideAttrs['number'] ? parseInt(slideAttrs['number'], 10) : undefined,
         lineType: slideAttrs['line-type'] as 'solid' | 'dashed' | 'dotted' | 'wavy' | undefined,
         notationsIndex,
-      });
+      };
+      if (slideText) slideNotation.text = slideText;
+      notations.push(slideNotation);
     }
   }
 
@@ -1590,8 +1662,9 @@ function parseLyric(elements: OrderedElement[], attrs: Record<string, string>): 
           break;
         }
       }
-    } else if (el['text']) {
+    } else if (el['text'] !== undefined) {
       const content = el['text'] as OrderedElement[];
+      let foundText = false;
       for (const item of content) {
         if (item['#text'] !== undefined) {
           textElements.push({
@@ -1599,8 +1672,17 @@ function parseLyric(elements: OrderedElement[], attrs: Record<string, string>): 
             syllabic: currentSyllabic,
           });
           currentSyllabic = undefined;
+          foundText = true;
           break;
         }
+      }
+      // Handle text elements with empty/whitespace-only content (e.g., fullwidth space trimmed by parser)
+      if (!foundText) {
+        textElements.push({
+          text: '',
+          syllabic: currentSyllabic,
+        });
+        currentSyllabic = undefined;
       }
     } else if (el['elision'] !== undefined) {
       hasElision = true;
@@ -2173,6 +2255,9 @@ function parseBarline(elements: OrderedElement[], attrs: Record<string, string>)
         if (repeatAttrs['times']) {
           barline.repeat.times = parseInt(repeatAttrs['times'], 10);
         }
+        if (repeatAttrs['winged']) {
+          barline.repeat.winged = repeatAttrs['winged'];
+        }
       }
     } else if (el['ending']) {
       const endingAttrs = getAttributes(el);
@@ -2180,6 +2265,11 @@ function parseBarline(elements: OrderedElement[], attrs: Record<string, string>)
       const type = endingAttrs['type'];
       if (number && (type === 'start' || type === 'stop' || type === 'discontinue')) {
         barline.ending = { number, type };
+        const endingContent = el['ending'] as OrderedElement[];
+        const endingText = extractText(endingContent);
+        if (endingText) barline.ending.text = endingText;
+        if (endingAttrs['default-y']) barline.ending.defaultY = parseFloat(endingAttrs['default-y']);
+        if (endingAttrs['end-length']) barline.ending.endLength = parseFloat(endingAttrs['end-length']);
       }
     }
   }
@@ -2245,6 +2335,8 @@ function parseStaffDetails(elements: OrderedElement[], attrs: Record<string, str
   if (attrs['number']) sd.number = parseInt(attrs['number'], 10);
   if (attrs['print-object'] === 'no') sd.printObject = false;
   else if (attrs['print-object'] === 'yes') sd.printObject = true;
+  if (attrs['print-spacing'] === 'yes') sd.printSpacing = true;
+  else if (attrs['print-spacing'] === 'no') sd.printSpacing = false;
 
   const staffType = getElementText(elements, 'staff-type');
   if (staffType && ['ossia', 'cue', 'editorial', 'regular', 'alternate'].includes(staffType)) {
@@ -2322,7 +2414,9 @@ function parseMeasureStyle(elements: OrderedElement[], attrs: Record<string, str
       const slAttrs = getAttributes(el);
       ms.slash = { type: slAttrs['type'] === 'stop' ? 'stop' : 'start' };
       if (slAttrs['use-dots'] === 'yes') ms.slash.useDots = true;
+      else if (slAttrs['use-dots'] === 'no') ms.slash.useDots = false;
       if (slAttrs['use-stems'] === 'yes') ms.slash.useStems = true;
+      else if (slAttrs['use-stems'] === 'no') ms.slash.useStems = false;
     }
   }
 
@@ -2370,20 +2464,32 @@ function parseHarmony(elements: OrderedElement[], attrs: Record<string, string>)
           break;
         }
       }
-      if (kindAttrs['text']) harmony.kindText = kindAttrs['text'];
+      if (kindAttrs['text'] !== undefined) harmony.kindText = kindAttrs['text'];
+      if (kindAttrs['halign']) harmony.kindHalign = kindAttrs['halign'];
       break;
     }
   }
 
   // Parse bass
-  const bass = getElementContent(elements, 'bass');
-  if (bass) {
-    const bassStep = getElementText(bass, 'bass-step');
-    if (bassStep) {
-      harmony.bass = { bassStep };
-      const bassAlter = getElementText(bass, 'bass-alter');
-      if (bassAlter) harmony.bass.bassAlter = parseFloat(bassAlter);
+  for (const el of elements) {
+    if (el['bass']) {
+      const bassAttrs = getAttributes(el);
+      const bassContent = el['bass'] as OrderedElement[];
+      const bassStep = getElementText(bassContent, 'bass-step');
+      if (bassStep) {
+        harmony.bass = { bassStep };
+        const bassAlter = getElementText(bassContent, 'bass-alter');
+        if (bassAlter) harmony.bass.bassAlter = parseFloat(bassAlter);
+        if (bassAttrs['arrangement']) harmony.bass.arrangement = bassAttrs['arrangement'];
+      }
+      break;
     }
+  }
+
+  // Parse inversion
+  const inversionText = getElementText(elements, 'inversion');
+  if (inversionText) {
+    harmony.inversion = parseInt(inversionText, 10);
   }
 
   // Parse degrees
