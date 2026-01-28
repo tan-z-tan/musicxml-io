@@ -335,16 +335,16 @@ function serializePageLayout(layout: PageLayout, indent: string): string[] {
       const typeAttr = m.type ? ` type="${m.type}"` : '';
       lines.push(`${indent}  <page-margins${typeAttr}>`);
       if (m.leftMargin !== undefined) {
-        lines.push(`${indent}    <left-margin>${m.leftMargin}</left-margin>`);
+        lines.push(`${indent}    <left-margin>${m.leftMarginRaw ?? m.leftMargin}</left-margin>`);
       }
       if (m.rightMargin !== undefined) {
-        lines.push(`${indent}    <right-margin>${m.rightMargin}</right-margin>`);
+        lines.push(`${indent}    <right-margin>${m.rightMarginRaw ?? m.rightMargin}</right-margin>`);
       }
       if (m.topMargin !== undefined) {
-        lines.push(`${indent}    <top-margin>${m.topMargin}</top-margin>`);
+        lines.push(`${indent}    <top-margin>${m.topMarginRaw ?? m.topMargin}</top-margin>`);
       }
       if (m.bottomMargin !== undefined) {
-        lines.push(`${indent}    <bottom-margin>${m.bottomMargin}</bottom-margin>`);
+        lines.push(`${indent}    <bottom-margin>${m.bottomMarginRaw ?? m.bottomMargin}</bottom-margin>`);
       }
       lines.push(`${indent}  </page-margins>`);
     }
@@ -363,20 +363,20 @@ function serializeSystemLayout(layout: SystemLayout, indent: string): string[] {
   if (layout.systemMargins) {
     lines.push(`${indent}  <system-margins>`);
     if (layout.systemMargins.leftMargin !== undefined) {
-      lines.push(`${indent}    <left-margin>${layout.systemMargins.leftMargin}</left-margin>`);
+      lines.push(`${indent}    <left-margin>${layout.systemMargins.leftMarginRaw ?? layout.systemMargins.leftMargin}</left-margin>`);
     }
     if (layout.systemMargins.rightMargin !== undefined) {
-      lines.push(`${indent}    <right-margin>${layout.systemMargins.rightMargin}</right-margin>`);
+      lines.push(`${indent}    <right-margin>${layout.systemMargins.rightMarginRaw ?? layout.systemMargins.rightMargin}</right-margin>`);
     }
     lines.push(`${indent}  </system-margins>`);
   }
 
   if (layout.systemDistance !== undefined) {
-    lines.push(`${indent}  <system-distance>${layout.systemDistance}</system-distance>`);
+    lines.push(`${indent}  <system-distance>${layout.systemDistanceRaw ?? layout.systemDistance}</system-distance>`);
   }
 
   if (layout.topSystemDistance !== undefined) {
-    lines.push(`${indent}  <top-system-distance>${layout.topSystemDistance}</top-system-distance>`);
+    lines.push(`${indent}  <top-system-distance>${layout.topSystemDistanceRaw ?? layout.topSystemDistance}</top-system-distance>`);
   }
 
   if (layout.systemDividers) {

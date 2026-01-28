@@ -420,13 +420,25 @@ function parsePageLayout(elements: OrderedElement[]): PageLayout {
         m.type = attrs['type'];
       }
       const left = getElementText(content, 'left-margin');
-      if (left) m.leftMargin = parseFloat(left);
+      if (left) {
+        m.leftMargin = parseFloat(left);
+        m.leftMarginRaw = left;
+      }
       const right = getElementText(content, 'right-margin');
-      if (right) m.rightMargin = parseFloat(right);
+      if (right) {
+        m.rightMargin = parseFloat(right);
+        m.rightMarginRaw = right;
+      }
       const top = getElementText(content, 'top-margin');
-      if (top) m.topMargin = parseFloat(top);
+      if (top) {
+        m.topMargin = parseFloat(top);
+        m.topMarginRaw = top;
+      }
       const bottom = getElementText(content, 'bottom-margin');
-      if (bottom) m.bottomMargin = parseFloat(bottom);
+      if (bottom) {
+        m.bottomMargin = parseFloat(bottom);
+        m.bottomMarginRaw = bottom;
+      }
       margins.push(m);
     }
   }
@@ -442,16 +454,28 @@ function parseSystemLayout(elements: OrderedElement[]): SystemLayout {
   if (margins) {
     layout.systemMargins = {};
     const left = getElementText(margins, 'left-margin');
-    if (left) layout.systemMargins.leftMargin = parseFloat(left);
+    if (left) {
+      layout.systemMargins.leftMargin = parseFloat(left);
+      layout.systemMargins.leftMarginRaw = left;
+    }
     const right = getElementText(margins, 'right-margin');
-    if (right) layout.systemMargins.rightMargin = parseFloat(right);
+    if (right) {
+      layout.systemMargins.rightMargin = parseFloat(right);
+      layout.systemMargins.rightMarginRaw = right;
+    }
   }
 
   const dist = getElementText(elements, 'system-distance');
-  if (dist) layout.systemDistance = parseFloat(dist);
+  if (dist) {
+    layout.systemDistance = parseFloat(dist);
+    layout.systemDistanceRaw = dist;
+  }
 
   const topDist = getElementText(elements, 'top-system-distance');
-  if (topDist) layout.topSystemDistance = parseFloat(topDist);
+  if (topDist) {
+    layout.topSystemDistance = parseFloat(topDist);
+    layout.topSystemDistanceRaw = topDist;
+  }
 
   // Parse system-dividers
   const dividers = getElementContent(elements, 'system-dividers');

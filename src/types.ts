@@ -82,12 +82,25 @@ export interface PageMargins {
   rightMargin?: number;
   topMargin?: number;
   bottomMargin?: number;
+  // Original string values for roundtrip fidelity
+  leftMarginRaw?: string;
+  rightMarginRaw?: string;
+  topMarginRaw?: string;
+  bottomMarginRaw?: string;
 }
 
 export interface SystemLayout {
-  systemMargins?: { leftMargin?: number; rightMargin?: number };
+  systemMargins?: {
+    leftMargin?: number;
+    rightMargin?: number;
+    // Original string values for roundtrip fidelity
+    leftMarginRaw?: string;
+    rightMarginRaw?: string;
+  };
   systemDistance?: number;
+  systemDistanceRaw?: string;
   topSystemDistance?: number;
+  topSystemDistanceRaw?: string;
   systemDividers?: {
     leftDivider?: { printObject?: boolean; halign?: string; valign?: string };
     rightDivider?: { printObject?: boolean; halign?: string; valign?: string };
