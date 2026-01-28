@@ -487,6 +487,7 @@ function parseCredits(elements: OrderedElement[]): Credit[] | undefined {
       const cw: CreditWords = { text: extractText(c) };
       if (a['default-x']) cw.defaultX = parseFloat(a['default-x']);
       if (a['default-y']) cw.defaultY = parseFloat(a['default-y']);
+      if (a['font-family']) cw.fontFamily = a['font-family'];
       if (a['font-size']) cw.fontSize = a['font-size'];
       if (a['font-weight']) cw.fontWeight = a['font-weight'];
       if (a['font-style']) cw.fontStyle = a['font-style'];
@@ -1024,6 +1025,8 @@ function parseNote(elements: OrderedElement[], attrs: Record<string, string>): N
   if (attrs['relative-y']) note.relativeY = parseFloat(attrs['relative-y']);
   if (attrs['dynamics']) note.dynamics = parseFloat(attrs['dynamics']);
   if (attrs['print-object'] === 'no') note.printObject = false;
+  if (attrs['print-dot'] === 'no') note.printDot = false;
+  if (attrs['print-dot'] === 'yes') note.printDot = true;
   if (attrs['print-spacing'] === 'yes') note.printSpacing = true;
   if (attrs['print-spacing'] === 'no') note.printSpacing = false;
 
@@ -1174,6 +1177,7 @@ function parseNote(elements: OrderedElement[], attrs: Record<string, string>): N
       const graceAttrs = getAttributes(el);
       note.grace = {};
       if (graceAttrs['slash'] === 'yes') note.grace.slash = true;
+      else if (graceAttrs['slash'] === 'no') note.grace.slash = false;
       if (graceAttrs['steal-time-previous']) {
         note.grace.stealTimePrevious = parseFloat(graceAttrs['steal-time-previous']);
       }
@@ -1489,12 +1493,13 @@ function parseNotations(elements: OrderedElement[], notationsIndex: number = 0):
               if (hasElement(techElContent, 'touching-pitch')) notation.touchingPitch = true;
               if (hasElement(techElContent, 'sounding-pitch')) notation.soundingPitch = true;
             }
-            // Handle hammer-on/pull-off type attribute
+            // Handle hammer-on/pull-off type and number attributes
             if (techType === 'hammer-on' || techType === 'pull-off') {
               const typeAttr = techAttrs['type'];
               if (typeAttr === 'start' || typeAttr === 'stop') {
                 notation.startStop = typeAttr;
               }
+              if (techAttrs['number']) notation.number = parseInt(techAttrs['number'], 10);
             }
             // Handle fingering substitution/alternate
             if (techType === 'fingering') {
@@ -1560,12 +1565,15 @@ function parseNotations(elements: OrderedElement[], notationsIndex: number = 0):
       notations.push(fermataNotation);
     } else if (el['arpeggiate'] !== undefined) {
       const arpAttrs = getAttributes(el);
-      notations.push({
+      const arpNotation: any = {
         type: 'arpeggiate',
         direction: arpAttrs['direction'] as 'up' | 'down' | undefined,
         number: arpAttrs['number'] ? parseInt(arpAttrs['number'], 10) : undefined,
         notationsIndex,
-      });
+      };
+      if (arpAttrs['default-x']) arpNotation.defaultX = parseFloat(arpAttrs['default-x']);
+      if (arpAttrs['default-y']) arpNotation.defaultY = parseFloat(arpAttrs['default-y']);
+      notations.push(arpNotation);
     } else if (el['non-arpeggiate'] !== undefined) {
       const nonArpAttrs = getAttributes(el);
       notations.push({
@@ -2219,6 +2227,9 @@ function parseBarline(elements: OrderedElement[], attrs: Record<string, string>)
         if (repeatAttrs['times']) {
           barline.repeat.times = parseInt(repeatAttrs['times'], 10);
         }
+        if (repeatAttrs['winged']) {
+          barline.repeat.winged = repeatAttrs['winged'];
+        }
       }
     } else if (el['ending']) {
       const endingAttrs = getAttributes(el);
@@ -2226,6 +2237,11 @@ function parseBarline(elements: OrderedElement[], attrs: Record<string, string>)
       const type = endingAttrs['type'];
       if (number && (type === 'start' || type === 'stop' || type === 'discontinue')) {
         barline.ending = { number, type };
+        const endingContent = el['ending'] as OrderedElement[];
+        const endingText = extractText(endingContent);
+        if (endingText) barline.ending.text = endingText;
+        if (endingAttrs['default-y']) barline.ending.defaultY = parseFloat(endingAttrs['default-y']);
+        if (endingAttrs['end-length']) barline.ending.endLength = parseFloat(endingAttrs['end-length']);
       }
     }
   }
@@ -2430,6 +2446,12 @@ function parseHarmony(elements: OrderedElement[], attrs: Record<string, string>)
       const bassAlter = getElementText(bass, 'bass-alter');
       if (bassAlter) harmony.bass.bassAlter = parseFloat(bassAlter);
     }
+  }
+
+  // Parse inversion
+  const inversionText = getElementText(elements, 'inversion');
+  if (inversionText) {
+    harmony.inversion = parseInt(inversionText, 10);
   }
 
   // Parse degrees

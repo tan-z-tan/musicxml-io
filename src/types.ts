@@ -113,6 +113,7 @@ export interface CreditWords {
   text: string;
   defaultX?: number;
   defaultY?: number;
+  fontFamily?: string;
   fontSize?: string;
   fontWeight?: string;
   fontStyle?: string;
@@ -325,10 +326,14 @@ export interface Barline {
   repeat?: {
     direction: 'forward' | 'backward';
     times?: number;
+    winged?: string;
   };
   ending?: {
     number: string;
     type: 'start' | 'stop' | 'discontinue';
+    text?: string;
+    defaultY?: number;
+    endLength?: number;
   };
 }
 
@@ -358,6 +363,7 @@ export interface NoteEntry {
   dynamics?: number; // MIDI dynamics for playback
   printObject?: boolean;
   printSpacing?: boolean;
+  printDot?: boolean;
 
   // Layout attributes
   defaultX?: number;
@@ -474,6 +480,7 @@ export interface HarmonyEntry {
   kind: string;
   kindText?: string;
   bass?: { bassStep: string; bassAlter?: number };
+  inversion?: number;
   degrees?: HarmonyDegree[];
   frame?: HarmonyFrame;
   staff?: number;
@@ -687,6 +694,7 @@ export interface TechnicalNotation extends BaseNotation {
   soundingPitch?: boolean;
   // For hammer-on, pull-off
   startStop?: 'start' | 'stop';
+  number?: number;
   // For heel, toe
   substitution?: boolean;
   // Positioning
@@ -754,6 +762,8 @@ export interface ArpeggiateNotation extends BaseNotation {
   type: 'arpeggiate';
   direction?: 'up' | 'down';
   number?: number;
+  defaultX?: number;
+  defaultY?: number;
 }
 
 export interface NonArpeggiateNotation extends BaseNotation {

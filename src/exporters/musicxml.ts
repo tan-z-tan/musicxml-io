@@ -432,6 +432,7 @@ function serializeCredit(credit: Credit, indent: string): string[] {
       let attrs = '';
       if (cw.defaultX !== undefined) attrs += ` default-x="${cw.defaultX}"`;
       if (cw.defaultY !== undefined) attrs += ` default-y="${cw.defaultY}"`;
+      if (cw.fontFamily) attrs += ` font-family="${escapeXml(cw.fontFamily)}"`;
       if (cw.fontSize) attrs += ` font-size="${escapeXml(cw.fontSize)}"`;
       if (cw.fontWeight) attrs += ` font-weight="${escapeXml(cw.fontWeight)}"`;
       if (cw.fontStyle) attrs += ` font-style="${escapeXml(cw.fontStyle)}"`;
@@ -945,6 +946,7 @@ function serializeNote(note: NoteEntry, indent: string): string[] {
     'relative-y': note.relativeY,
     'dynamics': note.dynamics,
     'print-object': note.printObject === false ? false : undefined,
+    'print-dot': note.printDot !== undefined ? note.printDot : undefined,
     'print-spacing': note.printSpacing,
   });
   lines.push(`${indent}<note${noteAttrs}>`);
@@ -952,7 +954,7 @@ function serializeNote(note: NoteEntry, indent: string): string[] {
   // Grace note
   if (note.grace) {
     const graceAttrs = buildAttrs({
-      'slash': note.grace.slash || undefined,
+      'slash': note.grace.slash !== undefined ? note.grace.slash : undefined,
       'steal-time-previous': note.grace.stealTimePrevious,
       'steal-time-following': note.grace.stealTimeFollowing,
     });
@@ -1279,6 +1281,8 @@ function serializeNotationsGroup(notations: Notation[], indent: string): string[
       let attrs = '';
       if (notation.direction) attrs += ` direction="${notation.direction}"`;
       if (notation.number !== undefined) attrs += ` number="${notation.number}"`;
+      if (notation.defaultX !== undefined) attrs += ` default-x="${notation.defaultX}"`;
+      if (notation.defaultY !== undefined) attrs += ` default-y="${notation.defaultY}"`;
       lines.push(`${indent}  <arpeggiate${attrs}/>`);
     } else if (notation.type === 'non-arpeggiate') {
       let attrs = ` type="${notation.nonArpeggiateType}"`;
@@ -1412,8 +1416,10 @@ function serializeNotationsGroup(notations: Notation[], indent: string): string[
             lines.push(`${indent}    <harmonic${placementAttr}/>`);
           }
         } else if (tech.technical === 'hammer-on' || tech.technical === 'pull-off') {
-          let attrs = placementAttr;
+          let attrs = '';
+          if (techNotation.number !== undefined) attrs += ` number="${techNotation.number}"`;
           if (techNotation.startStop) attrs += ` type="${techNotation.startStop}"`;
+          attrs += placementAttr;
           if (techNotation.text !== undefined) {
             lines.push(`${indent}    <${tech.technical}${attrs}>${escapeXml(techNotation.text)}</${tech.technical}>`);
           } else {
@@ -1847,12 +1853,21 @@ function serializeBarline(barline: Barline, indent: string): string[] {
   }
 
   if (barline.ending) {
-    lines.push(`${indent}  <ending number="${barline.ending.number}" type="${barline.ending.type}"/>`);
+    let endingAttrs = ` number="${barline.ending.number}" type="${barline.ending.type}"`;
+    if (barline.ending.defaultY !== undefined) endingAttrs += ` default-y="${barline.ending.defaultY}"`;
+    if (barline.ending.endLength !== undefined) endingAttrs += ` end-length="${barline.ending.endLength}"`;
+    if (barline.ending.text) {
+      lines.push(`${indent}  <ending${endingAttrs}>${escapeXml(barline.ending.text)}</ending>`);
+    } else {
+      lines.push(`${indent}  <ending${endingAttrs}/>`);
+    }
   }
 
   if (barline.repeat) {
-    const timesAttr = barline.repeat.times !== undefined ? ` times="${barline.repeat.times}"` : '';
-    lines.push(`${indent}  <repeat direction="${barline.repeat.direction}"${timesAttr}/>`);
+    let repeatAttrs = ` direction="${barline.repeat.direction}"`;
+    if (barline.repeat.times !== undefined) repeatAttrs += ` times="${barline.repeat.times}"`;
+    if (barline.repeat.winged) repeatAttrs += ` winged="${barline.repeat.winged}"`;
+    lines.push(`${indent}  <repeat${repeatAttrs}/>`);
   }
 
   lines.push(`${indent}</barline>`);
@@ -2008,6 +2023,11 @@ function serializeHarmony(harmony: HarmonyEntry, indent: string): string[] {
       lines.push(`${indent}    <bass-alter>${harmony.bass.bassAlter}</bass-alter>`);
     }
     lines.push(`${indent}  </bass>`);
+  }
+
+  // Inversion
+  if (harmony.inversion !== undefined) {
+    lines.push(`${indent}  <inversion>${harmony.inversion}</inversion>`);
   }
 
   // Degrees
