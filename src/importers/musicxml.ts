@@ -386,9 +386,12 @@ function parseDefaults(elements: OrderedElement[]): Defaults | undefined {
       ({ type: a['type'] || '', value: parseFloat(extractText(c)) || 0 }));
     const distances = collectElements(appContent, 'distance', (c, a) =>
       ({ type: a['type'] || '', value: parseFloat(extractText(c)) || 0 }));
+    const glyphs = collectElements(appContent, 'glyph', (c, a) =>
+      ({ type: a['type'] || '', value: extractText(c) }));
     if (lineWidths.length > 0) appearance['line-widths'] = lineWidths;
     if (noteSizes.length > 0) appearance['note-sizes'] = noteSizes;
     if (distances.length > 0) appearance['distances'] = distances;
+    if (glyphs.length > 0) appearance['glyphs'] = glyphs;
     return Object.keys(appearance).length > 0 ? appearance : undefined;
   });
   if (appResult) defaults.appearance = appResult;
@@ -447,6 +450,30 @@ function parseSystemLayout(elements: OrderedElement[]): SystemLayout {
 
   const topDist = getElementText(elements, 'top-system-distance');
   if (topDist) layout.topSystemDistance = parseFloat(topDist);
+
+  // Parse system-dividers
+  const dividers = getElementContent(elements, 'system-dividers');
+  if (dividers) {
+    layout.systemDividers = {};
+    for (const el of dividers) {
+      if (el['left-divider']) {
+        const attrs = getAttributes(el);
+        layout.systemDividers.leftDivider = {
+          printObject: attrs['print-object'] === 'yes' ? true : attrs['print-object'] === 'no' ? false : undefined,
+          halign: attrs['halign'],
+          valign: attrs['valign'],
+        };
+      }
+      if (el['right-divider']) {
+        const attrs = getAttributes(el);
+        layout.systemDividers.rightDivider = {
+          printObject: attrs['print-object'] === 'yes' ? true : attrs['print-object'] === 'no' ? false : undefined,
+          halign: attrs['halign'],
+          valign: attrs['valign'],
+        };
+      }
+    }
+  }
 
   return layout;
 }
@@ -1537,6 +1564,25 @@ function parseNotations(elements: OrderedElement[], notationsIndex: number = 0):
         type: 'arpeggiate',
         direction: arpAttrs['direction'] as 'up' | 'down' | undefined,
         number: arpAttrs['number'] ? parseInt(arpAttrs['number'], 10) : undefined,
+        notationsIndex,
+      });
+    } else if (el['non-arpeggiate'] !== undefined) {
+      const nonArpAttrs = getAttributes(el);
+      notations.push({
+        type: 'non-arpeggiate',
+        nonArpeggiateType: nonArpAttrs['type'] as 'top' | 'bottom',
+        number: nonArpAttrs['number'] ? parseInt(nonArpAttrs['number'], 10) : undefined,
+        placement: nonArpAttrs['placement'] as 'above' | 'below' | undefined,
+        notationsIndex,
+      });
+    } else if (el['accidental-mark']) {
+      const amAttrs = getAttributes(el);
+      const amContent = el['accidental-mark'] as OrderedElement[];
+      const value = extractText(amContent);
+      notations.push({
+        type: 'accidental-mark',
+        value,
+        placement: amAttrs['placement'] as 'above' | 'below' | undefined,
         notationsIndex,
       });
     } else if (el['glissando']) {

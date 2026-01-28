@@ -88,6 +88,10 @@ export interface SystemLayout {
   systemMargins?: { leftMargin?: number; rightMargin?: number };
   systemDistance?: number;
   topSystemDistance?: number;
+  systemDividers?: {
+    leftDivider?: { printObject?: boolean; halign?: string; valign?: string };
+    rightDivider?: { printObject?: boolean; halign?: string; valign?: string };
+  };
 }
 
 export interface FontInfo {
@@ -606,6 +610,8 @@ export type Notation =
   | DynamicsNotation
   | FermataNotation
   | ArpeggiateNotation
+  | NonArpeggiateNotation
+  | AccidentalMarkNotation
   | GlissandoNotation
   | SlideNotation
   | OtherNotation;
@@ -748,6 +754,17 @@ export interface ArpeggiateNotation extends BaseNotation {
   type: 'arpeggiate';
   direction?: 'up' | 'down';
   number?: number;
+}
+
+export interface NonArpeggiateNotation extends BaseNotation {
+  type: 'non-arpeggiate';
+  nonArpeggiateType: 'top' | 'bottom';
+  number?: number;
+}
+
+export interface AccidentalMarkNotation extends BaseNotation {
+  type: 'accidental-mark';
+  value: string;
 }
 
 export interface GlissandoNotation extends BaseNotation {

@@ -116,15 +116,22 @@ function compareXml(original: unknown[], roundtrip: unknown[]): CompareStats {
 }
 
 // Attributes that define an element's identity for matching
-const IDENTITY_ATTRIBUTES = new Set(['id', 'number', 'type', 'location', 'placement', 'part-id']);
+// Note: 'id' is excluded because the serializer generates new IDs that won't match originals
+const IDENTITY_ATTRIBUTES = new Set(['number', 'type', 'location', 'placement', 'part-id']);
 
 // Create a signature for an element to match regardless of order
-function getElementSignature(node: unknown, tagName: string): string {
+function getElementSignature(node: unknown, tagName: string, origAttrs?: Record<string, string>): string {
   const attrs = getAttributes(node);
   // Using only tagName and identity attributes for matching.
   // This allows nodes to match even if display attributes (like width, default-x) differ.
+  // If origAttrs is provided, only include attributes that exist in original
   const identityAttrStr = Object.entries(attrs)
-    .filter(([k]) => IDENTITY_ATTRIBUTES.has(k))
+    .filter(([k]) => {
+      if (!IDENTITY_ATTRIBUTES.has(k)) return false;
+      // If origAttrs provided, only include attrs present in original
+      if (origAttrs && !(k in origAttrs)) return false;
+      return true;
+    })
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([k, v]) => `${k}=${v}`)
     .join(',');
