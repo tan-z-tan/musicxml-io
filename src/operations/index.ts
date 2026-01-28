@@ -205,7 +205,7 @@ interface EntryWithPosition {
   endPosition: number;
 }
 
-function getVoiceEntries(measure: Measure, voice: number, staff?: number): EntryWithPosition[] {
+function getVoiceEntries(measure: Measure, voice?: number, staff?: number): EntryWithPosition[] {
   const result: EntryWithPosition[] = [];
   let position = 0;
 
@@ -277,15 +277,18 @@ function hasNotesInRange(
 /**
  * Create a rest note entry
  */
-function createRest(duration: number, voice: number, staff?: number): NoteEntry {
-  return {
+function createRest(duration: number, voice?: number, staff?: number): NoteEntry {
+  const note: NoteEntry = {
     _id: generateId(),
     type: 'note',
     rest: { displayStep: undefined, displayOctave: undefined },
     duration,
-    voice,
     staff,
   };
+  if (voice !== undefined) {
+    note.voice = voice;
+  }
+  return note;
 }
 
 /**
@@ -294,7 +297,7 @@ function createRest(duration: number, voice: number, staff?: number): NoteEntry 
  */
 function rebuildMeasureWithVoice(
   measure: Measure,
-  voice: number,
+  voice: number | undefined,
   newEntries: Array<{ position: number; entry: NoteEntry }>,
   measureDuration: number,
   staff?: number
@@ -2911,7 +2914,7 @@ export function autoBeam(
   for (const entry of measure.entries) {
     if (entry.type === 'note') {
       if (!entry.chord && !entry.rest) {
-        const voice = entry.voice;
+        const voice = entry.voice ?? 1;
         if (options.voice === undefined || voice === options.voice) {
           if (!notesByVoice.has(voice)) {
             notesByVoice.set(voice, []);

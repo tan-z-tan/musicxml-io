@@ -82,12 +82,25 @@ export interface PageMargins {
   rightMargin?: number;
   topMargin?: number;
   bottomMargin?: number;
+  // Original string values for roundtrip fidelity
+  leftMarginRaw?: string;
+  rightMarginRaw?: string;
+  topMarginRaw?: string;
+  bottomMarginRaw?: string;
 }
 
 export interface SystemLayout {
-  systemMargins?: { leftMargin?: number; rightMargin?: number };
+  systemMargins?: {
+    leftMargin?: number;
+    rightMargin?: number;
+    // Original string values for roundtrip fidelity
+    leftMarginRaw?: string;
+    rightMarginRaw?: string;
+  };
   systemDistance?: number;
+  systemDistanceRaw?: string;
   topSystemDistance?: number;
+  topSystemDistanceRaw?: string;
   systemDividers?: {
     leftDivider?: { printObject?: boolean; halign?: string; valign?: string };
     rightDivider?: { printObject?: boolean; halign?: string; valign?: string };
@@ -280,6 +293,7 @@ export interface TimeSignature {
   beatType: number;
   // For compound time signatures (e.g., 3/8+2/8+3/4)
   beatsList?: number[];
+  beatsStrList?: string[]; // Original string values for roundtrip (e.g., ["3+2", "3"])
   beatTypeList?: number[];
   symbol?: 'common' | 'cut' | 'single-number' | 'note' | 'dotted-note' | 'normal';
   printObject?: boolean;
@@ -307,7 +321,7 @@ export interface KeyOctave {
 
 export interface Clef {
   sign: 'G' | 'F' | 'C' | 'percussion' | 'TAB';
-  line: number;
+  line?: number; // Optional for percussion/TAB clefs
   staff?: number;
   clefOctaveChange?: number;
   printObject?: boolean;
@@ -356,7 +370,7 @@ export interface NoteEntry {
   rest?: RestInfo;
   unpitched?: { displayStep?: string; displayOctave?: number };
   duration: number;
-  voice: number;
+  voice?: number; // Optional - some MusicXML files don't include voice
   staff?: number;
   chord?: boolean;
   cue?: boolean;
@@ -680,7 +694,8 @@ export interface OrnamentNotation extends BaseNotation {
 export type OrnamentType =
   | 'trill-mark' | 'mordent' | 'inverted-mordent' | 'turn' | 'inverted-turn'
   | 'delayed-turn' | 'delayed-inverted-turn' | 'vertical-turn' | 'inverted-vertical-turn'
-  | 'shake' | 'wavy-line' | 'schleifer' | 'tremolo' | 'haydn' | 'other-ornament';
+  | 'shake' | 'wavy-line' | 'schleifer' | 'tremolo' | 'haydn' | 'other-ornament'
+  | 'empty'; // Used to preserve empty <ornaments/> elements for roundtrip
 
 export interface TechnicalNotation extends BaseNotation {
   type: 'technical';
@@ -823,7 +838,7 @@ export type DirectionType =
   | { kind: 'octave-shift'; type: 'up' | 'down' | 'stop'; size?: number }
   | { kind: 'bracket'; type: 'start' | 'stop' | 'continue'; number?: number; lineEnd?: 'up' | 'down' | 'both' | 'arrow' | 'none'; lineType?: 'solid' | 'dashed' | 'dotted' | 'wavy'; defaultY?: number; relativeX?: number }
   | { kind: 'dashes'; type: 'start' | 'stop' | 'continue'; number?: number; dashLength?: number; defaultY?: number; spaceLength?: number }
-  | { kind: 'accordion-registration'; high?: boolean; middle?: number; low?: boolean }
+  | { kind: 'accordion-registration'; high?: boolean; middle?: number | string; middlePresent?: boolean; low?: boolean }
   | { kind: 'swing'; straight?: boolean; first?: number; second?: number; swingType?: NoteType }
   | { kind: 'eyeglasses' }
   | { kind: 'damp' }

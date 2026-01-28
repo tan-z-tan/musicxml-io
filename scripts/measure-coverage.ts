@@ -290,7 +290,7 @@ function compareAttributes(
         type: 'attribute_missing',
         expected: value,
       });
-    } else if (String(rtValue) !== String(value)) {
+    } else if (!valuesAreEqual(String(value), String(rtValue))) {
       stats.differences.push({
         path: `${path}/@${name}`,
         type: 'attribute_mismatch',
@@ -314,7 +314,7 @@ function compareAttributes(
         type: 'missing',
         expected: origText,
       });
-    } else if (normalizeText(origText) !== normalizeText(rtText)) {
+    } else if (!valuesAreEqual(normalizeText(origText), normalizeText(rtText))) {
       stats.differences.push({
         path: `${path}/#text`,
         type: 'value_mismatch',
@@ -362,6 +362,33 @@ function getTextContent(node: unknown): string | null {
 
 function normalizeText(text: string): string {
   return text.trim().replace(/\s+/g, ' ');
+}
+
+/**
+ * Compare two values, treating numerically equivalent strings as equal.
+ * e.g., "-50.00" and "-50" are considered equal (both parse to -50)
+ * But "abc" and "abc" are compared as strings.
+ */
+function valuesAreEqual(a: string, b: string): boolean {
+  // First try string comparison
+  if (a === b) return true;
+
+  // Try numeric comparison if both are valid numbers
+  const numA = parseFloat(a);
+  const numB = parseFloat(b);
+
+  // Both must be valid numbers (not NaN) and the entire string must be numeric
+  const isNumericA = !isNaN(numA) && isFinite(numA) && String(numA) !== 'NaN';
+  const isNumericB = !isNaN(numB) && isFinite(numB) && String(numB) !== 'NaN';
+
+  if (isNumericA && isNumericB) {
+    // Handle -0 vs 0 case
+    if (Object.is(numA, -0)) return Object.is(numB, -0) || numB === 0;
+    if (Object.is(numB, -0)) return Object.is(numA, -0) || numA === 0;
+    return numA === numB;
+  }
+
+  return false;
 }
 
 function countNestedNodes(node: unknown, stats: CompareStats): void {

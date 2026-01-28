@@ -89,7 +89,7 @@ export function groupByVoice(measure: Measure): VoiceGroup[] {
     if (entry.type !== 'note') continue;
 
     const staff = entry.staff ?? 1;
-    const voice = entry.voice;
+    const voice = entry.voice ?? 1;
     const key = `${staff}-${voice}`;
 
     if (!groups.has(key)) {
@@ -239,7 +239,7 @@ export function getVoices(measure: Measure): number[] {
 
   for (const entry of measure.entries) {
     if (entry.type === 'note') {
-      voices.add(entry.voice);
+      voices.add(entry.voice ?? 1);
     }
   }
 
@@ -346,7 +346,7 @@ export function buildVoiceToStaffMap(measure: Measure): VoiceToStaffMap {
 
   for (const entry of measure.entries) {
     if (entry.type === 'note' && entry.staff !== undefined) {
-      const voice = entry.voice;
+      const voice = entry.voice ?? 1;
       const staff = entry.staff;
       // Use the first occurrence for each voice
       if (!map.has(voice)) {
@@ -372,7 +372,7 @@ export function buildVoiceToStaffMapForPart(part: Part): VoiceToStaffMap {
   for (const measure of part.measures) {
     for (const entry of measure.entries) {
       if (entry.type === 'note' && entry.staff !== undefined) {
-        const voice = entry.voice;
+        const voice = entry.voice ?? 1;
         const staff = entry.staff;
         if (!map.has(voice)) {
           map.set(voice, staff);
@@ -403,7 +403,7 @@ export function inferStaff(
   }
 
   // Try to infer from voice mapping
-  const inferredStaff = voiceToStaffMap.get(entry.voice);
+  const inferredStaff = voiceToStaffMap.get(entry.voice ?? 1);
   if (inferredStaff !== undefined) {
     return inferredStaff;
   }
@@ -472,7 +472,7 @@ export function getVoicesForStaff(measure: Measure, staff: number): number[] {
     if (entry.type === 'note') {
       const entryStaff = entry.staff ?? 1;
       if (entryStaff === staff) {
-        voices.add(entry.voice);
+        voices.add(entry.voice ?? 1);
       }
     }
   }
