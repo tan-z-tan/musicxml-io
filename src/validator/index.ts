@@ -867,8 +867,8 @@ export function validateVoiceStaff(
     const entry = measure.entries[entryIndex];
     if (entry.type !== 'note') continue;
 
-    // Check voice number
-    if (entry.voice <= 0) {
+    // Check voice number (only if voice is explicitly defined)
+    if (entry.voice !== undefined && entry.voice <= 0) {
       errors.push({
         code: 'INVALID_VOICE_NUMBER',
         level: 'error',

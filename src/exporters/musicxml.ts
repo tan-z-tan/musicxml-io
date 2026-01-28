@@ -34,6 +34,7 @@ import type {
   TupletNotation,
   SoundEntry,
   TechnicalNotation,
+  OrnamentNotation,
   DisplayText,
   AttributesEntry,
   GroupingEntry,
@@ -866,7 +867,11 @@ function serializeTime(time: TimeSignature, indent: string): string[] {
     const maxLen = Math.max(time.beatsList.length, time.beatTypeList.length);
     for (let i = 0; i < maxLen; i++) {
       if (i < time.beatsList.length) {
-        lines.push(`${indent}  <beats>${time.beatsList[i]}</beats>`);
+        // Use beatsStrList for original string values if available, otherwise use beatsList
+        const beatsValue = time.beatsStrList && i < time.beatsStrList.length
+          ? time.beatsStrList[i]
+          : time.beatsList[i];
+        lines.push(`${indent}  <beats>${beatsValue}</beats>`);
       }
       if (i < time.beatTypeList.length) {
         lines.push(`${indent}  <beat-type>${time.beatTypeList[i]}</beat-type>`);
@@ -891,7 +896,10 @@ function serializeClef(clef: Clef, indent: string): string[] {
   if (clef.afterBarline) attrs += ' after-barline="yes"';
   lines.push(`${indent}<clef${attrs}>`);
   lines.push(`${indent}  <sign>${clef.sign}</sign>`);
-  lines.push(`${indent}  <line>${clef.line}</line>`);
+  // Only output line if defined (percussion clefs may not have it)
+  if (clef.line !== undefined) {
+    lines.push(`${indent}  <line>${clef.line}</line>`);
+  }
   if (clef.clefOctaveChange !== undefined) {
     lines.push(`${indent}  <clef-octave-change>${clef.clefOctaveChange}</clef-octave-change>`);
   }
@@ -1029,8 +1037,10 @@ function serializeNote(note: NoteEntry, indent: string): string[] {
     lines.push(`${indent}  <tie type="${note.tie.type}"/>`);
   }
 
-  // Voice
-  lines.push(`${indent}  <voice>${note.voice}</voice>`);
+  // Voice - only output if defined
+  if (note.voice !== undefined) {
+    lines.push(`${indent}  <voice>${note.voice}</voice>`);
+  }
 
   // Type
   if (note.noteType) {
@@ -1346,13 +1356,20 @@ function serializeNotationsGroup(notations: Notation[], indent: string): string[
 
   // Serialize grouped ornaments
   if (ornaments.length > 0) {
-    lines.push(`${indent}  <ornaments>`);
-    // Collect all accidental-marks from ornaments for serialization after ornaments
-    const allAccidentalMarks: { value: string; placement?: 'above' | 'below' }[] = [];
-    for (const orn of ornaments) {
-      if (orn.type === 'ornament') {
-        const placementAttr = orn.placement ? ` placement="${orn.placement}"` : '';
-        if (orn.ornament === 'wavy-line') {
+    // Check if this is just an empty ornaments marker
+    const hasOnlyEmptyMarker = ornaments.length === 1 && ornaments[0].type === 'ornament' && (ornaments[0] as OrnamentNotation).ornament === 'empty';
+    if (hasOnlyEmptyMarker) {
+      lines.push(`${indent}  <ornaments/>`);
+    } else {
+      lines.push(`${indent}  <ornaments>`);
+      // Collect all accidental-marks from ornaments for serialization after ornaments
+      const allAccidentalMarks: { value: string; placement?: 'above' | 'below' }[] = [];
+      for (const orn of ornaments) {
+        if (orn.type === 'ornament') {
+          // Skip empty markers when outputting with other ornaments
+          if ((orn as OrnamentNotation).ornament === 'empty') continue;
+          const placementAttr = orn.placement ? ` placement="${orn.placement}"` : '';
+          if (orn.ornament === 'wavy-line') {
           let wlAttrs = '';
           if (orn.wavyLineType) wlAttrs += ` type="${orn.wavyLineType}"`;
           if (orn.number !== undefined) wlAttrs += ` number="${orn.number}"`;
@@ -1379,14 +1396,15 @@ function serializeNotationsGroup(notations: Notation[], indent: string): string[
         if (orn.accidentalMarks) {
           allAccidentalMarks.push(...orn.accidentalMarks);
         }
+        }
       }
+      // Serialize accidental-marks after other ornaments
+      for (const am of allAccidentalMarks) {
+        const amPlacement = am.placement ? ` placement="${am.placement}"` : '';
+        lines.push(`${indent}    <accidental-mark${amPlacement}>${am.value}</accidental-mark>`);
+      }
+      lines.push(`${indent}  </ornaments>`);
     }
-    // Serialize accidental-marks after other ornaments
-    for (const am of allAccidentalMarks) {
-      const amPlacement = am.placement ? ` placement="${am.placement}"` : '';
-      lines.push(`${indent}    <accidental-mark${amPlacement}>${am.value}</accidental-mark>`);
-    }
-    lines.push(`${indent}  </ornaments>`);
   }
 
   // Serialize grouped technical
@@ -1735,8 +1753,13 @@ function serializeDirectionType(dirType: DirectionType, indent: string): string[
       if (dirType.high) {
         lines.push(`${indent}    <accordion-high/>`);
       }
-      if (dirType.middle !== undefined) {
-        lines.push(`${indent}    <accordion-middle>${dirType.middle}</accordion-middle>`);
+      // Handle accordion-middle: output if middlePresent is true OR middle has a value
+      if (dirType.middlePresent || dirType.middle !== undefined) {
+        if (dirType.middle !== undefined) {
+          lines.push(`${indent}    <accordion-middle>${dirType.middle}</accordion-middle>`);
+        } else {
+          lines.push(`${indent}    <accordion-middle/>`);
+        }
       }
       if (dirType.low) {
         lines.push(`${indent}    <accordion-low/>`);

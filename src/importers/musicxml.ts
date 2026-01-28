@@ -913,18 +913,19 @@ function parseTimeSignature(elements: OrderedElement[], parentElements: OrderedE
     }
   }
 
-  // Collect all beats and beat-type values for compound time signatures
-  const beatsList = collectElements(elements, 'beats', (c) => parseInt(extractText(c), 10));
+  // Collect all beats (as strings to preserve values like "3+2") and beat-type values
+  const beatsStrList = collectElements(elements, 'beats', (c) => extractText(c));
   const beatTypeList = collectElements(elements, 'beat-type', (c) => parseInt(extractText(c), 10));
 
   const time: TimeSignature = {
-    beats: beatsList.length > 0 ? String(beatsList[0]) : '4',
+    beats: beatsStrList.length > 0 ? beatsStrList[0] : '4',
     beatType: beatTypeList.length > 0 ? beatTypeList[0] : 4,
   };
 
   // Store compound time signature data
-  if (beatsList.length > 1 || beatTypeList.length > 1) {
-    time.beatsList = beatsList;
+  if (beatsStrList.length > 1 || beatTypeList.length > 1) {
+    time.beatsList = beatsStrList.map(b => parseInt(b, 10));
+    time.beatsStrList = beatsStrList; // Store original strings for roundtrip
     time.beatTypeList = beatTypeList;
   }
 
@@ -986,9 +987,14 @@ function parseKeySignature(elements: OrderedElement[]): KeySignature {
 
 function parseClef(elements: OrderedElement[], attrs: Record<string, string>): Clef {
   const sign = getElementText(elements, 'sign') as Clef['sign'] || 'G';
-  const line = parseInt(getElementText(elements, 'line') || '2', 10);
+  const lineText = getElementText(elements, 'line');
 
-  const clef: Clef = { sign, line };
+  const clef: Clef = { sign };
+
+  // Only set line if present in the XML (percussion clefs may not have it)
+  if (lineText) {
+    clef.line = parseInt(lineText, 10);
+  }
 
   if (attrs['number']) {
     clef.staff = parseInt(attrs['number'], 10);
@@ -1030,8 +1036,13 @@ function parseNote(elements: OrderedElement[], attrs: Record<string, string>): N
     _id: generateId(),
     type: 'note',
     duration: getElementTextAsInt(elements, 'duration', 0)!,
-    voice: getElementTextAsInt(elements, 'voice', 1)!,
   };
+
+  // Voice - only set if present in the XML
+  const voiceValue = getElementTextAsInt(elements, 'voice');
+  if (voiceValue !== undefined) {
+    note.voice = voiceValue;
+  }
 
   // Layout attributes
   if (attrs['default-x']) note.defaultX = parseFloat(attrs['default-x']);
@@ -1443,6 +1454,16 @@ function parseNotations(elements: OrderedElement[], notationsIndex: number = 0):
           if (tremAttrs['default-y']) tremNotation.defaultY = parseFloat(tremAttrs['default-y']);
           notations.push(tremNotation);
         }
+      }
+
+      // Check if this ornaments element was empty - add marker for roundtrip
+      const ornamentNotationsAdded = notations.filter(n => n.type === 'ornament' && n.notationsIndex === notationsIndex);
+      if (ornamentNotationsAdded.length === 0) {
+        notations.push({
+          type: 'ornament',
+          ornament: 'empty',
+          notationsIndex,
+        });
       }
     } else if (el['technical']) {
       const techContent = el['technical'] as OrderedElement[];
@@ -2043,11 +2064,16 @@ function parseDirectionTypes(elements: OrderedElement[]): DirectionType[] {
       for (const acc of accContent) {
         if (acc['accordion-high'] !== undefined) {
           result.high = true;
-        } else if (acc['accordion-middle']) {
+        } else if (acc['accordion-middle'] !== undefined) {
+          // Track that accordion-middle is present (even if empty)
+          result.middlePresent = true;
           const midContent = acc['accordion-middle'] as OrderedElement[];
           for (const item of midContent) {
             if (item['#text'] !== undefined) {
-              result.middle = parseInt(String(item['#text']), 10);
+              const textValue = String(item['#text']);
+              const numValue = parseInt(textValue, 10);
+              // Preserve the original value - use number if valid, otherwise string
+              result.middle = !isNaN(numValue) ? numValue : textValue;
               break;
             }
           }
