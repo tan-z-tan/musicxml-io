@@ -257,6 +257,7 @@ export interface StaffDetails {
   staffSizeScaling?: number;
   showFrets?: 'numbers' | 'letters';
   printObject?: boolean;
+  printSpacing?: boolean;
 }
 
 export interface StaffTuning {
@@ -340,7 +341,7 @@ export interface Barline {
 // ============================================================
 // MeasureEntry (MusicXML順序を保持するフラット構造)
 // ============================================================
-export type MeasureEntry = NoteEntry | BackupEntry | ForwardEntry | DirectionEntry | HarmonyEntry | FiguredBassEntry | SoundEntry | AttributesEntry;
+export type MeasureEntry = NoteEntry | BackupEntry | ForwardEntry | DirectionEntry | HarmonyEntry | FiguredBassEntry | SoundEntry | AttributesEntry | GroupingEntry;
 
 export interface AttributesEntry {
   _id: string;
@@ -473,13 +474,21 @@ export interface SoundEntry {
   sostenutoPedal?: boolean | 'yes' | 'no';
 }
 
+export interface GroupingEntry {
+  _id: string;
+  type: 'grouping';
+  groupingType: 'start' | 'stop' | 'single';
+  number?: string;
+}
+
 export interface HarmonyEntry {
   _id: string;
   type: 'harmony';
   root: { rootStep: string; rootAlter?: number };
   kind: string;
   kindText?: string;
-  bass?: { bassStep: string; bassAlter?: number };
+  kindHalign?: string;
+  bass?: { bassStep: string; bassAlter?: number; arrangement?: string };
   inversion?: number;
   degrees?: HarmonyDegree[];
   frame?: HarmonyFrame;
@@ -685,7 +694,7 @@ export interface TechnicalNotation extends BaseNotation {
   bendAlter?: number;
   preBend?: boolean;
   release?: boolean;
-  withBar?: number;
+  withBar?: boolean;
   // For harmonic
   harmonicNatural?: boolean;
   harmonicArtificial?: boolean;
@@ -790,6 +799,7 @@ export interface SlideNotation extends BaseNotation {
   slideType: 'start' | 'stop';
   number?: number;
   lineType?: 'solid' | 'dashed' | 'dotted' | 'wavy';
+  text?: string;
 }
 
 export interface OtherNotation extends BaseNotation {

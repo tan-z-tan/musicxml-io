@@ -63,6 +63,8 @@ import type {
   OrnamentNotation,
   ArticulationNotation,
   DynamicsNotation,
+  GroupingEntry,
+  SlideNotation,
 } from '../types';
 
 // Parser with preserveOrder to maintain element order
@@ -751,6 +753,15 @@ function parseMeasure(elements: OrderedElement[], attrs: Record<string, string>)
       measure.entries.push(parseFiguredBass(el['figured-bass'] as OrderedElement[], getAttributes(el)));
     } else if (el['sound']) {
       measure.entries.push(parseSound(el['sound'] as OrderedElement[], getAttributes(el)));
+    } else if (el['grouping'] !== undefined) {
+      const grpAttrs = getAttributes(el);
+      const grouping: GroupingEntry = {
+        _id: generateId(),
+        type: 'grouping',
+        groupingType: (grpAttrs['type'] as 'start' | 'stop' | 'single') || 'start',
+      };
+      if (grpAttrs['number']) grouping.number = grpAttrs['number'];
+      measure.entries.push(grouping);
     }
   }
 
@@ -837,6 +848,7 @@ function parseAttributes(elements: OrderedElement[]): MeasureAttributes {
       const key = parseKeySignature(keyContent);
       if (keyAttrs['number']) key.number = parseInt(keyAttrs['number'], 10);
       if (keyAttrs['print-object'] === 'no') key.printObject = false;
+      else if (keyAttrs['print-object'] === 'yes') key.printObject = true;
       keys.push(key);
     }
   }
@@ -961,6 +973,7 @@ function parseKeySignature(elements: OrderedElement[]): KeySignature {
   const keyOctaves = collectElements(elements, 'key-octave', (c, a) => {
     const ko: KeyOctave = { number: parseInt(a['number'] || '1', 10), octave: parseInt(extractText(c), 10) };
     if (a['cancel'] === 'yes') ko.cancel = true;
+    else if (a['cancel'] === 'no') ko.cancel = false;
     return ko;
   });
 
@@ -988,6 +1001,8 @@ function parseClef(elements: OrderedElement[], attrs: Record<string, string>): C
 
   if (attrs['print-object'] === 'no') {
     clef.printObject = false;
+  } else if (attrs['print-object'] === 'yes') {
+    clef.printObject = true;
   }
   if (attrs['after-barline'] === 'yes') {
     clef.afterBarline = true;
@@ -1456,8 +1471,7 @@ function parseNotations(elements: OrderedElement[], notationsIndex: number = 0):
           if (bendAlter) techNotation.bendAlter = parseFloat(bendAlter);
           if (hasElement(bendContent, 'pre-bend')) techNotation.preBend = true;
           if (hasElement(bendContent, 'release')) techNotation.release = true;
-          const withBar = getElementText(bendContent, 'with-bar');
-          if (withBar) techNotation.withBar = parseFloat(withBar);
+          if (hasElement(bendContent, 'with-bar')) techNotation.withBar = true;
           notations.push(techNotation);
         }
         // Handle other technical elements
@@ -1613,13 +1627,17 @@ function parseNotations(elements: OrderedElement[], notationsIndex: number = 0):
       });
     } else if (el['slide']) {
       const slideAttrs = getAttributes(el);
-      notations.push({
+      const slideContent = el['slide'] as OrderedElement[];
+      const slideText = extractText(slideContent);
+      const slideNotation: SlideNotation = {
         type: 'slide',
         slideType: slideAttrs['type'] === 'stop' ? 'stop' : 'start',
         number: slideAttrs['number'] ? parseInt(slideAttrs['number'], 10) : undefined,
         lineType: slideAttrs['line-type'] as 'solid' | 'dashed' | 'dotted' | 'wavy' | undefined,
         notationsIndex,
-      });
+      };
+      if (slideText) slideNotation.text = slideText;
+      notations.push(slideNotation);
     }
   }
 
@@ -1644,8 +1662,9 @@ function parseLyric(elements: OrderedElement[], attrs: Record<string, string>): 
           break;
         }
       }
-    } else if (el['text']) {
+    } else if (el['text'] !== undefined) {
       const content = el['text'] as OrderedElement[];
+      let foundText = false;
       for (const item of content) {
         if (item['#text'] !== undefined) {
           textElements.push({
@@ -1653,8 +1672,17 @@ function parseLyric(elements: OrderedElement[], attrs: Record<string, string>): 
             syllabic: currentSyllabic,
           });
           currentSyllabic = undefined;
+          foundText = true;
           break;
         }
+      }
+      // Handle text elements with empty/whitespace-only content (e.g., fullwidth space trimmed by parser)
+      if (!foundText) {
+        textElements.push({
+          text: '',
+          syllabic: currentSyllabic,
+        });
+        currentSyllabic = undefined;
       }
     } else if (el['elision'] !== undefined) {
       hasElision = true;
@@ -2307,6 +2335,8 @@ function parseStaffDetails(elements: OrderedElement[], attrs: Record<string, str
   if (attrs['number']) sd.number = parseInt(attrs['number'], 10);
   if (attrs['print-object'] === 'no') sd.printObject = false;
   else if (attrs['print-object'] === 'yes') sd.printObject = true;
+  if (attrs['print-spacing'] === 'yes') sd.printSpacing = true;
+  else if (attrs['print-spacing'] === 'no') sd.printSpacing = false;
 
   const staffType = getElementText(elements, 'staff-type');
   if (staffType && ['ossia', 'cue', 'editorial', 'regular', 'alternate'].includes(staffType)) {
@@ -2384,7 +2414,9 @@ function parseMeasureStyle(elements: OrderedElement[], attrs: Record<string, str
       const slAttrs = getAttributes(el);
       ms.slash = { type: slAttrs['type'] === 'stop' ? 'stop' : 'start' };
       if (slAttrs['use-dots'] === 'yes') ms.slash.useDots = true;
+      else if (slAttrs['use-dots'] === 'no') ms.slash.useDots = false;
       if (slAttrs['use-stems'] === 'yes') ms.slash.useStems = true;
+      else if (slAttrs['use-stems'] === 'no') ms.slash.useStems = false;
     }
   }
 
@@ -2432,19 +2464,25 @@ function parseHarmony(elements: OrderedElement[], attrs: Record<string, string>)
           break;
         }
       }
-      if (kindAttrs['text']) harmony.kindText = kindAttrs['text'];
+      if (kindAttrs['text'] !== undefined) harmony.kindText = kindAttrs['text'];
+      if (kindAttrs['halign']) harmony.kindHalign = kindAttrs['halign'];
       break;
     }
   }
 
   // Parse bass
-  const bass = getElementContent(elements, 'bass');
-  if (bass) {
-    const bassStep = getElementText(bass, 'bass-step');
-    if (bassStep) {
-      harmony.bass = { bassStep };
-      const bassAlter = getElementText(bass, 'bass-alter');
-      if (bassAlter) harmony.bass.bassAlter = parseFloat(bassAlter);
+  for (const el of elements) {
+    if (el['bass']) {
+      const bassAttrs = getAttributes(el);
+      const bassContent = el['bass'] as OrderedElement[];
+      const bassStep = getElementText(bassContent, 'bass-step');
+      if (bassStep) {
+        harmony.bass = { bassStep };
+        const bassAlter = getElementText(bassContent, 'bass-alter');
+        if (bassAlter) harmony.bass.bassAlter = parseFloat(bassAlter);
+        if (bassAttrs['arrangement']) harmony.bass.arrangement = bassAttrs['arrangement'];
+      }
+      break;
     }
   }
 

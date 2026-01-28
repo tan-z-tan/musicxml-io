@@ -36,6 +36,7 @@ import type {
   TechnicalNotation,
   DisplayText,
   AttributesEntry,
+  GroupingEntry,
 } from '../types';
 import {
   validate,
@@ -804,6 +805,7 @@ function serializeKey(key: KeySignature, indent: string): string[] {
   let keyAttrs = '';
   if (key.number !== undefined) keyAttrs += ` number="${key.number}"`;
   if (key.printObject === false) keyAttrs += ' print-object="no"';
+  else if (key.printObject === true) keyAttrs += ' print-object="yes"';
   lines.push(`${indent}<key${keyAttrs}>`);
 
   // Cancel (for key changes)
@@ -885,6 +887,7 @@ function serializeClef(clef: Clef, indent: string): string[] {
 
   let attrs = clef.staff ? ` number="${clef.staff}"` : '';
   if (clef.printObject === false) attrs += ' print-object="no"';
+  else if (clef.printObject === true) attrs += ' print-object="yes"';
   if (clef.afterBarline) attrs += ' after-barline="yes"';
   lines.push(`${indent}<clef${attrs}>`);
   lines.push(`${indent}  <sign>${clef.sign}</sign>`);
@@ -929,6 +932,12 @@ function serializeEntry(entry: MeasureEntry, indent: string): string[] {
       return serializeSound(entry, indent);
     case 'attributes':
       return serializeAttributes((entry as AttributesEntry).attributes, indent, (entry as AttributesEntry)._id);
+    case 'grouping': {
+      const grp = entry as GroupingEntry;
+      let grpAttrs = ` type="${grp.groupingType}"`;
+      if (grp.number) grpAttrs += ` number="${grp.number}"`;
+      return [`${indent}<grouping${grpAttrs}/>`];
+    }
     default:
       return [];
   }
@@ -1306,7 +1315,11 @@ function serializeNotationsGroup(notations: Notation[], indent: string): string[
       let attrs = ` type="${notation.slideType}"`;
       if (notation.number !== undefined) attrs += ` number="${notation.number}"`;
       if (notation.lineType) attrs += ` line-type="${notation.lineType}"`;
-      lines.push(`${indent}  <slide${attrs}/>`);
+      if (notation.text) {
+        lines.push(`${indent}  <slide${attrs}>${escapeXml(notation.text)}</slide>`);
+      } else {
+        lines.push(`${indent}  <slide${attrs}/>`);
+      }
     }
   }
 
@@ -1396,8 +1409,8 @@ function serializeNotationsGroup(notations: Notation[], indent: string): string[
           if (techNotation.release) {
             lines.push(`${indent}      <release/>`);
           }
-          if (techNotation.withBar !== undefined) {
-            lines.push(`${indent}      <with-bar>${techNotation.withBar}</with-bar>`);
+          if (techNotation.withBar) {
+            lines.push(`${indent}      <with-bar/>`);
           }
           lines.push(`${indent}    </bend>`);
         } else if (tech.technical === 'harmonic') {
@@ -1483,8 +1496,8 @@ function serializeLyric(lyric: Lyric, indent: string): string[] {
         lines.push(`${indent}  <elision/>`);
       }
     }
-  } else {
-    // Single text element
+  } else if (lyric.syllabic || lyric.text) {
+    // Single text element (skip for extend-only lyrics with no text content)
     if (lyric.syllabic) {
       lines.push(`${indent}  <syllabic>${lyric.syllabic}</syllabic>`);
     }
@@ -1926,6 +1939,7 @@ function serializeStaffDetails(sd: StaffDetails, indent: string): string[] {
     'number': sd.number,
     'show-frets': sd.showFrets,
     'print-object': sd.printObject,
+    'print-spacing': sd.printSpacing,
   });
   lines.push(`${indent}<staff-details${attrs}>`);
 
@@ -2012,12 +2026,15 @@ function serializeHarmony(harmony: HarmonyEntry, indent: string): string[] {
 
   // Kind
   let kindAttrs = '';
-  if (harmony.kindText) kindAttrs += ` text="${escapeXml(harmony.kindText)}"`;
+  if (harmony.kindText !== undefined) kindAttrs += ` text="${escapeXml(harmony.kindText)}"`;
+  if (harmony.kindHalign) kindAttrs += ` halign="${escapeXml(harmony.kindHalign)}"`;
   lines.push(`${indent}  <kind${kindAttrs}>${escapeXml(harmony.kind)}</kind>`);
 
   // Bass
   if (harmony.bass) {
-    lines.push(`${indent}  <bass>`);
+    let bassAttrs = '';
+    if (harmony.bass.arrangement) bassAttrs += ` arrangement="${escapeXml(harmony.bass.arrangement)}"`;
+    lines.push(`${indent}  <bass${bassAttrs}>`);
     lines.push(`${indent}    <bass-step>${harmony.bass.bassStep}</bass-step>`);
     if (harmony.bass.bassAlter !== undefined) {
       lines.push(`${indent}    <bass-alter>${harmony.bass.bassAlter}</bass-alter>`);
