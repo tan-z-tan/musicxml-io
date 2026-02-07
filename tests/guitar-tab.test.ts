@@ -374,5 +374,71 @@ describe('Guitar TAB', () => {
       expect(exported).toContain('bezier-x="18"');
       expect(exported).toContain('bezier-y="28"');
     });
+
+    it('should preserve version attribute', () => {
+      const score = parse(xml);
+      expect(score.version).toBe('4.1');
+      const exported = serialize(score);
+      expect(exported).toContain('version="4.1"');
+      expect(exported).toContain('MusicXML 4.1 Partwise');
+    });
+
+    it('should preserve element ordering: technical before slur in TAB part', () => {
+      const score = parse(xml);
+      const exported = serialize(score);
+      // Find the TAB part section (part id="P2")
+      const p2Start = exported.indexOf('<part id="P2">');
+      expect(p2Start).toBeGreaterThan(-1);
+      // In the TAB part, <technical> should come before <slur> within first <notations>
+      const firstNotations = exported.indexOf('<notations>', p2Start);
+      const techInNotations = exported.indexOf('<technical>', firstNotations);
+      const slurInNotations = exported.indexOf('<slur', firstNotations);
+      const notationsClose = exported.indexOf('</notations>', firstNotations);
+      // technical should come before slur, and both before </notations>
+      expect(techInNotations).toBeGreaterThan(firstNotations);
+      expect(slurInNotations).toBeGreaterThan(techInNotations);
+      expect(slurInNotations).toBeLessThan(notationsClose);
+    });
+
+    it('should produce text-equivalent XML after normalization', () => {
+      const score = parse(xml);
+      const exported = serialize(score);
+
+      // Normalize: strip id attributes, strip leading whitespace, sort XML attributes
+      function normalize(s: string): string {
+        return s
+          // Remove id="..." attributes
+          .replace(/ id="[^"]*"/g, '')
+          // Strip all leading whitespace (ignore indentation differences)
+          .split('\n')
+          .map(l => l.trim())
+          .filter(l => l.length > 0)
+          // Sort attributes within each element tag for comparison
+          .map(line => {
+            return line.replace(/<(\w[\w-]*)((?:\s+[\w:-]+="[^"]*")+)(\/?>)/g, (_match, tag, attrs, close) => {
+              const attrList = attrs.trim().split(/\s+(?=[\w:-]+=")/);
+              attrList.sort();
+              return `<${tag} ${attrList.join(' ')}${close}`;
+            });
+          })
+          .join('\n');
+      }
+
+      const normalizedOrig = normalize(xml);
+      const normalizedExported = normalize(exported);
+
+      // Split into lines and compare
+      const origLines = normalizedOrig.split('\n');
+      const exportedLines = normalizedExported.split('\n');
+
+      // Find content differences (ignoring DOCTYPE which may differ in format)
+      const origContent = origLines.filter(l => !l.includes('DOCTYPE') && !l.includes('<?xml'));
+      const exportedContent = exportedLines.filter(l => !l.includes('DOCTYPE') && !l.includes('<?xml'));
+
+      expect(exportedContent.length).toBe(origContent.length);
+      for (let i = 0; i < origContent.length; i++) {
+        expect(exportedContent[i]).toBe(origContent[i]);
+      }
+    });
   });
 });

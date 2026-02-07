@@ -47,7 +47,7 @@ import {
 } from '../validator';
 
 export interface SerializeOptions {
-  version?: '3.1' | '4.0';
+  version?: string;
   indent?: string;
   /** Validate score before serializing (default: false) */
   validate?: boolean;
@@ -60,7 +60,7 @@ export interface SerializeOptions {
 }
 
 export function serialize(score: Score, options: SerializeOptions = {}): string {
-  const version = options.version || '4.0';
+  const version = options.version || score.version || '4.0';
   const indent = options.indent ?? '  ';
 
   // Validation
@@ -86,11 +86,7 @@ export function serialize(score: Score, options: SerializeOptions = {}): string 
   lines.push('<?xml version="1.0" encoding="UTF-8"?>');
 
   // DOCTYPE
-  if (version === '4.0') {
-    lines.push('<!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 4.0 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">');
-  } else {
-    lines.push('<!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 3.1 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">');
-  }
+  lines.push(`<!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML ${version} Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">`);
 
   // score-partwise
   lines.push(`<score-partwise version="${version}">`);
@@ -1186,306 +1182,337 @@ function serializeNotationsGroup(notations: Notation[], indent: string): string[
 
   lines.push(`${indent}<notations>`);
 
-  // Group articulations by articulationsIndex, and ornaments/technicals together
-  const articulationsGroups = new Map<number, Notation[]>();
-  const ornaments: Notation[] = [];
-  const technicals: Notation[] = [];
-  const others: Notation[] = [];
+  // Build ordered chunks that preserve original element interleaving.
+  // Container types (articulation, ornament, technical) are grouped with consecutive
+  // siblings of the same type, while standalone types (slur, tied, etc.) are emitted individually.
+  type Chunk =
+    | { kind: 'standalone'; notation: Notation }
+    | { kind: 'articulations'; items: Notation[]; articulationsIndex: number }
+    | { kind: 'ornaments'; items: Notation[] }
+    | { kind: 'technical'; items: Notation[] };
 
+  const chunks: Chunk[] = [];
   for (const notation of notations) {
     if (notation.type === 'articulation') {
       const artIdx = (notation as any).articulationsIndex ?? 0;
-      if (!articulationsGroups.has(artIdx)) {
-        articulationsGroups.set(artIdx, []);
+      const last = chunks[chunks.length - 1];
+      if (last && last.kind === 'articulations' && last.articulationsIndex === artIdx) {
+        last.items.push(notation);
+      } else {
+        chunks.push({ kind: 'articulations', items: [notation], articulationsIndex: artIdx });
       }
-      articulationsGroups.get(artIdx)!.push(notation);
     } else if (notation.type === 'ornament') {
-      ornaments.push(notation);
+      const last = chunks[chunks.length - 1];
+      if (last && last.kind === 'ornaments') {
+        last.items.push(notation);
+      } else {
+        chunks.push({ kind: 'ornaments', items: [notation] });
+      }
     } else if (notation.type === 'technical') {
-      technicals.push(notation);
+      const last = chunks[chunks.length - 1];
+      if (last && last.kind === 'technical') {
+        last.items.push(notation);
+      } else {
+        chunks.push({ kind: 'technical', items: [notation] });
+      }
     } else {
-      others.push(notation);
+      chunks.push({ kind: 'standalone', notation });
     }
   }
 
-  // Serialize non-grouped notations first
-  for (const notation of others) {
-    if (notation.type === 'tied') {
-      let attrs = ` type="${notation.tiedType}"`;
-      if (notation.number !== undefined) attrs += ` number="${notation.number}"`;
-      if (notation.orientation) attrs += ` orientation="${notation.orientation}"`;
-      lines.push(`${indent}  <tied${attrs}/>`);
-    } else if (notation.type === 'slur') {
-      let attrs = '';
-      if (notation.number !== undefined) attrs += ` number="${notation.number}"`;
-      attrs += ` type="${notation.slurType}"`;
-      if (notation.lineType) attrs += ` line-type="${notation.lineType}"`;
-      if (notation.orientation) attrs += ` orientation="${notation.orientation}"`;
-      if (notation.defaultX !== undefined) attrs += ` default-x="${notation.defaultX}"`;
-      if (notation.defaultY !== undefined) attrs += ` default-y="${notation.defaultY}"`;
-      if (notation.bezierX !== undefined) attrs += ` bezier-x="${notation.bezierX}"`;
-      if (notation.bezierY !== undefined) attrs += ` bezier-y="${notation.bezierY}"`;
-      if (notation.bezierX2 !== undefined) attrs += ` bezier-x2="${notation.bezierX2}"`;
-      if (notation.bezierY2 !== undefined) attrs += ` bezier-y2="${notation.bezierY2}"`;
-      if (notation.placement) attrs += ` placement="${notation.placement}"`;
-      lines.push(`${indent}  <slur${attrs}/>`);
-    } else if (notation.type === 'tuplet') {
-      let attrs = ` type="${notation.tupletType}"`;
-      if (notation.number !== undefined) attrs += ` number="${notation.number}"`;
-      if (notation.bracket !== undefined) attrs += ` bracket="${notation.bracket ? 'yes' : 'no'}"`;
-      if (notation.showNumber) attrs += ` show-number="${notation.showNumber}"`;
-      if (notation.showType) attrs += ` show-type="${notation.showType}"`;
-      if (notation.lineShape) attrs += ` line-shape="${notation.lineShape}"`;
-      if (notation.placement) attrs += ` placement="${notation.placement}"`;
-
-      const tup = notation as TupletNotation;
-      if (tup.tupletActual || tup.tupletNormal) {
-        lines.push(`${indent}  <tuplet${attrs}>`);
-        if (tup.tupletActual) {
-          lines.push(`${indent}    <tuplet-actual>`);
-          if (tup.tupletActual.tupletNumber !== undefined) {
-            lines.push(`${indent}      <tuplet-number>${tup.tupletActual.tupletNumber}</tuplet-number>`);
-          }
-          if (tup.tupletActual.tupletType) {
-            lines.push(`${indent}      <tuplet-type>${tup.tupletActual.tupletType}</tuplet-type>`);
-          }
-          if (tup.tupletActual.tupletDots) {
-            for (let i = 0; i < tup.tupletActual.tupletDots; i++) {
-              lines.push(`${indent}      <tuplet-dot/>`);
-            }
-          }
-          lines.push(`${indent}    </tuplet-actual>`);
-        }
-        if (tup.tupletNormal) {
-          lines.push(`${indent}    <tuplet-normal>`);
-          if (tup.tupletNormal.tupletNumber !== undefined) {
-            lines.push(`${indent}      <tuplet-number>${tup.tupletNormal.tupletNumber}</tuplet-number>`);
-          }
-          if (tup.tupletNormal.tupletType) {
-            lines.push(`${indent}      <tuplet-type>${tup.tupletNormal.tupletType}</tuplet-type>`);
-          }
-          if (tup.tupletNormal.tupletDots) {
-            for (let i = 0; i < tup.tupletNormal.tupletDots; i++) {
-              lines.push(`${indent}      <tuplet-dot/>`);
-            }
-          }
-          lines.push(`${indent}    </tuplet-normal>`);
-        }
-        lines.push(`${indent}  </tuplet>`);
-      } else {
-        lines.push(`${indent}  <tuplet${attrs}/>`);
-      }
-    } else if (notation.type === 'dynamics') {
-      const placementAttr = notation.placement ? ` placement="${notation.placement}"` : '';
-      lines.push(`${indent}  <dynamics${placementAttr}>`);
-      for (const dyn of notation.dynamics) {
-        lines.push(`${indent}    <${dyn}/>`);
-      }
-      if (notation.otherDynamics) {
-        lines.push(`${indent}    <other-dynamics>${escapeXml(notation.otherDynamics)}</other-dynamics>`);
-      }
-      lines.push(`${indent}  </dynamics>`);
-    } else if (notation.type === 'fermata') {
-      let attrs = '';
-      if (notation.fermataType) attrs += ` type="${notation.fermataType}"`;
-      if (notation.placement) attrs += ` placement="${notation.placement}"`;
-      if (notation.defaultX !== undefined) attrs += ` default-x="${notation.defaultX}"`;
-      if (notation.defaultY !== undefined) attrs += ` default-y="${notation.defaultY}"`;
-      if (notation.shape) {
-        lines.push(`${indent}  <fermata${attrs}>${notation.shape}</fermata>`);
-      } else {
-        lines.push(`${indent}  <fermata${attrs}/>`);
-      }
-    } else if (notation.type === 'arpeggiate') {
-      let attrs = '';
-      if (notation.direction) attrs += ` direction="${notation.direction}"`;
-      if (notation.number !== undefined) attrs += ` number="${notation.number}"`;
-      if (notation.defaultX !== undefined) attrs += ` default-x="${notation.defaultX}"`;
-      if (notation.defaultY !== undefined) attrs += ` default-y="${notation.defaultY}"`;
-      lines.push(`${indent}  <arpeggiate${attrs}/>`);
-    } else if (notation.type === 'non-arpeggiate') {
-      let attrs = ` type="${notation.nonArpeggiateType}"`;
-      if (notation.number !== undefined) attrs += ` number="${notation.number}"`;
-      if (notation.placement) attrs += ` placement="${notation.placement}"`;
-      lines.push(`${indent}  <non-arpeggiate${attrs}/>`);
-    } else if (notation.type === 'accidental-mark') {
-      let attrs = '';
-      if (notation.placement) attrs += ` placement="${notation.placement}"`;
-      lines.push(`${indent}  <accidental-mark${attrs}>${escapeXml(notation.value)}</accidental-mark>`);
-    } else if (notation.type === 'glissando') {
-      let attrs = ` type="${notation.glissandoType}"`;
-      if (notation.number !== undefined) attrs += ` number="${notation.number}"`;
-      if (notation.lineType) attrs += ` line-type="${notation.lineType}"`;
-      if (notation.text) {
-        lines.push(`${indent}  <glissando${attrs}>${escapeXml(notation.text)}</glissando>`);
-      } else {
-        lines.push(`${indent}  <glissando${attrs}/>`);
-      }
-    } else if (notation.type === 'slide') {
-      let attrs = ` type="${notation.slideType}"`;
-      if (notation.number !== undefined) attrs += ` number="${notation.number}"`;
-      if (notation.lineType) attrs += ` line-type="${notation.lineType}"`;
-      if (notation.text) {
-        lines.push(`${indent}  <slide${attrs}>${escapeXml(notation.text)}</slide>`);
-      } else {
-        lines.push(`${indent}  <slide${attrs}/>`);
-      }
+  // Serialize chunks in order
+  for (const chunk of chunks) {
+    if (chunk.kind === 'standalone') {
+      lines.push(...serializeStandaloneNotation(chunk.notation, indent));
+    } else if (chunk.kind === 'articulations') {
+      lines.push(...serializeArticulationsGroup(chunk.items, indent));
+    } else if (chunk.kind === 'ornaments') {
+      lines.push(...serializeOrnamentsGroup(chunk.items, indent));
+    } else if (chunk.kind === 'technical') {
+      lines.push(...serializeTechnicalGroup(chunk.items, indent));
     }
-  }
-
-  // Serialize grouped articulations - each articulationsIndex gets its own <articulations> element
-  const sortedArtIndices = Array.from(articulationsGroups.keys()).sort((a, b) => a - b);
-  for (const artIdx of sortedArtIndices) {
-    const artGroup = articulationsGroups.get(artIdx)!;
-    lines.push(`${indent}  <articulations>`);
-    for (const art of artGroup) {
-      if (art.type === 'articulation') {
-        let artAttrs = art.placement ? ` placement="${art.placement}"` : '';
-        // Handle strong-accent type attribute
-        if (art.articulation === 'strong-accent' && art.strongAccentType) {
-          artAttrs += ` type="${art.strongAccentType}"`;
-        }
-        // Handle positioning attributes
-        if (art.defaultX !== undefined) artAttrs += ` default-x="${art.defaultX}"`;
-        if (art.defaultY !== undefined) artAttrs += ` default-y="${art.defaultY}"`;
-        lines.push(`${indent}    <${art.articulation}${artAttrs}/>`);
-      }
-    }
-    lines.push(`${indent}  </articulations>`);
-  }
-
-  // Serialize grouped ornaments
-  if (ornaments.length > 0) {
-    // Check if this is just an empty ornaments marker
-    const hasOnlyEmptyMarker = ornaments.length === 1 && ornaments[0].type === 'ornament' && (ornaments[0] as OrnamentNotation).ornament === 'empty';
-    if (hasOnlyEmptyMarker) {
-      lines.push(`${indent}  <ornaments/>`);
-    } else {
-      lines.push(`${indent}  <ornaments>`);
-      // Collect all accidental-marks from ornaments for serialization after ornaments
-      const allAccidentalMarks: { value: string; placement?: 'above' | 'below' }[] = [];
-      for (const orn of ornaments) {
-        if (orn.type === 'ornament') {
-          // Skip empty markers when outputting with other ornaments
-          if ((orn as OrnamentNotation).ornament === 'empty') continue;
-          const placementAttr = orn.placement ? ` placement="${orn.placement}"` : '';
-          if (orn.ornament === 'wavy-line') {
-          let wlAttrs = '';
-          if (orn.wavyLineType) wlAttrs += ` type="${orn.wavyLineType}"`;
-          if (orn.number !== undefined) wlAttrs += ` number="${orn.number}"`;
-          wlAttrs += placementAttr;
-          if (orn.defaultY !== undefined) wlAttrs += ` default-y="${orn.defaultY}"`;
-          lines.push(`${indent}    <wavy-line${wlAttrs}/>`);
-        } else if (orn.ornament === 'tremolo') {
-          let tremAttrs = '';
-          if (orn.tremoloType) tremAttrs += ` type="${orn.tremoloType}"`;
-          tremAttrs += placementAttr;
-          if (orn.defaultX !== undefined) tremAttrs += ` default-x="${orn.defaultX}"`;
-          if (orn.defaultY !== undefined) tremAttrs += ` default-y="${orn.defaultY}"`;
-          if (orn.tremoloMarks !== undefined) {
-            lines.push(`${indent}    <tremolo${tremAttrs}>${orn.tremoloMarks}</tremolo>`);
-          } else {
-            lines.push(`${indent}    <tremolo${tremAttrs}/>`);
-          }
-        } else {
-          let ornAttrs = placementAttr;
-          if (orn.defaultY !== undefined) ornAttrs += ` default-y="${orn.defaultY}"`;
-          lines.push(`${indent}    <${orn.ornament}${ornAttrs}/>`);
-        }
-        // Collect accidental marks
-        if (orn.accidentalMarks) {
-          allAccidentalMarks.push(...orn.accidentalMarks);
-        }
-        }
-      }
-      // Serialize accidental-marks after other ornaments
-      for (const am of allAccidentalMarks) {
-        const amPlacement = am.placement ? ` placement="${am.placement}"` : '';
-        lines.push(`${indent}    <accidental-mark${amPlacement}>${am.value}</accidental-mark>`);
-      }
-      lines.push(`${indent}  </ornaments>`);
-    }
-  }
-
-  // Serialize grouped technical
-  if (technicals.length > 0) {
-    lines.push(`${indent}  <technical>`);
-    for (const tech of technicals) {
-      if (tech.type === 'technical') {
-        let placementAttr = tech.placement ? ` placement="${tech.placement}"` : '';
-        const techNotation = tech as TechnicalNotation;
-        if (techNotation.defaultX !== undefined) placementAttr += ` default-x="${techNotation.defaultX}"`;
-        if (techNotation.defaultY !== undefined) placementAttr += ` default-y="${techNotation.defaultY}"`;
-        if (tech.technical === 'bend' && (techNotation.bendAlter !== undefined || techNotation.preBend || techNotation.release)) {
-          lines.push(`${indent}    <bend${placementAttr}>`);
-          if (techNotation.bendAlter !== undefined) {
-            lines.push(`${indent}      <bend-alter>${techNotation.bendAlter}</bend-alter>`);
-          }
-          if (techNotation.preBend) {
-            lines.push(`${indent}      <pre-bend/>`);
-          }
-          if (techNotation.release) {
-            lines.push(`${indent}      <release/>`);
-          }
-          if (techNotation.withBar) {
-            lines.push(`${indent}      <with-bar/>`);
-          }
-          lines.push(`${indent}    </bend>`);
-        } else if (tech.technical === 'harmonic') {
-          // harmonic with optional children
-          const hasChildren = techNotation.harmonicNatural || techNotation.harmonicArtificial ||
-                              techNotation.basePitch || techNotation.touchingPitch || techNotation.soundingPitch;
-          if (hasChildren) {
-            lines.push(`${indent}    <harmonic${placementAttr}>`);
-            if (techNotation.harmonicNatural) lines.push(`${indent}      <natural/>`);
-            if (techNotation.harmonicArtificial) lines.push(`${indent}      <artificial/>`);
-            if (techNotation.basePitch) lines.push(`${indent}      <base-pitch/>`);
-            if (techNotation.touchingPitch) lines.push(`${indent}      <touching-pitch/>`);
-            if (techNotation.soundingPitch) lines.push(`${indent}      <sounding-pitch/>`);
-            lines.push(`${indent}    </harmonic>`);
-          } else {
-            lines.push(`${indent}    <harmonic${placementAttr}/>`);
-          }
-        } else if (tech.technical === 'hammer-on' || tech.technical === 'pull-off') {
-          let attrs = '';
-          if (techNotation.number !== undefined) attrs += ` number="${techNotation.number}"`;
-          if (techNotation.startStop) attrs += ` type="${techNotation.startStop}"`;
-          attrs += placementAttr;
-          if (techNotation.text !== undefined) {
-            lines.push(`${indent}    <${tech.technical}${attrs}>${escapeXml(techNotation.text)}</${tech.technical}>`);
-          } else {
-            lines.push(`${indent}    <${tech.technical}${attrs}/>`);
-          }
-        } else if (tech.technical === 'string' && techNotation.string !== undefined) {
-          lines.push(`${indent}    <string${placementAttr}>${techNotation.string}</string>`);
-        } else if (tech.technical === 'fret' && techNotation.fret !== undefined) {
-          lines.push(`${indent}    <fret${placementAttr}>${techNotation.fret}</fret>`);
-        } else if (tech.technical === 'fingering') {
-          let fAttrs = placementAttr;
-          if (techNotation.fingeringSubstitution) fAttrs += ' substitution="yes"';
-          if (techNotation.fingeringAlternate) fAttrs += ' alternate="yes"';
-          if (techNotation.text !== undefined) {
-            lines.push(`${indent}    <fingering${fAttrs}>${escapeXml(techNotation.text)}</fingering>`);
-          } else {
-            lines.push(`${indent}    <fingering${fAttrs}/>`);
-          }
-        } else if (tech.technical === 'heel' || tech.technical === 'toe') {
-          let htAttrs = placementAttr;
-          if (techNotation.substitution) htAttrs += ' substitution="yes"';
-          lines.push(`${indent}    <${tech.technical}${htAttrs}/>`);
-        } else if (techNotation.text !== undefined) {
-          // Elements that can have text content (tap, etc.)
-          lines.push(`${indent}    <${tech.technical}${placementAttr}>${escapeXml(techNotation.text)}</${tech.technical}>`);
-        } else {
-          lines.push(`${indent}    <${tech.technical}${placementAttr}/>`);
-        }
-      }
-    }
-    lines.push(`${indent}  </technical>`);
   }
 
   lines.push(`${indent}</notations>`);
 
+  return lines;
+}
+
+function serializeStandaloneNotation(notation: Notation, indent: string): string[] {
+  const lines: string[] = [];
+  if (notation.type === 'tied') {
+    let attrs = ` type="${notation.tiedType}"`;
+    if (notation.number !== undefined) attrs += ` number="${notation.number}"`;
+    if (notation.orientation) attrs += ` orientation="${notation.orientation}"`;
+    lines.push(`${indent}  <tied${attrs}/>`);
+  } else if (notation.type === 'slur') {
+    let attrs = '';
+    if (notation.number !== undefined) attrs += ` number="${notation.number}"`;
+    attrs += ` type="${notation.slurType}"`;
+    if (notation.lineType) attrs += ` line-type="${notation.lineType}"`;
+    if (notation.orientation) attrs += ` orientation="${notation.orientation}"`;
+    if (notation.defaultX !== undefined) attrs += ` default-x="${notation.defaultX}"`;
+    if (notation.defaultY !== undefined) attrs += ` default-y="${notation.defaultY}"`;
+    if (notation.bezierX !== undefined) attrs += ` bezier-x="${notation.bezierX}"`;
+    if (notation.bezierY !== undefined) attrs += ` bezier-y="${notation.bezierY}"`;
+    if (notation.bezierX2 !== undefined) attrs += ` bezier-x2="${notation.bezierX2}"`;
+    if (notation.bezierY2 !== undefined) attrs += ` bezier-y2="${notation.bezierY2}"`;
+    if (notation.placement) attrs += ` placement="${notation.placement}"`;
+    lines.push(`${indent}  <slur${attrs}/>`);
+  } else if (notation.type === 'tuplet') {
+    let attrs = ` type="${notation.tupletType}"`;
+    if (notation.number !== undefined) attrs += ` number="${notation.number}"`;
+    if (notation.bracket !== undefined) attrs += ` bracket="${notation.bracket ? 'yes' : 'no'}"`;
+    if (notation.showNumber) attrs += ` show-number="${notation.showNumber}"`;
+    if (notation.showType) attrs += ` show-type="${notation.showType}"`;
+    if (notation.lineShape) attrs += ` line-shape="${notation.lineShape}"`;
+    if (notation.placement) attrs += ` placement="${notation.placement}"`;
+
+    const tup = notation as TupletNotation;
+    if (tup.tupletActual || tup.tupletNormal) {
+      lines.push(`${indent}  <tuplet${attrs}>`);
+      if (tup.tupletActual) {
+        lines.push(`${indent}    <tuplet-actual>`);
+        if (tup.tupletActual.tupletNumber !== undefined) {
+          lines.push(`${indent}      <tuplet-number>${tup.tupletActual.tupletNumber}</tuplet-number>`);
+        }
+        if (tup.tupletActual.tupletType) {
+          lines.push(`${indent}      <tuplet-type>${tup.tupletActual.tupletType}</tuplet-type>`);
+        }
+        if (tup.tupletActual.tupletDots) {
+          for (let i = 0; i < tup.tupletActual.tupletDots; i++) {
+            lines.push(`${indent}      <tuplet-dot/>`);
+          }
+        }
+        lines.push(`${indent}    </tuplet-actual>`);
+      }
+      if (tup.tupletNormal) {
+        lines.push(`${indent}    <tuplet-normal>`);
+        if (tup.tupletNormal.tupletNumber !== undefined) {
+          lines.push(`${indent}      <tuplet-number>${tup.tupletNormal.tupletNumber}</tuplet-number>`);
+        }
+        if (tup.tupletNormal.tupletType) {
+          lines.push(`${indent}      <tuplet-type>${tup.tupletNormal.tupletType}</tuplet-type>`);
+        }
+        if (tup.tupletNormal.tupletDots) {
+          for (let i = 0; i < tup.tupletNormal.tupletDots; i++) {
+            lines.push(`${indent}      <tuplet-dot/>`);
+          }
+        }
+        lines.push(`${indent}    </tuplet-normal>`);
+      }
+      lines.push(`${indent}  </tuplet>`);
+    } else {
+      lines.push(`${indent}  <tuplet${attrs}/>`);
+    }
+  } else if (notation.type === 'dynamics') {
+    const placementAttr = notation.placement ? ` placement="${notation.placement}"` : '';
+    lines.push(`${indent}  <dynamics${placementAttr}>`);
+    for (const dyn of notation.dynamics) {
+      lines.push(`${indent}    <${dyn}/>`);
+    }
+    if (notation.otherDynamics) {
+      lines.push(`${indent}    <other-dynamics>${escapeXml(notation.otherDynamics)}</other-dynamics>`);
+    }
+    lines.push(`${indent}  </dynamics>`);
+  } else if (notation.type === 'fermata') {
+    let attrs = '';
+    if (notation.fermataType) attrs += ` type="${notation.fermataType}"`;
+    if (notation.placement) attrs += ` placement="${notation.placement}"`;
+    if (notation.defaultX !== undefined) attrs += ` default-x="${notation.defaultX}"`;
+    if (notation.defaultY !== undefined) attrs += ` default-y="${notation.defaultY}"`;
+    if (notation.shape) {
+      lines.push(`${indent}  <fermata${attrs}>${notation.shape}</fermata>`);
+    } else {
+      lines.push(`${indent}  <fermata${attrs}/>`);
+    }
+  } else if (notation.type === 'arpeggiate') {
+    let attrs = '';
+    if (notation.direction) attrs += ` direction="${notation.direction}"`;
+    if (notation.number !== undefined) attrs += ` number="${notation.number}"`;
+    if (notation.defaultX !== undefined) attrs += ` default-x="${notation.defaultX}"`;
+    if (notation.defaultY !== undefined) attrs += ` default-y="${notation.defaultY}"`;
+    lines.push(`${indent}  <arpeggiate${attrs}/>`);
+  } else if (notation.type === 'non-arpeggiate') {
+    let attrs = ` type="${notation.nonArpeggiateType}"`;
+    if (notation.number !== undefined) attrs += ` number="${notation.number}"`;
+    if (notation.placement) attrs += ` placement="${notation.placement}"`;
+    lines.push(`${indent}  <non-arpeggiate${attrs}/>`);
+  } else if (notation.type === 'accidental-mark') {
+    let attrs = '';
+    if (notation.placement) attrs += ` placement="${notation.placement}"`;
+    lines.push(`${indent}  <accidental-mark${attrs}>${escapeXml(notation.value)}</accidental-mark>`);
+  } else if (notation.type === 'glissando') {
+    let attrs = ` type="${notation.glissandoType}"`;
+    if (notation.number !== undefined) attrs += ` number="${notation.number}"`;
+    if (notation.lineType) attrs += ` line-type="${notation.lineType}"`;
+    if (notation.text) {
+      lines.push(`${indent}  <glissando${attrs}>${escapeXml(notation.text)}</glissando>`);
+    } else {
+      lines.push(`${indent}  <glissando${attrs}/>`);
+    }
+  } else if (notation.type === 'slide') {
+    let attrs = ` type="${notation.slideType}"`;
+    if (notation.number !== undefined) attrs += ` number="${notation.number}"`;
+    if (notation.lineType) attrs += ` line-type="${notation.lineType}"`;
+    if (notation.text) {
+      lines.push(`${indent}  <slide${attrs}>${escapeXml(notation.text)}</slide>`);
+    } else {
+      lines.push(`${indent}  <slide${attrs}/>`);
+    }
+  }
+  return lines;
+}
+
+function serializeArticulationsGroup(artGroup: Notation[], indent: string): string[] {
+  const lines: string[] = [];
+  lines.push(`${indent}  <articulations>`);
+  for (const art of artGroup) {
+    if (art.type === 'articulation') {
+      let artAttrs = art.placement ? ` placement="${art.placement}"` : '';
+      // Handle strong-accent type attribute
+      if (art.articulation === 'strong-accent' && art.strongAccentType) {
+        artAttrs += ` type="${art.strongAccentType}"`;
+      }
+      // Handle positioning attributes
+      if (art.defaultX !== undefined) artAttrs += ` default-x="${art.defaultX}"`;
+      if (art.defaultY !== undefined) artAttrs += ` default-y="${art.defaultY}"`;
+      lines.push(`${indent}    <${art.articulation}${artAttrs}/>`);
+    }
+  }
+  lines.push(`${indent}  </articulations>`);
+  return lines;
+}
+
+function serializeOrnamentsGroup(ornaments: Notation[], indent: string): string[] {
+  const lines: string[] = [];
+  // Check if this is just an empty ornaments marker
+  const hasOnlyEmptyMarker = ornaments.length === 1 && ornaments[0].type === 'ornament' && (ornaments[0] as OrnamentNotation).ornament === 'empty';
+  if (hasOnlyEmptyMarker) {
+    lines.push(`${indent}  <ornaments/>`);
+  } else {
+    lines.push(`${indent}  <ornaments>`);
+    // Collect all accidental-marks from ornaments for serialization after ornaments
+    const allAccidentalMarks: { value: string; placement?: 'above' | 'below' }[] = [];
+    for (const orn of ornaments) {
+      if (orn.type === 'ornament') {
+        // Skip empty markers when outputting with other ornaments
+        if ((orn as OrnamentNotation).ornament === 'empty') continue;
+        const placementAttr = orn.placement ? ` placement="${orn.placement}"` : '';
+        if (orn.ornament === 'wavy-line') {
+        let wlAttrs = '';
+        if (orn.wavyLineType) wlAttrs += ` type="${orn.wavyLineType}"`;
+        if (orn.number !== undefined) wlAttrs += ` number="${orn.number}"`;
+        wlAttrs += placementAttr;
+        if (orn.defaultY !== undefined) wlAttrs += ` default-y="${orn.defaultY}"`;
+        lines.push(`${indent}    <wavy-line${wlAttrs}/>`);
+      } else if (orn.ornament === 'tremolo') {
+        let tremAttrs = '';
+        if (orn.tremoloType) tremAttrs += ` type="${orn.tremoloType}"`;
+        tremAttrs += placementAttr;
+        if (orn.defaultX !== undefined) tremAttrs += ` default-x="${orn.defaultX}"`;
+        if (orn.defaultY !== undefined) tremAttrs += ` default-y="${orn.defaultY}"`;
+        if (orn.tremoloMarks !== undefined) {
+          lines.push(`${indent}    <tremolo${tremAttrs}>${orn.tremoloMarks}</tremolo>`);
+        } else {
+          lines.push(`${indent}    <tremolo${tremAttrs}/>`);
+        }
+      } else {
+        let ornAttrs = placementAttr;
+        if (orn.defaultY !== undefined) ornAttrs += ` default-y="${orn.defaultY}"`;
+        lines.push(`${indent}    <${orn.ornament}${ornAttrs}/>`);
+      }
+      // Collect accidental marks
+      if (orn.accidentalMarks) {
+        allAccidentalMarks.push(...orn.accidentalMarks);
+      }
+      }
+    }
+    // Serialize accidental-marks after other ornaments
+    for (const am of allAccidentalMarks) {
+      const amPlacement = am.placement ? ` placement="${am.placement}"` : '';
+      lines.push(`${indent}    <accidental-mark${amPlacement}>${am.value}</accidental-mark>`);
+    }
+    lines.push(`${indent}  </ornaments>`);
+  }
+  return lines;
+}
+
+function serializeTechnicalGroup(technicals: Notation[], indent: string): string[] {
+  const lines: string[] = [];
+  lines.push(`${indent}  <technical>`);
+  for (const tech of technicals) {
+    if (tech.type === 'technical') {
+      let placementAttr = tech.placement ? ` placement="${tech.placement}"` : '';
+      const techNotation = tech as TechnicalNotation;
+      if (techNotation.defaultX !== undefined) placementAttr += ` default-x="${techNotation.defaultX}"`;
+      if (techNotation.defaultY !== undefined) placementAttr += ` default-y="${techNotation.defaultY}"`;
+      if (tech.technical === 'bend' && (techNotation.bendAlter !== undefined || techNotation.preBend || techNotation.release)) {
+        lines.push(`${indent}    <bend${placementAttr}>`);
+        if (techNotation.bendAlter !== undefined) {
+          lines.push(`${indent}      <bend-alter>${techNotation.bendAlter}</bend-alter>`);
+        }
+        if (techNotation.preBend) {
+          lines.push(`${indent}      <pre-bend/>`);
+        }
+        if (techNotation.release) {
+          lines.push(`${indent}      <release/>`);
+        }
+        if (techNotation.withBar) {
+          lines.push(`${indent}      <with-bar/>`);
+        }
+        lines.push(`${indent}    </bend>`);
+      } else if (tech.technical === 'harmonic') {
+        // harmonic with optional children
+        const hasChildren = techNotation.harmonicNatural || techNotation.harmonicArtificial ||
+                            techNotation.basePitch || techNotation.touchingPitch || techNotation.soundingPitch;
+        if (hasChildren) {
+          lines.push(`${indent}    <harmonic${placementAttr}>`);
+          if (techNotation.harmonicNatural) lines.push(`${indent}      <natural/>`);
+          if (techNotation.harmonicArtificial) lines.push(`${indent}      <artificial/>`);
+          if (techNotation.basePitch) lines.push(`${indent}      <base-pitch/>`);
+          if (techNotation.touchingPitch) lines.push(`${indent}      <touching-pitch/>`);
+          if (techNotation.soundingPitch) lines.push(`${indent}      <sounding-pitch/>`);
+          lines.push(`${indent}    </harmonic>`);
+        } else {
+          lines.push(`${indent}    <harmonic${placementAttr}/>`);
+        }
+      } else if (tech.technical === 'hammer-on' || tech.technical === 'pull-off') {
+        let attrs = '';
+        if (techNotation.number !== undefined) attrs += ` number="${techNotation.number}"`;
+        if (techNotation.startStop) attrs += ` type="${techNotation.startStop}"`;
+        attrs += placementAttr;
+        if (techNotation.text !== undefined) {
+          lines.push(`${indent}    <${tech.technical}${attrs}>${escapeXml(techNotation.text)}</${tech.technical}>`);
+        } else {
+          lines.push(`${indent}    <${tech.technical}${attrs}/>`);
+        }
+      } else if (tech.technical === 'string' && techNotation.string !== undefined) {
+        lines.push(`${indent}    <string${placementAttr}>${techNotation.string}</string>`);
+      } else if (tech.technical === 'fret' && techNotation.fret !== undefined) {
+        lines.push(`${indent}    <fret${placementAttr}>${techNotation.fret}</fret>`);
+      } else if (tech.technical === 'fingering') {
+        let fAttrs = placementAttr;
+        if (techNotation.fingeringSubstitution) fAttrs += ' substitution="yes"';
+        if (techNotation.fingeringAlternate) fAttrs += ' alternate="yes"';
+        if (techNotation.text !== undefined) {
+          lines.push(`${indent}    <fingering${fAttrs}>${escapeXml(techNotation.text)}</fingering>`);
+        } else {
+          lines.push(`${indent}    <fingering${fAttrs}/>`);
+        }
+      } else if (tech.technical === 'heel' || tech.technical === 'toe') {
+        let htAttrs = placementAttr;
+        if (techNotation.substitution) htAttrs += ' substitution="yes"';
+        lines.push(`${indent}    <${tech.technical}${htAttrs}/>`);
+      } else if (techNotation.text !== undefined) {
+        // Elements that can have text content (tap, etc.)
+        lines.push(`${indent}    <${tech.technical}${placementAttr}>${escapeXml(techNotation.text)}</${tech.technical}>`);
+      } else {
+        lines.push(`${indent}    <${tech.technical}${placementAttr}/>`);
+      }
+    }
+  }
+  lines.push(`${indent}  </technical>`);
   return lines;
 }
 

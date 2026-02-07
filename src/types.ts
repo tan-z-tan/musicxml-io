@@ -8,6 +8,7 @@ export interface Score {
   parts: Part[];
   defaults?: Defaults;
   credits?: Credit[];
+  version?: string;
 }
 
 export interface ScoreMetadata {
