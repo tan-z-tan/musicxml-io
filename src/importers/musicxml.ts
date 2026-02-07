@@ -87,12 +87,23 @@ export function parse(xmlString: string): Score {
   const parsed = xmlParser.parse(xmlString) as OrderedElement[];
 
   // Find score-partwise in the ordered result
-  const scorePartwise = findElement(parsed, 'score-partwise');
+  let scorePartwiseVersion: string | undefined;
+  let scorePartwise: OrderedElement[] | undefined;
+  for (const el of parsed) {
+    if (el['score-partwise']) {
+      scorePartwise = el['score-partwise'] as OrderedElement[];
+      const attrs = getAttributes(el);
+      if (attrs['version']) scorePartwiseVersion = attrs['version'];
+      break;
+    }
+  }
   if (!scorePartwise) {
     throw new Error('Unsupported MusicXML format: only score-partwise is supported');
   }
 
-  return parseScorePartwise(scorePartwise);
+  const score = parseScorePartwise(scorePartwise);
+  if (scorePartwiseVersion) score.version = scorePartwiseVersion;
+  return score;
 }
 
 function findElement(elements: OrderedElement[], tagName: string): OrderedElement[] | undefined {
