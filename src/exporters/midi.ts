@@ -289,6 +289,22 @@ function createPartTrack(
     }
   }
 
+  // Safety: ensure every note-on has a matching note-off.
+  // Unterminated ties (tie-start without a matching tie-stop) can leave
+  // notes without a note-off, causing hanging notes in MIDI playback.
+  const onCounts = new Map<number, number>();
+  const offCounts = new Map<number, number>();
+  for (const e of noteEvents) {
+    const map = e.type === 'on' ? onCounts : offCounts;
+    map.set(e.note, (map.get(e.note) ?? 0) + 1);
+  }
+  for (const [note, onCount] of onCounts) {
+    const offCount = offCounts.get(note) ?? 0;
+    for (let i = 0; i < onCount - offCount; i++) {
+      noteEvents.push({ tick: currentTick, type: 'off', note, velocity: 0 });
+    }
+  }
+
   // Sort events by tick, then note-off before note-on at same tick
   noteEvents.sort((a, b) => {
     if (a.tick !== b.tick) return a.tick - b.tick;
