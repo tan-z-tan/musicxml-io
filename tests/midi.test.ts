@@ -181,6 +181,140 @@ describe('MIDI Exporter', () => {
     });
   });
 
+  describe('tie handling', () => {
+    /**
+     * Parse MIDI note events from the first part track (second track in file).
+     * Returns arrays of note-on and note-off events with tick positions.
+     */
+    function parseMidiNoteEvents(midiData: Uint8Array): {
+      noteOns: { tick: number; note: number; velocity: number }[];
+      noteOffs: { tick: number; note: number }[];
+    } {
+      const noteOns: { tick: number; note: number; velocity: number }[] = [];
+      const noteOffs: { tick: number; note: number }[] = [];
+
+      // Skip header (14 bytes) and find the second track (first part track)
+      let i = 14;
+      let trackCount = 0;
+
+      while (i < midiData.length && trackCount < 2) {
+        if (midiData[i] === 0x4d && midiData[i+1] === 0x54 &&
+            midiData[i+2] === 0x72 && midiData[i+3] === 0x6b) {
+          const trackLength = (midiData[i+4] << 24) | (midiData[i+5] << 16) |
+                              (midiData[i+6] << 8) | midiData[i+7];
+
+          if (trackCount === 1) {
+            let pos = i + 8;
+            const trackEnd = pos + trackLength;
+            let currentTick = 0;
+
+            while (pos < trackEnd) {
+              // Read variable-length delta time
+              let delta = 0;
+              let byte = midiData[pos++];
+              delta = byte & 0x7f;
+              while (byte & 0x80) {
+                byte = midiData[pos++];
+                delta = (delta << 7) | (byte & 0x7f);
+              }
+              currentTick += delta;
+
+              const status = midiData[pos];
+              if ((status & 0xf0) === 0x90) {
+                noteOns.push({ tick: currentTick, note: midiData[pos + 1], velocity: midiData[pos + 2] });
+                pos += 3;
+              } else if ((status & 0xf0) === 0x80) {
+                noteOffs.push({ tick: currentTick, note: midiData[pos + 1] });
+                pos += 3;
+              } else if ((status & 0xf0) === 0xc0) {
+                pos += 2;
+              } else if (status === 0xff) {
+                let metaLenPos = pos + 2;
+                byte = midiData[metaLenPos++];
+                let metaLen = byte & 0x7f;
+                while (byte & 0x80) {
+                  byte = midiData[metaLenPos++];
+                  metaLen = (metaLen << 7) | (byte & 0x7f);
+                }
+                pos = metaLenPos + metaLen;
+              } else {
+                pos++;
+              }
+            }
+          }
+
+          i += 8 + trackLength;
+          trackCount++;
+        } else {
+          i++;
+        }
+      }
+
+      return { noteOns, noteOffs };
+    }
+
+    it('should not play tied notes twice', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/tied-notes.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const midiData = exportMidi(score);
+      const { noteOns, noteOffs } = parseMidiNoteEvents(midiData);
+
+      // E4 (MIDI 64) is tied across measures 1-2
+      // It should have only ONE note-on and ONE note-off
+      const e4NoteOns = noteOns.filter(e => e.note === 64);
+      const e4NoteOffs = noteOffs.filter(e => e.note === 64);
+
+      expect(e4NoteOns).toHaveLength(1);
+      expect(e4NoteOffs).toHaveLength(1);
+
+      // C4 (MIDI 60) is untied - should have exactly one on/off pair
+      const c4NoteOns = noteOns.filter(e => e.note === 60);
+      const c4NoteOffs = noteOffs.filter(e => e.note === 60);
+
+      expect(c4NoteOns).toHaveLength(1);
+      expect(c4NoteOffs).toHaveLength(1);
+    });
+
+    it('should produce correct duration for tied notes', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/tied-notes.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // divisions=1, so half note = 2 divisions, whole = 4 divisions
+      // With 480 ticks per quarter: half = 960 ticks, whole = 1920 ticks
+      const midiData = exportMidi(score);
+      const { noteOns, noteOffs } = parseMidiNoteEvents(midiData);
+
+      // E4 tied: half (960 ticks) + whole (1920 ticks) = 2880 ticks total
+      const e4On = noteOns.find(e => e.note === 64)!;
+      const e4Off = noteOffs.find(e => e.note === 64)!;
+
+      expect(e4On.tick).toBe(960); // Starts at beat 3 of measure 1
+      expect(e4Off.tick).toBe(960 + 960 + 1920); // Half + whole = 2880 ticks from start
+      expect(e4Off.tick - e4On.tick).toBe(2880); // Total tied duration
+    });
+
+    it('should handle tie chains across multiple measures', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/tied-notes-chain.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const midiData = exportMidi(score);
+      const { noteOns, noteOffs } = parseMidiNoteEvents(midiData);
+
+      // C4 (MIDI 60) tied across 3 measures: whole + whole + whole
+      // Should produce exactly ONE note-on and ONE note-off
+      const c4NoteOns = noteOns.filter(e => e.note === 60);
+      const c4NoteOffs = noteOffs.filter(e => e.note === 60);
+
+      expect(c4NoteOns).toHaveLength(1);
+      expect(c4NoteOffs).toHaveLength(1);
+
+      // Total duration: 3 whole notes = 3 * 1920 = 5760 ticks
+      expect(c4NoteOns[0].tick).toBe(0);
+      expect(c4NoteOffs[0].tick).toBe(5760);
+    });
+  });
+
   describe('anacrusis (pickup measure)', () => {
     it('should handle pickup measures correctly', () => {
       const xml = readFileSync(join(fixturesPath, 'musicxml_samples/MozartTrio.musicxml'), 'utf-8');
