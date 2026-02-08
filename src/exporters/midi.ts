@@ -1,4 +1,5 @@
 import type { Score, NoteEntry, Pitch, Part, Measure } from '../types';
+import { hasTieStart, hasTieStop } from '../entry-accessors';
 
 /**
  * MIDI export options
@@ -224,19 +225,28 @@ function createPartTrack(
           const startTick = measureStartTick + Math.round((notePosition * ticksPerQuarterNote) / divisions);
           const durationTicks = Math.round((note.duration * ticksPerQuarterNote) / divisions);
 
-          noteEvents.push({
-            tick: startTick,
-            type: 'on',
-            note: midiNote,
-            velocity: defaultVelocity,
-          });
+          const isTieStop = hasTieStop(note);
+          const isTieStart = hasTieStart(note);
 
-          noteEvents.push({
-            tick: startTick + durationTicks,
-            type: 'off',
-            note: midiNote,
-            velocity: 0,
-          });
+          // Don't generate note-on for tie continuations (the note is already sounding)
+          if (!isTieStop) {
+            noteEvents.push({
+              tick: startTick,
+              type: 'on',
+              note: midiNote,
+              velocity: defaultVelocity,
+            });
+          }
+
+          // Don't generate note-off for tie starts (the note continues into the next tied note)
+          if (!isTieStart) {
+            noteEvents.push({
+              tick: startTick + durationTicks,
+              type: 'off',
+              note: midiNote,
+              velocity: 0,
+            });
+          }
         }
 
         // Chord notes share the same position
@@ -276,6 +286,22 @@ function createPartTrack(
       } else {
         currentTick = measureStartTick + Math.round((maxPosition * ticksPerQuarterNote) / divisions);
       }
+    }
+  }
+
+  // Safety: ensure every note-on has a matching note-off.
+  // Unterminated ties (tie-start without a matching tie-stop) can leave
+  // notes without a note-off, causing hanging notes in MIDI playback.
+  const onCounts = new Map<number, number>();
+  const offCounts = new Map<number, number>();
+  for (const e of noteEvents) {
+    const map = e.type === 'on' ? onCounts : offCounts;
+    map.set(e.note, (map.get(e.note) ?? 0) + 1);
+  }
+  for (const [note, onCount] of onCounts) {
+    const offCount = offCounts.get(note) ?? 0;
+    for (let i = 0; i < onCount - offCount; i++) {
+      noteEvents.push({ tick: currentTick, type: 'off', note, velocity: 0 });
     }
   }
 
