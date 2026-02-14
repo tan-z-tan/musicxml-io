@@ -440,6 +440,23 @@ describe('ABC Round-trip', () => {
     'dynamics.abc',
     'ties-slurs.abc',
     'multi-voice.abc',
+    'repeats.abc',
+    'tuplets.abc',
+    'grace-notes.abc',
+    'lyrics.abc',
+    'piano.abc',
+    'tune_008268.abc',
+    'tune_009270.abc',
+    'real-kesh-jig.abc',
+    'real-cooleys-reel.abc',
+    'real-greensleeves.abc',
+    'real-scarborough-fair.abc',
+    'real-star-county-down.abc',
+    'real-si-bheag.abc',
+    'real-irish-washerwoman.abc',
+    'real-amazing-grace.abc',
+    'real-dotted-rhythms.abc',
+    'real-complex-keys.abc',
   ];
 
   for (const fixture of fixtures) {
