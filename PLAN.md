@@ -1,166 +1,172 @@
-# ABC Notation Import/Export Implementation Plan
+# ABC Round-trip Fix Plan
 
-## Goal
-Add ABC notation (.abc) format support to musicxml-io, enabling:
-- **Import**: Parse ABC notation string → Score (internal model)
-- **Export**: Score → ABC notation string
-- **Round-trip test**: ABC → Score → ABC should preserve musical content
+30個の round-trip テストが全て失敗している。修正対象は `src/importers/abc.ts` (パーサー) と `src/exporters/abc.ts` (シリアライザ)。
 
-## ABC Notation Format Summary
+## 修正一覧
 
-ABC notation is a text-based music notation format. Key elements:
+### 1. L: 単位音符長の保存・復元 (20+ テストに影響)
 
-### File Structure
-```
-X:1              (reference number - required, first field)
-T:Title          (title)
-C:Composer       (composer)
-M:4/4            (time signature)
-L:1/8            (default note length)
-Q:1/4=120        (tempo)
-K:G              (key signature - required, last header field)
-|:GABc dedB|...  (tune body)
-```
+**問題**: シリアライザが常に `computeUnitNoteLength()` で `L:1/8` を再計算する。`L:1/4` の曲で全音符の長さ文字列が倍になる（例: `C` → `C2`）。
 
-### Note Syntax
-- Pitch: `C D E F G A B` (octave 4), `c d e f g a b` (octave 5)
-- Lower octave: `C, D,` (octave 3), `C,, D,,` (octave 2)
-- Higher octave: `c' d'` (octave 6), `c'' d''` (octave 7)
-- Duration: `A2` (2x default), `A/2` or `A/` (half default), `A3/2` (dotted)
-- Accidentals: `^C` (sharp), `^^C` (double sharp), `_B` (flat), `__B` (double flat), `=C` (natural)
-- Rest: `z` (rest), `Z` (whole-measure rest), with durations like `z2`
-- Chord (simultaneous): `[CEG]`
-- Chord symbols: `"Am"CEG` (quoted text before notes)
+**修正**:
+- パーサー: `abc-unit-note-length` を `score.metadata.miscellaneous` に保存
+- シリアライザ: 保存された値を使用し、計算をフォールバックにする
 
-### Bar Lines & Repeats
-- `|` bar, `||` double bar, `|]` final bar, `[|` thick-thin
-- `|:` start repeat, `:|` end repeat, `::` double repeat
-- `[1` `[2` volta endings
+### 2. ヘッダーフィールド保存 (8テストに影響)
 
-### Other Features
-- Ties: `A-A` (hyphen between same-pitch notes)
-- Slurs: `(ABC)` (parentheses around notes)
-- Grace notes: `{abc}` (curly braces)
-- Tuplets: `(3ABC` (triplet), `(p:q:r` (general tuplet)
-- Dynamics: `!p!` `!f!` `!mf!` `!ff!` etc.
-- Multi-voice: `V:1` / `V:2` sections
-- Key modes: `K:Am` (minor), `K:Ddor` (Dorian), `K:Emix` (Mixolydian)
-- Lyrics: `w:` field aligned with notes
+**問題**: R:, S:, N:, I:, %%MIDI, %%staves がパース時に破棄される。
 
-## Architecture
+**影響ファイル**: piano.abc, tune_008268.abc, tune_009270.abc, real-cooleys-reel.abc, real-kesh-jig.abc, real-irish-washerwoman.abc, real-si-bheag.abc, real-star-county-down.abc
 
-### File Structure
-```
-src/
-├── importers/
-│   ├── abc.ts              # ABC parser → Score
-│   └── index.ts            # Updated: export parseAbc
-├── exporters/
-│   ├── abc.ts              # Score → ABC string
-│   └── index.ts            # Updated: export serializeAbc
-tests/
-├── abc.test.ts             # ABC round-trip and unit tests
-├── fixtures/
-│   └── abc/                # ABC fixture files
-│       ├── simple-scale.abc
-│       ├── twinkle.abc
-│       ├── chord-symbols.abc
-│       ├── multi-voice.abc
-│       ├── repeats.abc
-│       ├── tuplets-grace.abc
-│       └── lyrics.abc
-```
+**修正**:
+- パーサー: `parseHeader()` で未知フィールドを `abc-header-{field}` として miscellaneous に保存。%%ディレクティブも同様に保存
+- シリアライザ: T:/C: の後、K: の前に保存されたフィールドを出力
 
-### Implementation Approach
+### 3. ノート間スペース保存 (~10テストに影響)
 
-The ABC format has a very different structure from MusicXML. The key mapping decisions:
+**問題**: `EBBA B2 EB` のスペースがトークナイザで破棄され、シリアライザは `EBBAB2EB` を出力する。
 
-| ABC Concept | Score Model Mapping |
-|---|---|
-| `X:` reference number | `metadata.movementNumber` |
-| `T:` title | `metadata.movementTitle` |
-| `C:` composer | `metadata.creators[{type:'composer'}]` |
-| `M:` meter | `MeasureAttributes.time` |
-| `L:` default length | Used during parse only (not stored) |
-| `Q:` tempo | `DirectionEntry` with metronome |
-| `K:` key | `MeasureAttributes.key` |
-| `V:` voices | Multiple voices via `voice` field, potentially separate `Part`s |
-| Notes | `NoteEntry` with pitch, duration |
-| `z` rest | `NoteEntry` with `rest: {}` |
-| `[CEG]` chord | Multiple `NoteEntry` with `chord: true` |
-| `"Am"` chord symbol | `HarmonyEntry` |
-| `(...)` slur | `SlurNotation` on notes |
-| `-` tie | `TieInfo` and `TiedNotation` |
-| `{abc}` grace | `NoteEntry` with `grace` |
-| `(3...` tuplet | `timeModification` + `TupletNotation` |
-| `!p!` dynamics | `DirectionEntry` with dynamics |
-| `|:` `:| ` repeats | `Barline` with `repeat` |
-| `[1` `[2` endings | `Barline` with `ending` |
-| `w:` lyrics | `Lyric` on `NoteEntry` |
+**影響ファイル**: durations.abc, real-cooleys-reel.abc, real-kesh-jig.abc, real-irish-washerwoman.abc, real-dotted-rhythms.abc, real-complex-keys.abc, tune_009270.abc, piano.abc
 
-### Divisions Strategy
-ABC durations are fractional (relative to default note length `L:`).
-- Use `divisions = 960` per quarter note (LCM-friendly for common durations)
-- This allows precise representation of 1/8, 1/16, 1/32, triplets, etc.
+**修正**:
+- パーサー `tokenizeMusicLine()`: スペースを `{ type: 'space' }` トークンとして保持
+- パーサー `buildMeasures()`: 各ノートエントリに `abcSpaceBefore: true` フラグを付与
+- シリアライザ: フラグがあるノートの前にスペースを出力
 
-## Implementation Steps
+### 4. Voice ID 保存 (2テストに影響)
 
-### Step 1: ABC Parser (Importer)
-Create `src/importers/abc.ts`:
+**問題**: シリアライザが `V:{partIdx+1}` (V:1, V:2) を出力する。元の ID (V:V1, V:P1) が失われる。
 
-1. **Header parser**: Extract `X:`, `T:`, `M:`, `L:`, `Q:`, `K:`, `C:`, `V:`, `w:` fields
-2. **Key signature parser**: Handle major/minor/modes, explicit accidentals
-3. **Time signature parser**: Handle `M:4/4`, `M:C`, `M:C|`, `M:6/8`
-4. **Tokenizer**: Break tune body into tokens (notes, barlines, chords, decorations, etc.)
-5. **Note parser**: Parse pitch (octave modifiers, accidentals), duration, ties
-6. **Measure builder**: Group notes into measures based on bar lines and time signature
-7. **Score builder**: Assemble `Score` object from parsed data
+**影響ファイル**: piano.abc (V:V1), tune_009270.abc (V:P1)
 
-Exported function: `parseAbc(abcString: string): Score`
+**修正**:
+- パーサー: `partList` エントリの `id` に元の voice ID を保存（既に `voiceIds` はある）
+- シリアライザ: `score.partList` から voice ID を読み取って使用
 
-### Step 2: ABC Serializer (Exporter)
-Create `src/exporters/abc.ts`:
+### 5. Q: テンポ形式保存 (1テストに影響)
 
-1. **Header generator**: Generate header fields from Score metadata
-2. **Key serializer**: Convert `KeySignature` → ABC key string
-3. **Time serializer**: Convert `TimeSignature` → ABC meter string
-4. **Note serializer**: Convert `NoteEntry` → ABC note string (pitch + duration)
-5. **Measure serializer**: Convert measure entries to ABC body text with barlines
-6. **Full serializer**: Combine headers + body
+**問題**: `Q:3/8=120` がパース時に beatUnit=`eighth` に変換され、シリアライザが `Q:1/8=120` ではなく `Q:1/4=...` のような別形式で出力する。
 
-Exported function: `serializeAbc(score: Score, options?: AbcSerializeOptions): string`
+**影響ファイル**: real-irish-washerwoman.abc
 
-### Step 3: Test Fixtures
-Create realistic ABC files covering:
-1. Simple scale (C major scale, basic notes)
-2. Twinkle Twinkle Little Star (simple melody with repeats)
-3. Chord symbols (melody with guitar chords)
-4. Multi-voice (two voices in same part)
-5. Repeats and endings (volta brackets)
-6. Tuplets and grace notes
-7. Lyrics
+**修正**:
+- パーサー: `abc-tempo` を miscellaneous に保存
+- シリアライザ: 保存された Q: 文字列をそのまま出力
 
-### Step 4: Round-trip Tests
-Test strategy: ABC → Score → ABC → Score, compare the two Score objects:
-- Same number of parts, measures, entries
-- Same pitches, durations, voices
-- Same key/time signatures
-- Same barlines and repeats
-- Same dynamics, chord symbols, lyrics
+### 6. タプレット記法 (1テストに影響)
 
-### Step 5: Integration
-1. Update `src/importers/index.ts` to export `parseAbc`
-2. Update `src/exporters/index.ts` to export `serializeAbc`
-3. Update `src/index.ts` to export both
-4. Update `src/file.ts` to handle `.abc` file extension
+**問題**: `(3CDE` が `C2/3D2/3E2/3` のような分数表記に展開される。
 
-## Scope Limitations (Phase 1)
-Focus on the core ABC features. The following can be deferred:
-- Multi-tune files (multiple `X:` in one file) - parse first tune only
-- Inline fields (e.g., `[M:3/4]` mid-tune) - basic support
-- Complex line continuations (`\` at end of line)
-- Decoration shortcuts (`~`, `.`, etc.) - only `!...!` form
-- Complex multi-voice with per-voice key/time changes
-- Formatting directives (`%%`)
-- Guitar TAB in ABC
-- Macros and transposition directives
+**影響ファイル**: tuplets.abc
+
+**修正**:
+- シリアライザ: `timeModification` を持つ連続ノートを検出し、`(p` プレフィックスを出力
+- ノートの duration は tuplet 適用前の値で出力（q/p 倍を戻す）
+
+### 7. 不可視レスト x (1テストに影響)
+
+**問題**: `x` (不可視レスト) が `z` (可視レスト) として出力される。
+
+**影響ファイル**: piano.abc
+
+**修正**:
+- パーサー: rest オブジェクトに `printObject: false` を設定
+- シリアライザ: フラグを見て `x` を出力
+
+### 8. グレースノートグループ化 (1テストに影響)
+
+**問題**: `{DE}` が `{D}{E}` として個別に出力される。
+
+**影響ファイル**: grace-notes.abc
+
+**修正**:
+- シリアライザ: 連続する grace ノートを検出し、単一の `{...}` でグループ化
+
+### 9. Volta 記号 [1, [2 (1テストに影響)
+
+**問題**: volta ending マーカーの出力位置・形式が不正。
+
+**影響ファイル**: repeats.abc
+
+**修正**:
+- シリアライザ `serializeBarline()`: ending が left barline にある場合、`[1` を正しい位置に出力
+- ending.type === 'start' の場合は barline の後に `[N ` を付加
+
+### 10. 歌詞インターリーブ (3テストに影響)
+
+**問題**: `w:` 行がパート末尾にまとめて出力される。元は音楽行の直後に配置。
+
+**影響ファイル**: lyrics.abc, real-amazing-grace.abc, real-scarborough-fair.abc
+
+**修正**:
+- シリアライザ: 歌詞を持つノートが含まれる小節の後に `w:` 行を出力
+- 各音楽行の後に対応する歌詞行を挿入する形に変更
+
+### 11. 行継続バックスラッシュ (1テストに影響)
+
+**問題**: `\` 行継続マーカーが失われる。
+
+**影響ファイル**: tune_008268.abc
+
+**修正**:
+- パーサー: 行継続位置（小節番号）を miscellaneous に保存
+- シリアライザ: 該当小節の後に `\` + 改行を出力
+
+### 12. インライン [V: P1] マーカー (1テストに影響)
+
+**問題**: tune_009270.abc は `[V: P1]` インライン形式を使うが、シリアライザはスタンドアロン `V:1` を出力する。
+
+**修正**:
+- パーサー: インライン vs スタンドアロンの voice 形式を miscellaneous に保存
+- シリアライザ: インライン形式が保存されていれば `[V: {id}]` を出力
+
+### 13. 特殊バーライン |>| (1テストに影響)
+
+**問題**: tune_008268.abc の末尾 `|>|` が通常の `|` になる。
+
+**修正**:
+- パーサー: `|>|` をバーラインタイプとして認識・保存
+- シリアライザ: 対応するバーラインスタイルから `|>|` を復元
+
+### 14. インライン K: キー変更 (1テストに影響)
+
+**問題**: real-complex-keys.abc に本文中の `K:Bb` があるが、シリアライズ時に失われる。
+
+**修正**:
+- パーサー: インライン K: をアトリビュート変更エントリとして保存（既存の attributes エントリ機構を使用）
+- シリアライザ: アトリビュート変更を検出し `K:` 行を出力
+
+### 15. バーライン前後スペース (複数テストに影響)
+
+**問題**: ` | ` (スペース付き) が `|` になる。` :|` が `:|` になる。
+
+**修正**: #3 のスペース保存と同様に、バーライン前後のスペースも保存・復元
+
+### 16. = ナチュラル記号の保存
+
+**問題**: `=E`（明示的ナチュラル）が `E`（暗黙ナチュラル）として出力される可能性。
+
+**修正**:
+- パーサー: 明示的 natural を alter=0 + explicit フラグで保存
+- シリアライザ: explicit フラグがあれば `=` を出力
+
+## 実装順序（インパクト順）
+
+| 順序 | 修正項目 | 修正テスト数 |
+|------|----------|-------------|
+| 1 | L: 保存・復元 | ~20 |
+| 2 | ヘッダーフィールド保存 | +8 |
+| 3 | スペース保存 | +10 |
+| 4 | Voice ID 保存 | +2 |
+| 5 | タプレット記法 | +1 |
+| 6 | グレースノートグループ化 | +1 |
+| 7 | Q: テンポ形式保存 | +1 |
+| 8 | 不可視レスト x | +1 |
+| 9 | 歌詞インターリーブ | +3 |
+| 10 | Volta 記号 | +1 |
+| 11 | 行継続 \ | +1 |
+| 12 | インライン V: | +1 |
+| 13 | 特殊バーライン | +1 |
+| 14 | インライン K: | +1 |
+| 15 | バーラインスペース | 上記に含む |
+| 16 | ナチュラル記号 | 上記に含む |
