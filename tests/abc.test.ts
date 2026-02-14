@@ -780,3 +780,224 @@ describe('Real-world ABC round-trip', () => {
     expect(firstMeasureNotes.length).toBeGreaterThan(0);
   });
 });
+
+// ============================================================
+// User-provided Sample Tests
+// ============================================================
+
+describe('User-provided ABC samples', () => {
+  describe('piano.abc - Bach BWV 1030 (multi-voice, overlay, inline L:)', () => {
+    it('should parse into 2 voice parts', () => {
+      const abc = readFixture('piano.abc');
+      const score = parseAbc(abc);
+      expect(score.parts.length).toBe(2);
+    });
+
+    it('should parse chords in V1 correctly', () => {
+      const abc = readFixture('piano.abc');
+      const score = parseAbc(abc);
+      const v1 = score.parts[0];
+      const entries = v1.measures[0].entries;
+      // First chord [dAF]: 3 notes with chord flag on 2nd and 3rd
+      const noteEntries = entries.filter(e => e.type === 'note' && e.pitch);
+      expect(noteEntries.length).toBeGreaterThanOrEqual(3);
+      // First note D5
+      expect(noteEntries[0].type === 'note' && noteEntries[0].pitch?.step).toBe('D');
+      expect(noteEntries[0].type === 'note' && noteEntries[0].pitch?.octave).toBe(5);
+      // Second note A4 (chord)
+      if (noteEntries[1].type === 'note') {
+        expect(noteEntries[1].pitch?.step).toBe('A');
+        expect(noteEntries[1].chord).toBe(true);
+      }
+    });
+
+    it('should handle inline [L:1/32] duration change', () => {
+      const abc = readFixture('piano.abc');
+      const score = parseAbc(abc);
+      const v1 = score.parts[0];
+      const entries = v1.measures[0].entries.filter(e => e.type === 'note' && e.pitch);
+      // After [L:1/32], notes ^cedc dcBA should have duration 120 (1/32 of whole = 960/8 = 120)
+      const shortNotes = entries.filter(e => e.type === 'note' && e.duration === 120);
+      expect(shortNotes.length).toBe(8); // ^c e d c d c B A
+    });
+
+    it('should handle & overlay with BackupEntry', () => {
+      const abc = readFixture('piano.abc');
+      const score = parseAbc(abc);
+      const v1 = score.parts[0];
+      const backups = v1.measures[0].entries.filter(e => e.type === 'backup');
+      expect(backups.length).toBe(1);
+    });
+
+    it('should handle invisible rest x', () => {
+      const abc = readFixture('piano.abc');
+      const score = parseAbc(abc);
+      const v1 = score.parts[0];
+      // After & overlay, x3 should be parsed as a rest of duration 3 eighth notes
+      const entries = v1.measures[0].entries;
+      const backupIdx = entries.findIndex(e => e.type === 'backup');
+      const restAfterBackup = entries[backupIdx + 1];
+      expect(restAfterBackup.type).toBe('note');
+      if (restAfterBackup.type === 'note') {
+        expect(restAfterBackup.rest).toBeTruthy();
+      }
+    });
+
+    it('should round-trip correctly', () => {
+      const abc = readFixture('piano.abc');
+      const score1 = parseAbc(abc);
+      const out = serializeAbc(score1);
+      const score2 = parseAbc(out);
+      expect(score2.parts.length).toBe(2);
+      for (let i = 0; i < score1.parts.length; i++) {
+        let n1 = 0, n2 = 0;
+        for (const m of score1.parts[i].measures) for (const e of m.entries) if (e.type === 'note') n1++;
+        for (const m of score2.parts[i].measures) for (const e of m.entries) if (e.type === 'note') n2++;
+        expect(n2).toBe(n1);
+      }
+    });
+
+    it('should serialize with & overlay and V: markers', () => {
+      const abc = readFixture('piano.abc');
+      const score = parseAbc(abc);
+      const out = serializeAbc(score);
+      expect(out).toContain('V:1');
+      expect(out).toContain('V:2');
+      expect(out).toContain('&');
+    });
+  });
+
+  describe('tune_008268.abc - Amelias Waltz (chord symbols, line continuation)', () => {
+    it('should parse title and key', () => {
+      const abc = readFixture('tune_008268.abc');
+      const score = parseAbc(abc);
+      expect(score.metadata.movementTitle).toBe("Amelia's Waltz");
+      const key = score.parts[0].measures[0].attributes?.key;
+      expect(key?.fifths).toBe(2); // D major
+    });
+
+    it('should parse 3/4 time signature', () => {
+      const abc = readFixture('tune_008268.abc');
+      const score = parseAbc(abc);
+      const time = score.parts[0].measures[0].attributes?.time;
+      expect(time?.beats).toBe('3');
+      expect(time?.beatType).toBe(4);
+    });
+
+    it('should parse chord symbols', () => {
+      const abc = readFixture('tune_008268.abc');
+      const score = parseAbc(abc);
+      const harmonies = score.parts[0].measures[0].entries.filter(e => e.type === 'harmony');
+      expect(harmonies.length).toBeGreaterThan(0);
+      if (harmonies[0].type === 'harmony') {
+        expect(harmonies[0].root?.rootStep).toBe('D');
+      }
+    });
+
+    it('should handle line continuation (backslash)', () => {
+      const abc = readFixture('tune_008268.abc');
+      const score = parseAbc(abc);
+      // Should have ~31 measures despite lines being split with \
+      expect(score.parts[0].measures.length).toBeGreaterThanOrEqual(20);
+    });
+
+    it('should round-trip note count', () => {
+      const abc = readFixture('tune_008268.abc');
+      const score1 = parseAbc(abc);
+      const out = serializeAbc(score1);
+      const score2 = parseAbc(out);
+      let n1 = 0, n2 = 0;
+      for (const m of score1.parts[0].measures) for (const e of m.entries) if (e.type === 'note') n1++;
+      for (const m of score2.parts[0].measures) for (const e of m.entries) if (e.type === 'note') n2++;
+      expect(n2).toBe(n1);
+    });
+
+    it('should preserve chord symbols in round-trip', () => {
+      const abc = readFixture('tune_008268.abc');
+      const score1 = parseAbc(abc);
+      const out = serializeAbc(score1);
+      const score2 = parseAbc(out);
+      const h1 = score1.parts[0].measures.flatMap(m => m.entries.filter(e => e.type === 'harmony'));
+      const h2 = score2.parts[0].measures.flatMap(m => m.entries.filter(e => e.type === 'harmony'));
+      expect(h2.length).toBe(h1.length);
+    });
+
+    it('should generate valid MusicXML', () => {
+      const abc = readFixture('tune_008268.abc');
+      const score = parseAbc(abc);
+      const xml = serialize(score);
+      expect(xml).toContain('<score-partwise');
+      expect(xml).toContain("Amelia");
+    });
+  });
+
+  describe('tune_009270.abc - Angels From Heaven (4 voices)', () => {
+    it('should parse into 4 voice parts', () => {
+      const abc = readFixture('tune_009270.abc');
+      const score = parseAbc(abc);
+      expect(score.parts.length).toBe(4);
+    });
+
+    it('should parse each part with 18 measures', () => {
+      const abc = readFixture('tune_009270.abc');
+      const score = parseAbc(abc);
+      for (const part of score.parts) {
+        expect(part.measures.length).toBe(18);
+      }
+    });
+
+    it('should parse complex chords like [B,G]', () => {
+      const abc = readFixture('tune_009270.abc');
+      const score = parseAbc(abc);
+      // P1 measure 2 (index 2) starts with [B,G]
+      const m2 = score.parts[0].measures[2];
+      const notes = m2.entries.filter(e => e.type === 'note' && e.pitch);
+      // [B,G] = B3 + G4 chord
+      expect(notes.length).toBeGreaterThanOrEqual(2);
+      if (notes[0].type === 'note') {
+        expect(notes[0].pitch?.step).toBe('B');
+        expect(notes[0].pitch?.octave).toBe(3);
+      }
+      if (notes[1].type === 'note') {
+        expect(notes[1].pitch?.step).toBe('G');
+        expect(notes[1].chord).toBe(true);
+      }
+    });
+
+    it('should handle accidentals (sharp, natural)', () => {
+      const abc = readFixture('tune_009270.abc');
+      const score = parseAbc(abc);
+      // P1 has ^F (F#) in measure 2
+      const entries = score.parts[0].measures[2].entries;
+      const fSharp = entries.find(
+        e => e.type === 'note' && e.pitch?.step === 'F' && e.pitch?.alter === 1
+      );
+      expect(fSharp).toBeTruthy();
+    });
+
+    it('should round-trip all 4 parts', () => {
+      const abc = readFixture('tune_009270.abc');
+      const score1 = parseAbc(abc);
+      const out = serializeAbc(score1);
+      const score2 = parseAbc(out);
+      expect(score2.parts.length).toBe(4);
+      for (let i = 0; i < 4; i++) {
+        let n1 = 0, n2 = 0;
+        for (const m of score1.parts[i].measures) for (const e of m.entries) if (e.type === 'note') n1++;
+        for (const m of score2.parts[i].measures) for (const e of m.entries) if (e.type === 'note') n2++;
+        expect(n2).toBe(n1);
+      }
+    });
+
+    it('should generate valid MusicXML with multiple parts', () => {
+      const abc = readFixture('tune_009270.abc');
+      const score = parseAbc(abc);
+      const xml = serialize(score);
+      expect(xml).toContain('<score-partwise');
+      expect(xml).toContain('Angels From Heaven');
+      // Should have 4 parts
+      const partMatches = xml.match(/<part id=/g);
+      expect(partMatches?.length).toBe(4);
+    });
+  });
+});

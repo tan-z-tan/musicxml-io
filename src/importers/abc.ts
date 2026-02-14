@@ -75,7 +75,8 @@ interface AbcToken {
     | 'ending'
     | 'space'
     | 'line_break'
-    | 'lyrics';
+    | 'lyrics'
+    | 'overlay';
   value: string;
   // Note-specific
   pitch?: Pitch;
@@ -354,11 +355,28 @@ function tokenizeBody(bodyLines: string[]): AbcToken[][] {
   let currentVoice = '1';
   voiceTokens.set(currentVoice, []);
 
+  // Join lines with line continuation (\)
+  const joinedLines: string[] = [];
+  let accumulated = '';
   for (const rawLine of bodyLines) {
+    const trimmed = rawLine.trimEnd();
+    if (trimmed.endsWith('\\')) {
+      accumulated += trimmed.slice(0, -1);
+    } else {
+      joinedLines.push(accumulated + rawLine);
+      accumulated = '';
+    }
+  }
+  if (accumulated) joinedLines.push(accumulated);
+
+  for (const rawLine of joinedLines) {
     const line = rawLine.trim();
     if (line === '' || line.startsWith('%')) continue;
 
-    // Check for voice change
+    // Skip directive lines (%%...)
+    if (line.startsWith('%%')) continue;
+
+    // Check for voice change (standalone V: line)
     const voiceMatch = line.match(/^V:\s*(\S+)/);
     if (voiceMatch) {
       currentVoice = voiceMatch[1];
@@ -380,14 +398,28 @@ function tokenizeBody(bodyLines: string[]): AbcToken[][] {
       continue;
     }
 
-    // Skip other header-like fields in body
+    // Skip other header-like fields in body (but not inline fields starting with [)
     if (/^[A-Za-z]:\s*/.test(line) && !/^\[/.test(line)) {
       continue;
     }
 
     // Tokenize music line
     const tokens = tokenizeMusicLine(line);
-    voiceTokens.get(currentVoice)!.push(...tokens);
+
+    // Process tokens, handling inline voice changes
+    for (const token of tokens) {
+      if (token.type === 'inline_field') {
+        const fieldMatch = token.value.match(/^V:\s*(\S+)/);
+        if (fieldMatch) {
+          currentVoice = fieldMatch[1];
+          if (!voiceTokens.has(currentVoice)) {
+            voiceTokens.set(currentVoice, []);
+          }
+          continue;
+        }
+      }
+      voiceTokens.get(currentVoice)!.push(token);
+    }
   }
 
   // Return tokens grouped by voice
@@ -520,6 +552,27 @@ function tokenizeMusicLine(line: string): AbcToken[] {
       }
     }
 
+    // Inline field [X:value] - must check BEFORE chord [CEG]
+    if (ch === '[' && i + 1 < line.length && /[A-Za-z]/.test(line[i + 1])) {
+      // Look for colon within next few characters
+      const colonIdx = line.indexOf(':', i + 2);
+      if (colonIdx !== -1 && colonIdx <= i + 3) {
+        const end = line.indexOf(']', colonIdx);
+        if (end !== -1) {
+          tokens.push({ type: 'inline_field', value: line.slice(i + 1, end) });
+          i = end + 1;
+          continue;
+        }
+      }
+    }
+
+    // Overlay &
+    if (ch === '&') {
+      tokens.push({ type: 'overlay', value: '&' });
+      i++;
+      continue;
+    }
+
     // Chord [CEG]
     if (ch === '[') {
       tokens.push({ type: 'chord_start', value: '[' });
@@ -535,22 +588,12 @@ function tokenizeMusicLine(line: string): AbcToken[] {
       continue;
     }
 
-    // Note or rest
-    if (isNoteStart(ch) || ch === 'z' || ch === 'Z') {
+    // Note or rest (including x/X invisible rests)
+    if (isNoteStart(ch) || ch === 'z' || ch === 'Z' || ch === 'x' || ch === 'X') {
       const noteResult = parseNoteToken(line, i);
       if (noteResult) {
         tokens.push(noteResult.token);
         i = noteResult.nextIndex;
-        continue;
-      }
-    }
-
-    // Inline field [X:value]
-    if (ch === '[' && i + 2 < line.length && line[i + 2] === ':') {
-      const end = line.indexOf(']', i);
-      if (end !== -1) {
-        tokens.push({ type: 'inline_field', value: line.slice(i + 1, end) });
-        i = end + 1;
         continue;
       }
     }
@@ -641,8 +684,8 @@ function parseBarLine(line: string, i: number): { token: AbcToken; nextIndex: nu
 function parseNoteToken(line: string, i: number): { token: AbcToken; nextIndex: number } | null {
   const start = i;
 
-  // Rest
-  if (line[i] === 'z' || line[i] === 'Z') {
+  // Rest (z/Z = visible rest, x/X = invisible rest / spacer)
+  if (line[i] === 'z' || line[i] === 'Z' || line[i] === 'x' || line[i] === 'X') {
     i++;
     const dur = parseDuration(line, i);
     i = dur.nextIndex;
@@ -875,6 +918,7 @@ function buildMeasures(
   let noteCountForLyrics = 0;
   let inChord = false;
   let chordNotes: AbcToken[] = [];
+  let currentUnitNote = { ...unitNote };
 
   function finalizeMeasure(endBarType?: string) {
     const measure: Measure = {
@@ -921,7 +965,7 @@ function buildMeasures(
           break;
         }
 
-        const entry = createNoteEntry(token, unitNote, pendingTie, inGrace, tupletState);
+        const entry = createNoteEntry(token, currentUnitNote, pendingTie, inGrace, tupletState);
         pendingTie = false;
 
         // Handle chord symbol
@@ -993,7 +1037,7 @@ function buildMeasures(
 
       case 'rest': {
         if (inChord) break;
-        const restEntry = createRestEntry(token, unitNote, tupletState, measureDuration);
+        const restEntry = createRestEntry(token, currentUnitNote, tupletState, measureDuration);
 
         // Handle dynamics
         if (pendingDynamic) {
@@ -1050,7 +1094,7 @@ function buildMeasures(
             chordToken.durationNum = chordDurNum;
             chordToken.durationDen = chordDurDen;
 
-            const entry = createNoteEntry(chordToken, unitNote, false, inGrace, tupletState);
+            const entry = createNoteEntry(chordToken, currentUnitNote, false, inGrace, tupletState);
 
             // Restore for any other processing
             chordToken.durationNum = originalNum;
@@ -1166,6 +1210,29 @@ function buildMeasures(
         // We need to retroactively apply lyrics to the notes already processed.
         const syllables = token.syllables || [];
         applyLyricsToExistingNotes(measures, currentEntries, syllables);
+        break;
+      }
+
+      case 'overlay': {
+        // & means "go back to start of current bar" for voice overlay
+        if (currentPosition > 0) {
+          const backupEntry: MeasureEntry = {
+            _id: generateId(),
+            type: 'backup',
+            duration: currentPosition,
+          };
+          currentEntries.push(backupEntry);
+          currentPosition = 0;
+        }
+        break;
+      }
+
+      case 'inline_field': {
+        // Handle inline field changes like [L:1/32], [M:3/4], [K:Am]
+        const lMatch = token.value.match(/^L:\s*(\d+)\/(\d+)/);
+        if (lMatch) {
+          currentUnitNote = { num: parseInt(lMatch[1], 10), den: parseInt(lMatch[2], 10) };
+        }
         break;
       }
 

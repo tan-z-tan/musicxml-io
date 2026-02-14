@@ -591,8 +591,12 @@ function serializeMeasureEntries(
       }
 
       case 'backup':
+        // Emit & overlay marker (go back to start of bar for voice overlay)
+        parts.push(' & ');
+        break;
+
       case 'forward':
-        // These are voice management in MusicXML, not directly represented in single-voice ABC
+        // Forward entries are time-advancing spacers, not directly represented in ABC
         break;
 
       default:
