@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'fs';
+import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { parseAbc, serializeAbc, serialize, parse } from '../src';
 
@@ -426,38 +426,10 @@ describe('ABC Serializer', () => {
 // ============================================================
 
 describe('ABC Round-trip', () => {
-  const fixtures = [
-    'simple-scale.abc',
-    'twinkle.abc',
-    'key-signatures.abc',
-    'chord-symbols.abc',
-    'accidentals.abc',
-    'durations.abc',
-    'rests.abc',
-    'octaves.abc',
-    'minor-key.abc',
-    'chords.abc',
-    'dynamics.abc',
-    'ties-slurs.abc',
-    'multi-voice.abc',
-    'repeats.abc',
-    'tuplets.abc',
-    'grace-notes.abc',
-    'lyrics.abc',
-    'piano.abc',
-    'tune_008268.abc',
-    'tune_009270.abc',
-    'real-kesh-jig.abc',
-    'real-cooleys-reel.abc',
-    'real-greensleeves.abc',
-    'real-scarborough-fair.abc',
-    'real-star-county-down.abc',
-    'real-si-bheag.abc',
-    'real-irish-washerwoman.abc',
-    'real-amazing-grace.abc',
-    'real-dotted-rhythms.abc',
-    'real-complex-keys.abc',
-  ];
+  // Automatically discover all .abc files in the fixtures directory
+  const fixtures = readdirSync(fixturesPath)
+    .filter(f => f.endsWith('.abc'))
+    .sort();
 
   for (const fixture of fixtures) {
     it(`should round-trip ${fixture}: ABC → Score → ABC → Score preserving music`, () => {
