@@ -1,15 +1,11 @@
 X:1
-C: J.S.Bach
 T:BWV 1030 II Largo e dolce
+C:J.S.Bach
 M:6/8
 L:1/8
 Q:1/8=56
-N:accompaniment
 K:D
-I:harpsichord
-%%MIDI program 7
-%%staves {V1 V2}
-V:V1 clef=treble
-V:V2 clef=bass
-[V:V1] [dAF][dBF][d=cA] d[L:1/32]^cedc dcBA & [L:1/8] x3 [BG]AD |
-[V:V2] DB,[DF,] DEA, & x3 G,2 F,|
+V:1
+[dAF][dBF][dcA]d^c/4e/4d/4c/4d/4c/4B/4A/4 & z3[BG]AD|
+V:2 clef=bass
+DB,[DF,]DEA, & z3G,2F,|

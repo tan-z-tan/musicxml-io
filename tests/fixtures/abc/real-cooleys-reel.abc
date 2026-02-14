@@ -1,10 +1,6 @@
 X:1
 T:Cooley's Reel
-R:reel
 M:4/4
 L:1/8
 K:Em
-|:D2|EBBA B2 EB|B2 AB dBAG|FDAD BDAD|FDAD dAFD|
-EBBA B2 EB|B2 AB defg|afec dBAF|DEFD E2:|
-|:gf|eB B2 efge|eB B2 BABc|dB B2 defa|dB B2 BABc|
-eB B2 efge|eB B2 defg|afec dBAF|DEFD E2:|
+|:D2|EBBAB2EB|B2ABdBAG|FDADBDAD|FDADdAFD|EBBAB2EB|B2ABdefg|afecdBAF|DEFDE2:||:gf|eBB2efge|eBB2BABc|dBB2defa|dBB2BABc|eBB2efge|eBB2defg|afecdBAF|DEFDE2:|

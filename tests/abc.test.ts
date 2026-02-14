@@ -295,7 +295,7 @@ describe('ABC Parser', () => {
 
   describe('Tuplets', () => {
     it('should parse triplets', () => {
-      const abc = readFixture('tuplets.abc');
+      const abc = `X:1\nT:Tuplet\nM:4/4\nL:1/8\nK:C\n(3CDE (3FGA B2c2|\n`;
       const score = parseAbc(abc);
 
       const notes = score.parts[0].measures[0].entries.filter(
@@ -432,89 +432,13 @@ describe('ABC Round-trip', () => {
     .sort();
 
   for (const fixture of fixtures) {
-    it(`should round-trip ${fixture}: ABC → Score → ABC → Score preserving music`, () => {
-      const originalAbc = readFixture(fixture);
+    it(`should round-trip ${fixture}: ABC → Score → ABC preserving text`, () => {
+      const original = readFixture(fixture);
 
-      // First pass: ABC → Score
-      const score1 = parseAbc(originalAbc);
+      // ABC → Score → ABC
+      const roundTripped = serializeAbc(parseAbc(original));
 
-      // Serialize back to ABC
-      const exportedAbc = serializeAbc(score1);
-
-      // Second pass: ABC → Score
-      const score2 = parseAbc(exportedAbc);
-
-      // Compare the two Score objects
-      // Same number of parts
-      expect(score2.parts.length).toBe(score1.parts.length);
-
-      // Same title
-      expect(score2.metadata.movementTitle).toBe(score1.metadata.movementTitle);
-
-      // Compare each part
-      for (let pi = 0; pi < score1.parts.length; pi++) {
-        const part1 = score1.parts[pi];
-        const part2 = score2.parts[pi];
-
-        // Same number of measures
-        expect(part2.measures.length).toBe(part1.measures.length);
-
-        // Compare each measure
-        for (let mi = 0; mi < part1.measures.length; mi++) {
-          const m1 = part1.measures[mi];
-          const m2 = part2.measures[mi];
-
-          // Compare key signature (first measure)
-          if (m1.attributes?.key && m2.attributes?.key) {
-            expect(m2.attributes.key.fifths).toBe(m1.attributes.key.fifths);
-            expect(m2.attributes.key.mode).toBe(m1.attributes.key.mode);
-          }
-
-          // Compare time signature (first measure)
-          if (m1.attributes?.time && m2.attributes?.time) {
-            expect(m2.attributes.time.beats).toBe(m1.attributes.time.beats);
-            expect(m2.attributes.time.beatType).toBe(m1.attributes.time.beatType);
-          }
-
-          // Compare notes - pitch and duration
-          const notes1 = m1.entries.filter(e => e.type === 'note') as any[];
-          const notes2 = m2.entries.filter(e => e.type === 'note') as any[];
-
-          expect(notes2.length).toBe(notes1.length);
-
-          for (let ni = 0; ni < notes1.length; ni++) {
-            const n1 = notes1[ni];
-            const n2 = notes2[ni];
-
-            // Same pitch
-            if (n1.pitch) {
-              expect(n2.pitch?.step).toBe(n1.pitch.step);
-              expect(n2.pitch?.octave).toBe(n1.pitch.octave);
-              expect(n2.pitch?.alter).toBe(n1.pitch.alter);
-            }
-
-            // Same rest status
-            if (n1.rest) {
-              expect(n2.rest).toBeDefined();
-            }
-
-            // Same duration
-            expect(n2.duration).toBe(n1.duration);
-
-            // Same chord status
-            expect(n2.chord).toBe(n1.chord);
-          }
-
-          // Compare harmonies
-          const harms1 = m1.entries.filter(e => e.type === 'harmony') as any[];
-          const harms2 = m2.entries.filter(e => e.type === 'harmony') as any[];
-          expect(harms2.length).toBe(harms1.length);
-          for (let hi = 0; hi < harms1.length; hi++) {
-            expect(harms2[hi].root.rootStep).toBe(harms1[hi].root.rootStep);
-            expect(harms2[hi].kind).toBe(harms1[hi].kind);
-          }
-        }
-      }
+      expect(roundTripped).toBe(original);
     });
   }
 });

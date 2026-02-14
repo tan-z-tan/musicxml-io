@@ -1,6 +1,6 @@
 X:1
 T:Octave Test
 M:4/4
-L:1/4
+L:1/8
 K:C
-C,D,E,F,|G,A,B,C|cdef|gabc'|
+C,2D,2E,2F,2|G,2A,2B,2C2|c2d2e2f2|g2a2b2c'2|

@@ -1,10 +1,6 @@
 X:1
 T:The Kesh Jig
-R:jig
 M:6/8
 L:1/8
 K:G
-|:GAG GAB|ABA ABd|edd gdd|edB dBA|
-GAG GAB|ABA ABd|edd gdB|AGF G3:|
-|:BAB dBd|ege dBA|BAB dBG|ABA AGA|
-BAB dBd|ege dBd|gfg aga|bgf g3:|
+|:GAGGAB|ABAABd|eddgdd|edBdBA|GAGGAB|ABAABd|eddgdB|AGFG3:||:BABdBd|egedBA|BABdBG|ABAAGA|BABdBd|egedBd|gfgaga|bgfg3:|

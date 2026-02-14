@@ -951,6 +951,7 @@ function buildMeasures(
   let isFirstMeasure = true;
   let pendingTie = false;
   let slurDepth = 0;
+  let pendingSlurStarts = 0;
   let slurStartNotes: NoteEntry[] = [];
   let inGrace = false;
   let tupletState: { p: number; q: number; remaining: number } | null = null;
@@ -1025,9 +1026,12 @@ function buildMeasures(
           pendingDynamic = null;
         }
 
-        // Handle slur start
-        if (slurDepth > 0 && !slurStartNotes.includes(entry)) {
-          // Add slur continue / end later
+        // Handle slur start: attach pending slur starts to this note
+        while (pendingSlurStarts > 0) {
+          if (!entry.notations) entry.notations = [];
+          entry.notations.push({ type: 'slur', slurType: 'start', number: slurDepth - pendingSlurStarts + 1 });
+          slurStartNotes.push(entry);
+          pendingSlurStarts--;
         }
 
         // Assign lyrics
@@ -1143,7 +1147,15 @@ function buildMeasures(
             chordToken.durationNum = originalNum;
             chordToken.durationDen = originalDen;
 
-            if (ci > 0) {
+            if (ci === 0) {
+              // Handle slur start on first note of chord
+              while (pendingSlurStarts > 0) {
+                if (!entry.notations) entry.notations = [];
+                entry.notations.push({ type: 'slur', slurType: 'start', number: slurDepth - pendingSlurStarts + 1 });
+                slurStartNotes.push(entry);
+                pendingSlurStarts--;
+              }
+            } else {
               entry.chord = true;
             }
 
@@ -1204,6 +1216,7 @@ function buildMeasures(
 
       case 'slur_start':
         slurDepth++;
+        pendingSlurStarts++;
         break;
 
       case 'slur_end':
@@ -1284,10 +1297,6 @@ function buildMeasures(
     }
   }
 
-  // Handle slur tracking
-  // Add slur start notations to the first note after slur_start
-  applySlurNotations(measures, tokens);
-
   // Finalize last measure if it has entries
   if (currentEntries.length > 0) {
     finalizeMeasure();
@@ -1355,37 +1364,6 @@ function applyLyricsToExistingNotes(
   }
 }
 
-function applySlurNotations(measures: Measure[], tokens: AbcToken[]) {
-  // Re-process: scan through all measures and find slur boundaries
-  // This is a second pass to correctly place slur start/stop
-  let slurCount = 0;
-  let allEntries: NoteEntry[] = [];
-
-  for (const measure of measures) {
-    for (const entry of measure.entries) {
-      if (entry.type === 'note') {
-        allEntries.push(entry);
-      }
-    }
-  }
-
-  // Re-scan tokens for slur placement
-  let noteIdx = 0;
-  for (const token of tokens) {
-    if (token.type === 'slur_start') {
-      slurCount++;
-      // Find the next note and add slur start
-      // We need to scan forward in tokens to find the note
-      continue;
-    }
-    if (token.type === 'note' || token.type === 'rest') {
-      noteIdx++;
-    }
-  }
-
-  // Simplified: scan entries and apply slurs based on original token order
-  // The slur_start/slur_end tokens were already handled during first pass
-}
 
 function applyTieStops(measures: Measure[]) {
   // Scan all notes: if a note has tie start, the next note with same pitch gets tie stop
