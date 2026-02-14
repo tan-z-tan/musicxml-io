@@ -287,14 +287,12 @@ function serializeTempo(direction: DirectionEntry): string | null {
       const perMinute = dt.perMinute;
       if (!perMinute) return null;
 
-      // Convert beat unit to fraction
+      // Convert beat unit to fraction of a whole note
+      // quarter = 1/4, half = 1/2, eighth = 1/8, etc.
       const quarterLen = NOTE_TYPE_TO_QUARTER_LENGTH[beatUnit] ?? 1;
-      const wholeLen = quarterLen / 4;
-      // Express as fraction
-      const num = 1;
-      const den = Math.round(1 / (wholeLen * 4)); // denominator in terms of whole note subdivisions
+      const den = Math.round(4 / quarterLen);
 
-      return `${num}/${den}=${perMinute}`;
+      return `1/${den}=${perMinute}`;
     }
   }
   return null;

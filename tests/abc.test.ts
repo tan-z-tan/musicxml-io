@@ -575,3 +575,208 @@ describe('ABC to MusicXML cross-format', () => {
     }
   });
 });
+
+// ============================================================
+// Real-world ABC Tunes: Round-trip Tests
+// ============================================================
+
+describe('Real-world ABC round-trip', () => {
+  const realFixtures = [
+    'real-kesh-jig.abc',
+    'real-cooleys-reel.abc',
+    'real-greensleeves.abc',
+    'real-scarborough-fair.abc',
+    'real-star-county-down.abc',
+    'real-si-bheag.abc',
+    'real-irish-washerwoman.abc',
+    'real-amazing-grace.abc',
+    'real-dotted-rhythms.abc',
+    'real-complex-keys.abc',
+  ];
+
+  for (const fixture of realFixtures) {
+    it(`should parse ${fixture} without errors`, () => {
+      const abc = readFixture(fixture);
+      expect(() => parseAbc(abc)).not.toThrow();
+      const score = parseAbc(abc);
+      expect(score.parts.length).toBeGreaterThan(0);
+      expect(score.parts[0].measures.length).toBeGreaterThan(0);
+    });
+
+    it(`should round-trip ${fixture}: ABC → Score → ABC → Score`, () => {
+      const originalAbc = readFixture(fixture);
+      const score1 = parseAbc(originalAbc);
+      const exportedAbc = serializeAbc(score1);
+      const score2 = parseAbc(exportedAbc);
+
+      // Same number of parts and measures
+      expect(score2.parts.length).toBe(score1.parts.length);
+      for (let pi = 0; pi < score1.parts.length; pi++) {
+        expect(score2.parts[pi].measures.length).toBe(score1.parts[pi].measures.length);
+
+        for (let mi = 0; mi < score1.parts[pi].measures.length; mi++) {
+          const m1 = score1.parts[pi].measures[mi];
+          const m2 = score2.parts[pi].measures[mi];
+
+          // Compare notes
+          const notes1 = m1.entries.filter(e => e.type === 'note') as any[];
+          const notes2 = m2.entries.filter(e => e.type === 'note') as any[];
+          expect(notes2.length).toBe(notes1.length);
+
+          for (let ni = 0; ni < notes1.length; ni++) {
+            const n1 = notes1[ni];
+            const n2 = notes2[ni];
+
+            if (n1.pitch) {
+              expect(n2.pitch?.step).toBe(n1.pitch.step);
+              expect(n2.pitch?.octave).toBe(n1.pitch.octave);
+              expect(n2.pitch?.alter).toBe(n1.pitch.alter);
+            }
+            if (n1.rest) {
+              expect(n2.rest).toBeDefined();
+            }
+            expect(n2.duration).toBe(n1.duration);
+            expect(n2.chord).toBe(n1.chord);
+          }
+        }
+      }
+    });
+
+    it(`should produce valid MusicXML from ${fixture}`, () => {
+      const abc = readFixture(fixture);
+      const score = parseAbc(abc);
+      const xml = serialize(score);
+
+      expect(xml).toContain('<?xml');
+      expect(xml).toContain('<score-partwise');
+      expect(() => parse(xml)).not.toThrow();
+
+      // Verify the re-parsed MusicXML preserves structure
+      const reparsed = parse(xml);
+      expect(reparsed.parts.length).toBe(score.parts.length);
+      expect(reparsed.parts[0].measures.length).toBe(score.parts[0].measures.length);
+    });
+  }
+
+  // Specific musical content checks on real tunes
+
+  it('should correctly parse 6/8 time for The Kesh Jig', () => {
+    const abc = readFixture('real-kesh-jig.abc');
+    const score = parseAbc(abc);
+    const time = score.parts[0].measures[0].attributes?.time;
+    expect(time?.beats).toBe('6');
+    expect(time?.beatType).toBe(8);
+  });
+
+  it('should correctly parse Em key for Cooleys Reel', () => {
+    const abc = readFixture('real-cooleys-reel.abc');
+    const score = parseAbc(abc);
+    const key = score.parts[0].measures[0].attributes?.key;
+    // Em = 1 sharp, mode minor
+    expect(key?.fifths).toBe(1);
+    expect(key?.mode).toBe('minor');
+  });
+
+  it('should correctly parse Am key for Greensleeves', () => {
+    const abc = readFixture('real-greensleeves.abc');
+    const score = parseAbc(abc);
+    const key = score.parts[0].measures[0].attributes?.key;
+    expect(key?.fifths).toBe(0);
+    expect(key?.mode).toBe('minor');
+  });
+
+  it('should correctly parse 3/4 time for Greensleeves', () => {
+    const abc = readFixture('real-greensleeves.abc');
+    const score = parseAbc(abc);
+    const time = score.parts[0].measures[0].attributes?.time;
+    expect(time?.beats).toBe('3');
+    expect(time?.beatType).toBe(4);
+  });
+
+  it('should correctly parse Dm key for Scarborough Fair', () => {
+    const abc = readFixture('real-scarborough-fair.abc');
+    const score = parseAbc(abc);
+    const key = score.parts[0].measures[0].attributes?.key;
+    // Dm = -1 fifths, mode minor
+    expect(key?.fifths).toBe(-1);
+    expect(key?.mode).toBe('minor');
+  });
+
+  it('should parse chord symbols in Star of County Down', () => {
+    const abc = readFixture('real-star-county-down.abc');
+    const score = parseAbc(abc);
+    const harmonies = score.parts[0].measures.flatMap(
+      m => m.entries.filter(e => e.type === 'harmony')
+    );
+    expect(harmonies.length).toBeGreaterThan(0);
+  });
+
+  it('should parse D key for Si Bheag Si Mhor', () => {
+    const abc = readFixture('real-si-bheag.abc');
+    const score = parseAbc(abc);
+    const key = score.parts[0].measures[0].attributes?.key;
+    expect(key?.fifths).toBe(2);
+    expect(key?.mode).toBe('major');
+  });
+
+  it('should parse lyrics in Amazing Grace', () => {
+    const abc = readFixture('real-amazing-grace.abc');
+    const score = parseAbc(abc);
+    const notesWithLyrics = score.parts[0].measures.flatMap(
+      m => m.entries.filter(e => e.type === 'note' && e.lyrics && e.lyrics.length > 0)
+    );
+    expect(notesWithLyrics.length).toBeGreaterThan(0);
+  });
+
+  it('should parse lyrics in Scarborough Fair', () => {
+    const abc = readFixture('real-scarborough-fair.abc');
+    const score = parseAbc(abc);
+    const notesWithLyrics = score.parts[0].measures.flatMap(
+      m => m.entries.filter(e => e.type === 'note' && e.lyrics && e.lyrics.length > 0)
+    );
+    expect(notesWithLyrics.length).toBeGreaterThan(0);
+  });
+
+  it('should handle dotted rhythms', () => {
+    const abc = readFixture('real-dotted-rhythms.abc');
+    const score = parseAbc(abc);
+    const notes = score.parts[0].measures[0].entries.filter(
+      e => e.type === 'note' && !e.rest
+    ) as any[];
+
+    // C3D with L:1/8: C is dotted quarter (3 eighth notes = 3*480 = 1440 divisions)
+    // Actually 3 * unit = 3 * eighth = dotted quarter
+    expect(notes[0].duration).toBe(3 * 480); // 3 eighth notes
+    expect(notes[0].dots).toBe(1); // dotted quarter
+  });
+
+  it('should handle key change in complex keys', () => {
+    const abc = readFixture('real-complex-keys.abc');
+    const score = parseAbc(abc);
+    const key = score.parts[0].measures[0].attributes?.key;
+    expect(key?.fifths).toBe(2); // D major
+  });
+
+  it('should handle accidentals within key context (Greensleeves ^G)', () => {
+    const abc = readFixture('real-greensleeves.abc');
+    const score = parseAbc(abc);
+
+    // Find notes with sharp G
+    const allNotes = score.parts[0].measures.flatMap(
+      m => m.entries.filter(e => e.type === 'note' && e.pitch)
+    ) as any[];
+    const sharpG = allNotes.find(n => n.pitch?.step === 'G' && n.pitch?.alter === 1);
+    expect(sharpG).toBeDefined();
+  });
+
+  it('should handle anacrusis (pickup notes) in Cooleys Reel', () => {
+    const abc = readFixture('real-cooleys-reel.abc');
+    const score = parseAbc(abc);
+    // The first measure starts with |:D2| which is a pickup
+    // After the barline, D2 should be parsed as a note
+    const firstMeasureNotes = score.parts[0].measures[0].entries.filter(
+      e => e.type === 'note'
+    );
+    expect(firstMeasureNotes.length).toBeGreaterThan(0);
+  });
+});

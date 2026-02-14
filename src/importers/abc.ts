@@ -1168,7 +1168,6 @@ function buildMeasures(
         applyLyricsToExistingNotes(measures, currentEntries, syllables);
         break;
       }
-        break;
 
       default:
         break;
@@ -1218,7 +1217,7 @@ function applyLyricsToExistingNotes(
   const unlyricedNotes = allNotes.filter(n => !n.lyrics || n.lyrics.length === 0);
 
   // Apply syllables to the most recent unlyriced notes
-  const targetNotes = unlyricedNotes.slice(-syllables.length);
+  const targetNotes = unlyricedNotes.slice(0, syllables.length);
 
   for (let si = 0; si < syllables.length && si < targetNotes.length; si++) {
     const syllable = syllables[si];
