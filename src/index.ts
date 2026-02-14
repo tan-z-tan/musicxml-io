@@ -73,11 +73,11 @@ export type {
 } from './types';
 
 // Importers
-export { parse, parseCompressed, isCompressed, parseAuto } from './importers';
+export { parse, parseCompressed, isCompressed, parseAuto, parseAbc } from './importers';
 
 // Exporters
-export { serialize, serializeCompressed, exportMidi } from './exporters';
-export type { SerializeOptions, MidiExportOptions } from './exporters';
+export { serialize, serializeCompressed, exportMidi, serializeAbc } from './exporters';
+export type { SerializeOptions, MidiExportOptions, AbcSerializeOptions } from './exporters';
 
 // Query (all read operations)
 export {

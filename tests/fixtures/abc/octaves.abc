@@ -1,0 +1,6 @@
+X:1
+T:Octave Test
+M:4/4
+L:1/4
+K:C
+C,D,E,F,|G,A,B,C|cdef|gabc'|
