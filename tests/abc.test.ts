@@ -793,6 +793,28 @@ describe('User-provided ABC samples', () => {
       expect(score.parts.length).toBe(2);
     });
 
+    it('should apply treble clef to V1 and bass clef to V2', () => {
+      const abc = readFixture('piano.abc');
+      const score = parseAbc(abc);
+      const clef1 = score.parts[0].measures[0].attributes?.clef?.[0];
+      const clef2 = score.parts[1].measures[0].attributes?.clef?.[0];
+      expect(clef1?.sign).toBe('G');
+      expect(clef1?.line).toBe(2);
+      expect(clef2?.sign).toBe('F');
+      expect(clef2?.line).toBe(4);
+    });
+
+    it('should round-trip clef preservation', () => {
+      const abc = readFixture('piano.abc');
+      const score1 = parseAbc(abc);
+      const out = serializeAbc(score1);
+      expect(out).toContain('clef=bass');
+      const score2 = parseAbc(out);
+      const clef2 = score2.parts[1].measures[0].attributes?.clef?.[0];
+      expect(clef2?.sign).toBe('F');
+      expect(clef2?.line).toBe(4);
+    });
+
     it('should parse chords in V1 correctly', () => {
       const abc = readFixture('piano.abc');
       const score = parseAbc(abc);
@@ -874,6 +896,16 @@ describe('User-provided ABC samples', () => {
       expect(score.metadata.movementTitle).toBe("Amelia's Waltz");
       const key = score.parts[0].measures[0].attributes?.key;
       expect(key?.fifths).toBe(2); // D major
+    });
+
+    it('should preserve X: reference number through round-trip', () => {
+      const abc = readFixture('tune_008268.abc');
+      const score = parseAbc(abc);
+      const out = serializeAbc(score);
+      expect(out).toContain('X:448');
+      const score2 = parseAbc(out);
+      const out2 = serializeAbc(score2);
+      expect(out2).toContain('X:448');
     });
 
     it('should parse 3/4 time signature', () => {

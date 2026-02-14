@@ -31,6 +31,7 @@ import type {
   KeySignature,
   TimeSignature,
   Barline,
+  Clef,
 } from '../types';
 import { generateId } from '../id';
 
@@ -164,7 +165,7 @@ function parseHeader(lines: string[]): { header: AbcHeader; bodyStartIndex: numb
 
     // Header fields are in format "X:value"
     const fieldMatch = line.match(/^([A-Za-z]):\s*(.*)/);
-    if (fieldMatch && !foundKey) {
+    if (fieldMatch && (!foundKey || fieldMatch[1] === 'V')) {
       const [, field, value] = fieldMatch;
       switch (field) {
         case 'X':
@@ -191,9 +192,22 @@ function parseHeader(lines: string[]): { header: AbcHeader; bodyStartIndex: numb
           bodyStartIndex = i + 1;
           break;
         case 'V': {
-          const voiceParts = value.trim().split(/\s+/);
-          const voiceId = voiceParts[0];
-          header.voices!.push({ id: voiceId, name: voiceId });
+          const voiceValue = value.trim();
+          const voiceId = voiceValue.split(/\s+/)[0];
+          const nameMatch = voiceValue.match(/name=["']?([^"'\s]+)["']?/i);
+          const clefMatch = voiceValue.match(/clef=(\S+)/i);
+          // Update existing or add new voice entry
+          const existingVoice = header.voices!.find(v => v.id === voiceId);
+          if (existingVoice) {
+            if (nameMatch) existingVoice.name = nameMatch[1];
+            if (clefMatch) existingVoice.clef = clefMatch[1];
+          } else {
+            header.voices!.push({
+              id: voiceId,
+              name: nameMatch ? nameMatch[1] : voiceId,
+              clef: clefMatch ? clefMatch[1] : undefined,
+            });
+          }
           break;
         }
       }
@@ -201,7 +215,9 @@ function parseHeader(lines: string[]): { header: AbcHeader; bodyStartIndex: numb
       // Non-field line before K: - treat as part of header (comment, etc.)
       continue;
     } else {
-      break;
+      // After K: found, continue scanning for V: definitions anywhere in the file
+      // (V: can appear interspersed with music lines in the body)
+      continue;
     }
   }
 
@@ -350,7 +366,7 @@ function durationToNoteType(duration: number): { noteType: NoteType; dots: numbe
 // Tokenizer
 // ============================================================
 
-function tokenizeBody(bodyLines: string[]): AbcToken[][] {
+function tokenizeBody(bodyLines: string[]): { tokens: AbcToken[][]; voiceIds: string[] } {
   const voiceTokens: Map<string, AbcToken[]> = new Map();
   let currentVoice = '1';
   voiceTokens.set(currentVoice, []);
@@ -422,15 +438,17 @@ function tokenizeBody(bodyLines: string[]): AbcToken[][] {
     }
   }
 
-  // Return tokens grouped by voice
+  // Return tokens grouped by voice, preserving voice IDs
   const result: AbcToken[][] = [];
-  for (const [, tokens] of voiceTokens) {
+  const voiceIds: string[] = [];
+  for (const [voiceId, tokens] of voiceTokens) {
     if (tokens.length > 0) {
       result.push(tokens);
+      voiceIds.push(voiceId);
     }
   }
 
-  return result.length > 0 ? result : [[]];
+  return { tokens: result.length > 0 ? result : [[]], voiceIds };
 }
 
 function parseLyricLine(text: string): string[] {
@@ -808,7 +826,7 @@ function parseDuration(line: string, i: number): { num: number; den: number; nex
 // Score Builder
 // ============================================================
 
-function buildScore(header: AbcHeader, voiceTokensList: AbcToken[][]): Score {
+function buildScore(header: AbcHeader, voiceTokensList: AbcToken[][], voiceIds: string[]): Score {
   const unitNote = parseUnitNoteLength(header.unitNoteLength, header.meter);
   const timeSignature = parseTimeSignature(header.meter || '4/4');
   const keySignature = parseKeySignature(header.key || 'C');
@@ -824,8 +842,12 @@ function buildScore(header: AbcHeader, voiceTokensList: AbcToken[][]): Score {
   for (let voiceIndex = 0; voiceIndex < voiceTokensList.length; voiceIndex++) {
     const tokens = voiceTokensList[voiceIndex];
     const partId = `P${voiceIndex + 1}`;
-    const voiceName = header.voices && header.voices[voiceIndex]
-      ? header.voices[voiceIndex].name || `Voice ${voiceIndex + 1}`
+    // Match voice by ID (from tokenizer) to header voice definitions
+    const voiceId = voiceIds[voiceIndex];
+    const headerVoice = header.voices?.find(v => v.id === voiceId)
+      || (header.voices && header.voices[voiceIndex]);
+    const voiceName = headerVoice
+      ? headerVoice.name || `Voice ${voiceIndex + 1}`
       : voiceTokensList.length > 1
         ? `Voice ${voiceIndex + 1}`
         : 'Music';
@@ -837,7 +859,10 @@ function buildScore(header: AbcHeader, voiceTokensList: AbcToken[][]): Score {
       name: voiceName,
     });
 
-    const measures = buildMeasures(tokens, unitNote, keySignature, timeSignature, measureDuration);
+    const voiceClef = headerVoice
+      ? abcClefToMusicXml(headerVoice.clef)
+      : undefined;
+    const measures = buildMeasures(tokens, unitNote, keySignature, timeSignature, measureDuration, voiceClef);
     parts.push({
       _id: generateId(),
       id: partId,
@@ -861,6 +886,9 @@ function buildScore(header: AbcHeader, voiceTokensList: AbcToken[][]): Score {
       encoding: {
         software: ['musicxml-io (ABC import)'],
       },
+      miscellaneous: header.referenceNumber !== undefined
+        ? [{ name: 'abc-reference-number', value: String(header.referenceNumber) }]
+        : undefined,
     },
     partList: partListEntries,
     parts,
@@ -893,12 +921,27 @@ function parseTempoToDirection(tempoStr: string): DirectionEntry | null {
   };
 }
 
+function abcClefToMusicXml(abcClef?: string): Clef {
+  if (!abcClef) return { sign: 'G', line: 2 };
+  const c = abcClef.toLowerCase();
+  if (c === 'treble' || c === 'treble-8va' || c === 'treble+8') return { sign: 'G', line: 2 };
+  if (c === 'bass' || c === 'bass3') return { sign: 'F', line: 4 };
+  if (c === 'alto') return { sign: 'C', line: 3 };
+  if (c === 'tenor') return { sign: 'C', line: 4 };
+  if (c === 'soprano') return { sign: 'C', line: 1 };
+  if (c === 'mezzo' || c === 'mezzo-soprano') return { sign: 'C', line: 2 };
+  if (c === 'baritone') return { sign: 'C', line: 5 };
+  if (c === 'perc' || c === 'percussion') return { sign: 'percussion' };
+  return { sign: 'G', line: 2 };
+}
+
 function buildMeasures(
   tokens: AbcToken[],
   unitNote: { num: number; den: number },
   keySignature: KeySignature,
   timeSignature: TimeSignature,
   measureDuration: number,
+  clef?: Clef,
 ): Measure[] {
   const measures: Measure[] = [];
   let currentEntries: MeasureEntry[] = [];
@@ -933,7 +976,7 @@ function buildMeasures(
         divisions: DIVISIONS,
         time: timeSignature,
         key: keySignature,
-        clef: [{ sign: 'G', line: 2 }],
+        clef: [clef || { sign: 'G', line: 2 }],
       };
       isFirstMeasure = false;
     }
@@ -1576,7 +1619,7 @@ export function parseAbc(abcString: string): Score {
   const lines = abcString.split('\n');
   const { header, bodyStartIndex } = parseHeader(lines);
   const bodyLines = lines.slice(bodyStartIndex);
-  const voiceTokensList = tokenizeBody(bodyLines);
-  const score = buildScore(header, voiceTokensList);
+  const { tokens: voiceTokensList, voiceIds } = tokenizeBody(bodyLines);
+  const score = buildScore(header, voiceTokensList, voiceIds);
   return score;
 }

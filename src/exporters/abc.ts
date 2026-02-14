@@ -77,6 +77,18 @@ const NOTE_TYPE_TO_QUARTER_LENGTH: Record<string, number> = {
 // Key Serialization
 // ============================================================
 
+function musicXmlClefToAbc(clef: { sign: string; line?: number }): string | null {
+  if (clef.sign === 'G' && (clef.line === 2 || clef.line === undefined)) return 'treble';
+  if (clef.sign === 'F' && (clef.line === 4 || clef.line === undefined)) return 'bass';
+  if (clef.sign === 'C' && clef.line === 3) return 'alto';
+  if (clef.sign === 'C' && clef.line === 4) return 'tenor';
+  if (clef.sign === 'C' && clef.line === 1) return 'soprano';
+  if (clef.sign === 'C' && clef.line === 2) return 'mezzo-soprano';
+  if (clef.sign === 'C' && clef.line === 5) return 'baritone';
+  if (clef.sign === 'percussion') return 'perc';
+  return null;
+}
+
 function serializeKey(key: KeySignature): string {
   const mode = key.mode || 'major';
   const modeOffset = MODE_FIFTHS_OFFSET[mode] ?? 0;
@@ -322,8 +334,10 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
   const firstMeasure = firstPart?.measures[0];
   const attrs = firstMeasure?.attributes;
 
-  // Header
-  lines.push(`X:${opts.referenceNumber}`);
+  // Header - use stored reference number if available, then options, then default 1
+  const storedRefNum = score.metadata.miscellaneous?.find(m => m.name === 'abc-reference-number')?.value;
+  const refNum = storedRefNum ? parseInt(storedRefNum, 10) : opts.referenceNumber;
+  lines.push(`X:${refNum}`);
 
   if (score.metadata.movementTitle) {
     lines.push(`T:${score.metadata.movementTitle}`);
@@ -364,7 +378,16 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
     const part = score.parts[partIdx];
 
     if (multiVoice) {
-      lines.push(`V:${partIdx + 1}`);
+      let voiceLine = `V:${partIdx + 1}`;
+      // Add clef if not treble
+      const partClef = part.measures[0]?.attributes?.clef?.[0];
+      if (partClef) {
+        const clefName = musicXmlClefToAbc(partClef);
+        if (clefName && clefName !== 'treble') {
+          voiceLine += ` clef=${clefName}`;
+        }
+      }
+      lines.push(voiceLine);
     }
 
     const divisions = getPartDivisions(part);
