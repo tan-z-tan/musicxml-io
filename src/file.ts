@@ -1,6 +1,6 @@
 import { readFile, writeFile } from 'fs/promises';
-import { parse, parseCompressed, isCompressed } from './importers';
-import { serialize, serializeCompressed, exportMidi, SerializeOptions, MidiExportOptions } from './exporters';
+import { parse, parseCompressed, isCompressed, parseAbc } from './importers';
+import { serialize, serializeCompressed, exportMidi, serializeAbc, SerializeOptions, MidiExportOptions } from './exporters';
 import type { Score } from './types';
 
 /**
@@ -10,6 +10,14 @@ import type { Score } from './types';
  * @returns The parsed Score
  */
 export async function parseFile(filePath: string): Promise<Score> {
+  const lowerPath = filePath.toLowerCase();
+
+  // ABC notation format
+  if (lowerPath.endsWith('.abc')) {
+    const data = await readFile(filePath, 'utf-8');
+    return parseAbc(data);
+  }
+
   const data = await readFile(filePath);
 
   // Check if it's a compressed file
@@ -60,6 +68,7 @@ export interface ExportOptions extends SerializeOptions, MidiExportOptions { }
  * - .mxl: Compressed MusicXML
  * - .xml/.musicxml: Uncompressed MusicXML
  * - .mid/.midi: Standard MIDI File
+ * - .abc: ABC notation
  * @param score - The Score to serialize
  * @param filePath - Path to write the file
  * @param options - Serialization options
@@ -71,7 +80,10 @@ export async function serializeToFile(
 ): Promise<void> {
   const lowerPath = filePath.toLowerCase();
 
-  if (lowerPath.endsWith('.mxl')) {
+  if (lowerPath.endsWith('.abc')) {
+    const abcString = serializeAbc(score);
+    await writeFile(filePath, abcString, 'utf-8');
+  } else if (lowerPath.endsWith('.mxl')) {
     const data = serializeCompressed(score, options);
     await writeFile(filePath, data);
   } else if (lowerPath.endsWith('.mid') || lowerPath.endsWith('.midi')) {
