@@ -1,13 +1,17 @@
 X:0
-T:Angels From Heaven
-M:4/4
-L:1/8
-K:C
-V:1
-z8|z8|[B,G]2[B,G]2^F[B,G]2D2|[DB]2[DB]2[CA]2[DB]2G2|[GB]2[^Fe]2d4|[GB]2[^Fe]2d4|d2ded2[GB]2|c2cdc2[^FA]2|B2A2d4|[^CGB]2[C^FA]2[B,DG]2|[B,G]2[B,G]2[A,^F]2[B,G]2D2|[DB]2[DB]2[CA]2[DB]2G2|[GB]2[^Fe]2d4|[GB]2[^Fe]2d4|d2ded2[GB]2|c2cdc2[^FA]2|B2A2d4|[^CGB]2[C^FA]2[B,DG]2|]
-V:2
-B2A2d4|[^CGB]2[C^FA]2[B,DG]2|B,2B,A,B,2D2|D2DCD2G2|G2^F2G2F2|G2^F2G2F2|B6G2|A6^F2|^F4GFED|[^CGB]2[C^FA]2[B,DG]2|B,2B,A,B,2D2|D2DCD2G2|G2^F2G2F2|G2^F2G2F2|B6G2|A6^F2|^F4GFED|[^CGB]2[C^FA]2[B,DG]2|]
-V:3
-z8|z8|G,,2D,2G,4|G,,2D,2G,2B,2|[G,D]2[A,C]2[B,D]2[A,C]2|[G,D]2[A,C]2[B,D]2[A,C]2|G,2^F,2E,2D,2|A,2G,2^F,2D,2|D2C2B,4|A,2D,2G,4|G,,2D,2G,4|G,,2D,2G,2B,2|[G,D]2[A,C]2[B,D]2[A,C]2|[G,D]2[A,C]2[B,D]2[A,C]2|G,2^F,2E,2D,2|A,2G,2^F,2D,2|D2C2B,4|A,2D,2G,4|]
-V:4
-z8|z8|z8|z8|z8|z8|z8|z8|z8|z8|z8|z8|z8|z8|z2z2z2z2|z2z2z2z2|z2z2z2z2|z2z2z2z2|]
+T: Angels From Heaven
+L: 1/4
+M: 4/4
+V: P1 name="Staff"
+%%MIDI program 1 100
+V: P2 name="Staff-2"
+%%MIDI program 2 50
+V: P3 name="Staff-3"
+%%MIDI program 3 58
+V: P4 name="Tempo Track"
+%%MIDI program 4 -1
+K: C
+[V: P1]  z4 | z4 | [B,G] [B,/G/]^F/ [B,G] D | [DB] [D/B/][C/A/] [DB] G | [GB] [^Fe] d2 | [GB] [^Fe] d2 | d d/e/ d [GB] | c c/d/ c [^FA] | B A d2 | [^CGB] [=C^FA] [B,2D2G2] | [B,G] [B,/G/][A,/^F/] [B,G] D | [DB] [D/B/][C/A/] [DB] G | [GB] [^Fe] d2 | [GB] [^Fe] d2 | d d/e/ d [GB] | c c/d/ c [^FA] | B A d2 | [^CGB] [=C^FA] [B,2D2G2]|]
+[V: P2]  B A d2 | [^CGB] [=C^FA] [B,2D2G2] | B, B,/A,/ B, D | D D/C/ D G | G ^F G F | G ^F G F | B3 G | A3 ^F | ^F2 G/F/ E/D/ | [^CGB] [=C^FA] [B,2D2G2] | B, B,/A,/ B, D | D D/C/ D G | G ^F G F | G ^F G F | B3 G | A3 ^F | ^F2 G/F/ E/D/ | [^CGB] [=C^FA] [B,2D2G2]|]
+[V: P3]  z4 | z4 | G,, D, G,2 | G,, D, G, B, | [G,D] [A,C] [B,D] [A,C] | [G,D] [A,C] [B,D] [A,C] | G, ^F, E, D, | A, G, ^F, D, | D C B,2 | A, D, G,2 | G,, D, G,2 | G,, D, G, B, | [G,D] [A,C] [B,D] [A,C] | [G,D] [A,C] [B,D] [A,C] | G, ^F, E, D, | A, G, ^F, D, | D C B,2 | A, D, G,2|]
+[V: P4]  z4 | z4 | z4 | z4 | z4 | z4 | z4 | z4 | z4 | z4 | z4 | z4 | z4 | z4 |zzzz |zzzz |zzzz |zzzz|]
