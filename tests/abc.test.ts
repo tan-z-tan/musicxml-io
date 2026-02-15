@@ -798,8 +798,8 @@ describe('User-provided ABC samples', () => {
       const abc = readFixture('piano.abc');
       const score = parseAbc(abc);
       const out = serializeAbc(score);
-      expect(out).toContain('V:1');
-      expect(out).toContain('V:2');
+      expect(out).toContain('V:V1');
+      expect(out).toContain('V:V2');
       expect(out).toContain('&');
     });
   });
