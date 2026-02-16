@@ -526,9 +526,13 @@ function serializePartBody(
     }
 
     // Insert line break after measure if this is a line break position
-    // lineBreaks stores 1-indexed measure counts (number of measures from start)
-    if (lineBreaks.includes(mi + 1) && mi < part.measures.length - 1) {
-      musicParts.push('\n');
+    // lineBreaks stores 1-indexed measure counts; negative values are line continuations (\)
+    if (mi < part.measures.length - 1) {
+      if (lineBreaks.includes(mi + 1)) {
+        musicParts.push('\n');
+      } else if (lineBreaks.includes(-(mi + 1))) {
+        musicParts.push('\\\n');
+      }
     }
   }
 
@@ -543,7 +547,8 @@ function serializePartBody(
 
   // Group lyrics by line break positions
   // Each "line" spans from one line break to the next
-  const lineBreakSet = new Set(lineBreaks);
+  // lineBreaks can have negative values (line continuations), use absolute values for grouping
+  const lineBreakSet = new Set(lineBreaks.map(v => Math.abs(v)));
   const lyricsByLine: { startMeasure: number; endMeasure: number; syllables: string[] }[] = [];
   let lineStart = 0;
   for (let mi = 0; mi < part.measures.length; mi++) {
@@ -895,6 +900,11 @@ function serializeNote(
 
 
 function serializeBarline(barline: Barline): string {
+  // Check for stored ABC barline text (for non-standard barlines)
+  if ((barline as any).abcBarlineText) {
+    return (barline as any).abcBarlineText;
+  }
+
   const hasRepeatForward = barline.repeat?.direction === 'forward';
   const hasRepeatBackward = barline.repeat?.direction === 'backward';
   const hasEnding = barline.ending;

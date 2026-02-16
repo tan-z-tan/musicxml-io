@@ -400,27 +400,24 @@ function tokenizeBody(bodyLines: string[]): { tokens: AbcToken[][]; voiceIds: st
   const voiceTokens: Map<string, AbcToken[]> = new Map();
   let currentVoice = '1';
   voiceTokens.set(currentVoice, []);
+  let isContinuation = false; // true if previous line ended with \
 
-  // Join lines with line continuation (\)
-  const joinedLines: string[] = [];
-  let accumulated = '';
   for (const rawLine of bodyLines) {
-    const trimmed = rawLine.trimEnd();
-    if (trimmed.endsWith('\\')) {
-      accumulated += trimmed.slice(0, -1);
-    } else {
-      joinedLines.push(accumulated + rawLine);
-      accumulated = '';
+    const trimmedEnd = rawLine.trimEnd();
+    const hasLineContinuation = trimmedEnd.endsWith('\\');
+    // Remove trailing backslash if present
+    const lineContent = hasLineContinuation ? trimmedEnd.slice(0, -1) : rawLine;
+    const line = lineContent.trim();
+    if (line === '' || line.startsWith('%')) {
+      isContinuation = false;
+      continue;
     }
-  }
-  if (accumulated) joinedLines.push(accumulated);
-
-  for (const rawLine of joinedLines) {
-    const line = rawLine.trim();
-    if (line === '' || line.startsWith('%')) continue;
 
     // Skip directive lines (%%...)
-    if (line.startsWith('%%')) continue;
+    if (line.startsWith('%%')) {
+      isContinuation = false;
+      continue;
+    }
 
     // Check for voice change (standalone V: line)
     const voiceMatch = line.match(/^V:\s*(\S+)/);
@@ -429,6 +426,7 @@ function tokenizeBody(bodyLines: string[]): { tokens: AbcToken[][]; voiceIds: st
       if (!voiceTokens.has(currentVoice)) {
         voiceTokens.set(currentVoice, []);
       }
+      isContinuation = false;
       continue;
     }
 
@@ -441,6 +439,7 @@ function tokenizeBody(bodyLines: string[]): { tokens: AbcToken[][]; voiceIds: st
         value: lyricsMatch[1],
         syllables,
       });
+      isContinuation = false;
       continue;
     }
 
@@ -457,27 +456,30 @@ function tokenizeBody(bodyLines: string[]): { tokens: AbcToken[][]; voiceIds: st
       currentTokens.push({ type: 'inline_field', value: `K:${bodyKeyMatch[1]}` });
       // Add a line_break after K: so the next music line starts on a new line
       currentTokens.push({ type: 'line_break', value: '\n' });
+      isContinuation = false;
       continue;
     }
 
     // Skip other header-like fields in body (but not inline fields starting with [)
     if (/^[A-Za-z]:\s*/.test(line) && !/^\[/.test(line)) {
+      isContinuation = false;
       continue;
     }
 
     // Tokenize music line
-    const tokens = tokenizeMusicLine(line);
+    const tokens = tokenizeMusicLine(lineContent);
 
-    // Add a line_break token before this music line's tokens
+    // Add a line_break or line_continuation token before this music line's tokens
     // (if this voice already has tokens from a previous line)
     const currentTokens = voiceTokens.get(currentVoice)!;
-    if (currentTokens.length > 0) {
+    if (currentTokens.length > 0 && !isContinuation) {
       // Check if previous token is not already a line_break
       const lastToken = currentTokens[currentTokens.length - 1];
       if (lastToken.type !== 'line_break') {
         currentTokens.push({ type: 'line_break', value: '\n' });
       }
     }
+    // If this is a continuation from a previous line, don't add a line_break
 
     // Process tokens, handling inline voice changes
     for (const token of tokens) {
@@ -492,6 +494,14 @@ function tokenizeBody(bodyLines: string[]): { tokens: AbcToken[][]; voiceIds: st
         }
       }
       voiceTokens.get(currentVoice)!.push(token);
+    }
+
+    // If this line ends with \, mark continuation and add a line_continuation token
+    if (hasLineContinuation) {
+      voiceTokens.get(currentVoice)!.push({ type: 'line_break', value: '\\\n' });
+      isContinuation = true;
+    } else {
+      isContinuation = false;
     }
   }
 
@@ -730,6 +740,7 @@ function parseBarLine(line: string, i: number): { token: AbcToken; nextIndex: nu
     [':||:', 'double-repeat'],
     ['::',   'double-repeat'],
     [':|:',  'double-repeat'],
+    ['|>|',  'thick-thin'],
     ['|:',   'start-repeat'],
     [':|',   'end-repeat'],
     ['||',   'double'],
@@ -1484,7 +1495,12 @@ function buildMeasures(
       case 'line_break':
         // Record line break position: after the last finalized measure
         if (measures.length > 0) {
-          lineBreaks.push(measures.length);
+          if (token.value === '\\\n') {
+            // Line continuation: store as negative to distinguish from regular breaks
+            lineBreaks.push(-(measures.length));
+          } else {
+            lineBreaks.push(measures.length);
+          }
         }
         pendingSpace = false;
         break;
@@ -1712,6 +1728,10 @@ function createBarline(barType: string, location: 'left' | 'right', endingNumber
       break;
     case 'heavy-light':
       barline.barStyle = 'heavy-light';
+      break;
+    case 'thick-thin':
+      barline.barStyle = 'heavy-light';
+      (barline as any).abcBarlineText = '|>|';
       break;
     default:
       return null; // regular barlines don't need explicit representation
