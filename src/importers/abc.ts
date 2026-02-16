@@ -65,26 +65,26 @@ interface AbcVoice {
 
 interface AbcToken {
   type:
-    | 'note'
-    | 'rest'
-    | 'bar'
-    | 'chord_start'
-    | 'chord_end'
-    | 'chord_symbol'
-    | 'tie'
-    | 'slur_start'
-    | 'slur_end'
-    | 'grace_start'
-    | 'grace_end'
-    | 'tuplet'
-    | 'decoration'
-    | 'voice'
-    | 'inline_field'
-    | 'ending'
-    | 'space'
-    | 'line_break'
-    | 'lyrics'
-    | 'overlay';
+  | 'note'
+  | 'rest'
+  | 'bar'
+  | 'chord_start'
+  | 'chord_end'
+  | 'chord_symbol'
+  | 'tie'
+  | 'slur_start'
+  | 'slur_end'
+  | 'grace_start'
+  | 'grace_end'
+  | 'tuplet'
+  | 'decoration'
+  | 'voice'
+  | 'inline_field'
+  | 'ending'
+  | 'space'
+  | 'line_break'
+  | 'lyrics'
+  | 'overlay';
   value: string;
   // Note-specific
   pitch?: Pitch;
@@ -458,7 +458,7 @@ function durationToNoteType(duration: number): { noteType: NoteType; dots: numbe
 // Tokenizer
 // ============================================================
 
-function tokenizeBody(bodyLines: string[]): { tokens: AbcToken[][]; voiceIds: string[]; inlineVoiceMarkers: Map<string, string>; voiceDeclarationLines: string[]; bodyComments: string[]; bodyDirectives: string[]; wFields: string[]; voiceInterleavePattern: string[][]; groupBarCounts: number[][]; voiceComments: Record<string, Array<{barIndex: number; comment: string}>>; preVoiceComments: string[][] } {
+function tokenizeBody(bodyLines: string[]): { tokens: AbcToken[][]; voiceIds: string[]; inlineVoiceMarkers: Map<string, string>; voiceDeclarationLines: string[]; bodyComments: string[]; bodyDirectives: string[]; wFields: string[]; voiceInterleavePattern: string[][]; groupBarCounts: number[][]; voiceComments: Record<string, Array<{ barIndex: number; comment: string }>>; preVoiceComments: string[][] } {
   const voiceTokens: Map<string, AbcToken[]> = new Map();
   let currentVoice = '1';
   voiceTokens.set(currentVoice, []);
@@ -480,7 +480,7 @@ function tokenizeBody(bodyLines: string[]): { tokens: AbcToken[][]; voiceIds: st
   // Per-voice bar counts (independent of group tracking)
   const voiceBarCounts: Map<string, number> = new Map();
   // Within-voice comments with their position (barIndex)
-  const voiceCommentsMap: Map<string, Array<{barIndex: number; comment: string}>> = new Map();
+  const voiceCommentsMap: Map<string, Array<{ barIndex: number; comment: string }>> = new Map();
   // Pre-voice comments: comments that appear before each V: declaration line
   const preVoiceComments: string[][] = [];
   // Deferred comments: accumulated until we know if they're within-voice or between-group
@@ -693,7 +693,7 @@ function tokenizeBody(bodyLines: string[]): { tokens: AbcToken[][]; voiceIds: st
   }
 
   // Convert voiceCommentsMap to a plain object keyed by voice ID
-  const voiceComments: Record<string, Array<{barIndex: number; comment: string}>> = {};
+  const voiceComments: Record<string, Array<{ barIndex: number; comment: string }>> = {};
   for (const [voiceId, comments] of voiceCommentsMap) {
     voiceComments[voiceId] = comments;
   }
@@ -865,8 +865,8 @@ function tokenizeMusicLine(line: string): AbcToken[] {
       // Treat as decoration if followed by a note, chord, rest, another decoration,
       // slur start, !...! decoration, or chord symbol
       if (isNoteStart(nextCh) || nextCh === '[' || nextCh === 'z' || nextCh === 'x' ||
-          nextCh === 'v' || nextCh === 'u' || nextCh === 'T' || nextCh === 'M' ||
-          nextCh === '(' || nextCh === '!' || nextCh === '"') {
+        nextCh === 'v' || nextCh === 'u' || nextCh === 'T' || nextCh === 'M' ||
+        nextCh === '(' || nextCh === '!' || nextCh === '"') {
         tokens.push({ type: 'decoration', value: ch });
         i++;
         continue;
@@ -936,15 +936,15 @@ function parseBarLine(line: string, i: number): { token: AbcToken; nextIndex: nu
   const patterns: [string, string][] = [
     [':|]', 'end-repeat-final'],
     [':||:', 'double-repeat'],
-    ['::',   'double-repeat'],
-    [':|:',  'double-repeat'],
-    ['|>|',  'thick-thin'],
-    ['|:',   'start-repeat'],
-    [':|',   'end-repeat'],
-    ['||',   'double'],
-    ['|]',   'final'],
-    ['[|',   'heavy-light'],
-    ['|',    'regular'],
+    ['::', 'double-repeat'],
+    [':|:', 'double-repeat'],
+    ['|>|', 'thick-thin'],
+    ['|:', 'start-repeat'],
+    [':|', 'end-repeat'],
+    ['||', 'double'],
+    ['|]', 'final'],
+    ['[|', 'heavy-light'],
+    ['|', 'regular'],
   ];
 
   for (const [pat, type] of patterns) {
@@ -1101,7 +1101,7 @@ function parseDuration(line: string, i: number): { num: number; den: number; nex
 // Score Builder
 // ============================================================
 
-function buildScore(header: AbcHeader, voiceTokensList: AbcToken[][], voiceIds: string[], headerFieldOrder: string[], inlineVoiceMarkers: Map<string, string> = new Map(), voiceDeclarationLines: string[] = [], bodyComments: string[] = [], bodyDirectives: string[] = [], wFields: string[] = [], voiceInterleavePattern: string[][] = [], groupBarCounts: number[][] = [], voiceComments: Record<string, Array<{barIndex: number; comment: string}>> = {}, preVoiceComments: string[][] = []): Score {
+function buildScore(header: AbcHeader, voiceTokensList: AbcToken[][], voiceIds: string[], headerFieldOrder: string[], inlineVoiceMarkers: Map<string, string> = new Map(), voiceDeclarationLines: string[] = [], bodyComments: string[] = [], bodyDirectives: string[] = [], wFields: string[] = [], voiceInterleavePattern: string[][] = [], groupBarCounts: number[][] = [], voiceComments: Record<string, Array<{ barIndex: number; comment: string }>> = {}, preVoiceComments: string[][] = []): Score {
   const unitNote = parseUnitNoteLength(header.unitNoteLength, header.meter);
   const timeSignature = parseTimeSignature(header.meter || '4/4');
   const keySignature = parseKeySignature(header.key || 'C');
@@ -1349,8 +1349,6 @@ function buildMeasures(
   let slurStartNotes: NoteEntry[] = [];
   let inGrace = false;
   let tupletState: { p: number; q: number; remaining: number } | null = null;
-  let pendingChordSymbol: string | null = null;
-  let pendingDynamic: string | null = null;
   // Queue to preserve original order of dynamics, decorations, and chord symbols
   const pendingPreNoteItems: Array<{ kind: 'dynamic' | 'harmony' | 'decoration'; value: string }> = [];
   let pendingEndingNumber: string | null = null;
@@ -1382,8 +1380,6 @@ function buildMeasures(
       }
     }
     pendingPreNoteItems.length = 0;
-    pendingChordSymbol = null;
-    pendingDynamic = null;
   }
 
   function finalizeMeasure(endBarType?: string) {
@@ -1549,8 +1545,6 @@ function buildMeasures(
             }
           }
           pendingPreNoteItems.length = 0;
-          pendingChordSymbol = null;
-          pendingDynamic = null;
 
           // Use duration from the chord_end token (parsed after ']')
           // Falls back to 1/1 (default unit note length)
@@ -1561,7 +1555,7 @@ function buildMeasures(
           // If so, use individual durations instead of chord-level duration
           const hasIndividualDurations = chordNotes.some(
             cn => (cn.durationNum !== undefined && cn.durationNum !== 1) ||
-                  (cn.durationDen !== undefined && cn.durationDen !== 1)
+              (cn.durationDen !== undefined && cn.durationDen !== 1)
           );
           const useIndividualDurations = hasIndividualDurations && chordDurNum === 1 && chordDurDen === 1;
           if (useIndividualDurations) hasIndividualChordDurations = true;
@@ -1717,13 +1711,11 @@ function buildMeasures(
         break;
 
       case 'chord_symbol':
-        pendingChordSymbol = token.value;
         pendingPreNoteItems.push({ kind: 'harmony', value: token.value });
         break;
 
       case 'decoration':
         if (DYNAMICS_VALUES.has(token.value)) {
-          pendingDynamic = token.value;
           pendingPreNoteItems.push({ kind: 'dynamic', value: token.value });
         } else {
           // Non-dynamic decorations: store as direction with words for round-trip
@@ -1896,8 +1888,8 @@ function applyTieStops(measures: Measure[]) {
       for (let j = i + 1; j < allNotes.length; j++) {
         const next = allNotes[j];
         if (next.pitch &&
-            next.pitch.step === note.pitch.step &&
-            next.pitch.octave === note.pitch.octave) {
+          next.pitch.step === note.pitch.step &&
+          next.pitch.octave === note.pitch.octave) {
           // Check if this note already has a tie start (e.g., from chord per-note ties)
           if (next.tie?.type === 'start') {
             // Note is both a tie stop and tie start (continue)
