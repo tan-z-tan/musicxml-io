@@ -773,8 +773,6 @@ function serializeMeasureEntries(
           }
         }
 
-        const spacePrefix = '';
-
         // Handle tuplet prefix - detect tuplet group start from timeModification
         let tupletPrefix = '';
         if (note.timeModification && !note.chord && !note.grace && tupletRemaining <= 0) {
@@ -844,11 +842,11 @@ function serializeMeasureEntries(
               }
             }
           }
-          parts.push(spacePrefix + tupletPrefix + chordSlurStart);
+          parts.push(tupletPrefix + chordSlurStart);
           break;
         }
 
-        parts.push(spacePrefix + tupletPrefix + effectiveSerialized.full);
+        parts.push(tupletPrefix + effectiveSerialized.full);
         break;
       }
 

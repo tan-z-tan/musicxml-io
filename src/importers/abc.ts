@@ -32,6 +32,7 @@ import type {
   TimeSignature,
   Barline,
   Clef,
+  DynamicsValue,
 } from '../types';
 import { generateId } from '../id';
 
@@ -97,6 +98,8 @@ interface AbcToken {
   tupletR?: number;
   // Lyrics
   syllables?: string[];
+  // Accidental
+  explicitNatural?: boolean;
 }
 
 // ============================================================
@@ -866,9 +869,8 @@ function parseNoteToken(line: string, i: number): { token: AbcToken; nextIndex: 
     accidental: accidental !== 0 || explicitNatural ? accidental : undefined,
   };
 
-  // Mark explicit natural for round-trip
   if (explicitNatural) {
-    (token as any).explicitNatural = true;
+    token.explicitNatural = true;
   }
 
   return {
@@ -1130,8 +1132,6 @@ function buildMeasures(
   let inChord = false;
   let chordNotes: AbcToken[] = [];
   let currentUnitNote = { ...unitNote };
-  let pendingSpace = false;
-  let pendingChordSpace = false;
   let pendingTupletStart = false;
   let pendingKeyChange: string | null = null;
   const lineBreaks: number[] = []; // measure numbers after which line breaks occur
@@ -1195,10 +1195,6 @@ function buildMeasures(
 
         const entry = createNoteEntry(token, currentUnitNote, pendingTie, inGrace, tupletState);
         pendingTie = false;
-
-        if (pendingSpace) {
-          pendingSpace = false;
-        }
 
         if (pendingTupletStart && !inGrace) {
           pendingTupletStart = false;
@@ -1278,11 +1274,6 @@ function buildMeasures(
         if (inChord) break;
         const restEntry = createRestEntry(token, currentUnitNote, tupletState, measureDuration);
 
-        // Mark space before this rest
-        if (pendingSpace) {
-          pendingSpace = false;
-        }
-
         // Handle dynamics
         if (pendingDynamic) {
           const dynDir = createDynamicsDirection(pendingDynamic);
@@ -1305,8 +1296,6 @@ function buildMeasures(
       case 'chord_start':
         inChord = true;
         chordNotes = [];
-        pendingChordSpace = pendingSpace;
-        pendingSpace = false;
         break;
 
       case 'chord_end': {
@@ -1357,10 +1346,6 @@ function buildMeasures(
             chordToken.durationDen = originalDen;
 
             if (ci === 0) {
-              // Mark space before chord
-              if (pendingChordSpace) {
-                pendingChordSpace = false;
-              }
               // Handle slur start on first note of chord
               while (pendingSlurStarts > 0) {
                 if (!entry.notations) entry.notations = [];
@@ -1384,7 +1369,6 @@ function buildMeasures(
 
       case 'bar': {
         const barType = token.barType || 'regular';
-        pendingSpace = false;
 
         if (barType === 'double-repeat') {
           finalizeMeasure('end-repeat');
@@ -1529,7 +1513,6 @@ function buildMeasures(
       }
 
       case 'space':
-        pendingSpace = true;
         break;
 
       case 'line_break':
@@ -1542,7 +1525,6 @@ function buildMeasures(
             lineBreaks.push(measures.length);
           }
         }
-        pendingSpace = false;
         break;
 
       default:
@@ -1695,7 +1677,7 @@ function createNoteEntry(
   }
 
   // Set accidental info for MusicXML compatibility
-  if ((token as any).explicitNatural) {
+  if (token.explicitNatural) {
     entry.accidental = { value: 'natural' };
   } else if (token.accidental !== undefined && token.accidental !== 0) {
     switch (token.accidental) {
@@ -1849,7 +1831,7 @@ function createDynamicsDirection(dynamic: string): DirectionEntry | null {
     type: 'direction',
     directionTypes: [{
       kind: 'dynamics',
-      value: dynamic as any,
+      value: dynamic as DynamicsValue,
     }],
     placement: 'below',
   };
