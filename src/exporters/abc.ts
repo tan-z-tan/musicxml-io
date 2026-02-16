@@ -383,6 +383,41 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
       lines.push(`C:${composer.value}`);
     }
 
+    // Extra header fields mapped to proper Score fields
+    // R: rhythm
+    const rhythmFields = score.metadata.miscellaneous?.filter(m => m.name === 'abc-R');
+    if (rhythmFields) {
+      for (const rf of rhythmFields) lines.push(`R:${rf.value}`);
+    }
+    // O: origin (from creator type='origin')
+    const originCreators = score.metadata.creators?.filter(c => c.type === 'origin');
+    if (originCreators) {
+      for (const oc of originCreators) lines.push(`O:${oc.value}`);
+    }
+    // S: source
+    if (score.metadata.source) {
+      lines.push(`S:${score.metadata.source}`);
+    }
+    // N: notes
+    const noteFields = score.metadata.miscellaneous?.filter(m => m.name === 'abc-N');
+    if (noteFields) {
+      for (const nf of noteFields) lines.push(`N:${nf.value}`);
+    }
+    // Z: transcription (from encoding.encoder)
+    if (score.metadata.encoding?.encoder) {
+      for (const enc of score.metadata.encoding.encoder) lines.push(`Z:${enc}`);
+    }
+    // I: instruction
+    const instrFields = score.metadata.miscellaneous?.filter(m => m.name === 'abc-I');
+    if (instrFields) {
+      for (const inf of instrFields) lines.push(`I:${inf.value}`);
+    }
+    // F: file URL
+    const fileFields = score.metadata.miscellaneous?.filter(m => m.name === 'abc-F');
+    if (fileFields) {
+      for (const ff of fileFields) lines.push(`F:${ff.value}`);
+    }
+
     if (attrs?.time) {
       lines.push(`M:${serializeTimeSignature(attrs.time)}`);
     }
@@ -500,8 +535,22 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
       const rightBarline = measure.barlines?.find(b => b.location === 'right');
       if (rightBarline) {
         measureStr += serializeBarline(rightBarline);
+      } else if (mi < part.measures.length - 1) {
+        // Don't add default | if the next measure has a left barline with barStyle or repeat
+        // (the left barline serves as both the right of this measure and left of next)
+        const nextMeasure = part.measures[mi + 1];
+        const nextLeftBarline = nextMeasure?.barlines?.find(b => b.location === 'left' && (b.barStyle || b.repeat));
+        if (!nextLeftBarline) {
+          measureStr += '|';
+        }
       } else {
-        measureStr += '|';
+        // Last measure: skip trailing | only if previous measure had a final barline (|])
+        const prevMeas = mi > 0 ? part.measures[mi - 1] : null;
+        const prevRightBl = prevMeas?.barlines?.find(b => b.location === 'right');
+        const prevWasFinal = prevRightBl?.barStyle === 'light-heavy' && !prevRightBl.repeat;
+        if (!prevWasFinal) {
+          measureStr += '|';
+        }
       }
 
       measStrings.push(measureStr);
@@ -538,19 +587,25 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
         if (partIdx === undefined) continue;
         const measStrings = partMeasureStrings[partIdx];
 
-        // Output pre-voice comments (comments before V: declaration)
-        if (voiceDeclIdx < preVoiceComments.length) {
-          for (const c of preVoiceComments[voiceDeclIdx]) {
-            lines.push(c);
-          }
-        }
+        // Find the body V: line for this voice ID
+        const bodyVoiceLineIdx = bodyVoiceLines.findIndex((l, idx) => {
+          const m = l.match(/^V:\s*(\S+)/);
+          return m && m[1] === voiceId && idx >= voiceDeclIdx;
+        });
 
-        // Output V: line (use full definition line if available, or body voice line)
-        if (voiceDeclIdx < bodyVoiceLines.length) {
-          lines.push(bodyVoiceLines[voiceDeclIdx]);
-          voiceDeclIdx++;
+        if (bodyVoiceLineIdx >= 0) {
+          // Output pre-voice comments for this declaration
+          if (bodyVoiceLineIdx < preVoiceComments.length) {
+            for (const c of preVoiceComments[bodyVoiceLineIdx]) {
+              lines.push(c);
+            }
+          }
+          lines.push(bodyVoiceLines[bodyVoiceLineIdx]);
+          voiceDeclIdx = bodyVoiceLineIdx + 1;
+        } else if (voiceFullLines[voiceId]) {
+          // Voice declared in header only (no body V: line) - don't output V: line
+          // (it was already output in the header section)
         } else {
-          voiceDeclIdx++;
           // Fallback: construct V: line
           let voiceLine = `V:${voiceId}`;
           const partClef = score.parts[partIdx]?.measures[0]?.attributes?.clef?.[0];
@@ -661,6 +716,13 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
     lines.push(wField);
   }
 
+  // Output trailing comments
+  const trailingCommentsStr = score.metadata.miscellaneous?.find(m => m.name === 'abc-trailing-comments')?.value;
+  const trailingComments: string[] = trailingCommentsStr ? JSON.parse(trailingCommentsStr) : [];
+  for (const comment of trailingComments) {
+    lines.push(comment);
+  }
+
   return lines.join('\n') + '\n';
 }
 
@@ -753,9 +815,21 @@ function serializePartBody(
     if (rightBarline) {
       musicParts.push(serializeBarline(rightBarline));
     } else if (mi < part.measures.length - 1) {
-      musicParts.push('|');
+      // Don't add default | if the next measure has a left barline with barStyle or repeat
+      // (the left barline serves as both the right of this measure and left of next)
+      const nextMeas = part.measures[mi + 1];
+      const nextLeftBar = nextMeas?.barlines?.find(b => b.location === 'left' && (b.barStyle || b.repeat));
+      if (!nextLeftBar) {
+        musicParts.push('|');
+      }
     } else {
-      musicParts.push('|');
+      // Last measure: skip trailing | only if previous measure had a final barline (|])
+      const prevMeas = mi > 0 ? part.measures[mi - 1] : null;
+      const prevRightBl = prevMeas?.barlines?.find(b => b.location === 'right');
+      const prevWasFinal = prevRightBl?.barStyle === 'light-heavy' && !prevRightBl.repeat;
+      if (!prevWasFinal) {
+        musicParts.push('|');
+      }
     }
 
     // Insert line break after measure if this is a line break position
@@ -1102,6 +1176,34 @@ function serializeMeasureEntries(
           }
         }
 
+        // Detect broken rhythm: check if this note and the next note form a > or < pair
+        // Broken rhythm: A>B means A is dotted (3/2), B is halved (1/2) of their common base
+        const brokenResult = detectBrokenRhythm(measure.entries, ei, note, divisions, currentUnitNote);
+        if (brokenResult && !note.chord && !note.grace && !note.timeModification) {
+          // Re-serialize this note with its base duration
+          const baseDurStr1 = formatAbcDuration(brokenResult.baseFrac.num, brokenResult.baseFrac.den);
+          const pitchStr1 = effectiveSerialized.pitch;
+          const tie1 = effectiveSerialized.tieStr;
+          const slurS1 = effectiveSerialized.slurStart;
+          const slurE1 = effectiveSerialized.slurEnd;
+          parts.push(tupletPrefix + slurS1 + pitchStr1 + baseDurStr1 + tie1 + brokenResult.marker);
+
+          // Serialize the second note with its base duration
+          const note2 = brokenResult.nextNote;
+          const pitchStr2 = serializePitch(note2.pitch!, note2.accidental?.value === 'natural');
+          let tieStr2 = '';
+          if (note2.tie?.type === 'start' || note2.ties?.some(t => t.type === 'start')) tieStr2 = '-';
+          let slurEnd2 = '';
+          if (note2.notations) {
+            for (const notation of note2.notations) {
+              if (notation.type === 'slur' && notation.slurType === 'stop') slurEnd2 += ')';
+            }
+          }
+          parts.push(pitchStr2 + baseDurStr1 + tieStr2 + slurEnd2 + slurE1);
+          ei = brokenResult.nextIndex; // Skip the second note
+          break;
+        }
+
         parts.push(tupletPrefix + effectiveSerialized.full);
         break;
       }
@@ -1185,6 +1287,83 @@ function serializeMeasureEntries(
   // Return updated unit note if it changed (from inline [L:] fields)
   const unitNoteChanged = currentUnitNote.num !== unitNote.num || currentUnitNote.den !== unitNote.den;
   return { noteStr: parts.join(''), lyrics, updatedUnitNote: unitNoteChanged ? currentUnitNote : undefined };
+}
+
+/**
+ * Detect if two consecutive notes form a broken rhythm pair.
+ * Broken rhythm: A>B means first note gets 3/2 of base, second gets 1/2.
+ * Returns null if not a broken rhythm pattern.
+ */
+function detectBrokenRhythm(
+  entries: Measure['entries'],
+  currentIdx: number,
+  currentNote: NoteEntry,
+  divisions: number,
+  unitNote: UnitNote,
+): { marker: string; nextNote: NoteEntry; nextIndex: number; baseFrac: { num: number; den: number } } | null {
+  // Skip if current note is a chord member, grace note, rest, or in a tuplet
+  if (currentNote.chord || currentNote.grace || currentNote.rest || currentNote.timeModification) return null;
+
+  // Find the next pitched note (skip directions, harmonies, etc.)
+  let nextIdx = currentIdx + 1;
+  // Skip chord members after current note
+  while (nextIdx < entries.length && entries[nextIdx].type === 'note' && (entries[nextIdx] as NoteEntry).chord) {
+    nextIdx++;
+  }
+  // Skip non-note entries (directions, harmonies)
+  while (nextIdx < entries.length && entries[nextIdx].type !== 'note') {
+    nextIdx++;
+  }
+
+  if (nextIdx >= entries.length) return null;
+  const nextEntry = entries[nextIdx];
+  if (nextEntry.type !== 'note') return null;
+  const nextNote = nextEntry as NoteEntry;
+
+  // Skip if next note is a chord member, grace, rest, or tuplet
+  if (nextNote.chord || nextNote.grace || nextNote.rest || nextNote.timeModification) return null;
+
+  const d1 = currentNote.duration;
+  const d2 = nextNote.duration;
+  if (d1 <= 0 || d2 <= 0) return null;
+
+  // Check for > pattern: d1:d2 = 3:1, base = (d1+d2)/2
+  // Check for >> pattern: d1:d2 = 7:1, base = (d1+d2)/2
+  // Check for < pattern: d1:d2 = 1:3, base = (d1+d2)/2
+  // Check for << pattern: d1:d2 = 1:7, base = (d1+d2)/2
+  const sum = d1 + d2;
+  if (sum % 2 !== 0) return null;
+  const base = sum / 2;
+
+  // Verify base duration produces a clean ABC fraction
+  const baseFrac = durationToAbcFraction(base, divisions, unitNote);
+  // Reject if the fraction is too complex (not a simple duration)
+  if (baseFrac.den > 16 || baseFrac.num > 16) return null;
+
+  // Only use broken rhythm when at least one note has a fractional duration.
+  // This prevents converting explicit integer durations like D3F to D2>F2.
+  const frac1 = durationToAbcFraction(d1, divisions, unitNote);
+  const frac2 = durationToAbcFraction(d2, divisions, unitNote);
+  if (frac1.den === 1 && frac2.den === 1) return null;
+
+  let marker: string | null = null;
+  if (d1 * 1 === d2 * 3) {
+    // d1:d2 = 3:1 → >
+    marker = '>';
+  } else if (d1 * 3 === d2 * 1) {
+    // d1:d2 = 1:3 → <
+    marker = '<';
+  } else if (d1 * 1 === d2 * 7) {
+    // d1:d2 = 7:1 → >>
+    marker = '>>';
+  } else if (d1 * 7 === d2 * 1) {
+    // d1:d2 = 1:7 → <<
+    marker = '<<';
+  }
+
+  if (!marker) return null;
+
+  return { marker, nextNote, nextIndex: nextIdx, baseFrac };
 }
 
 /**
@@ -1328,7 +1507,13 @@ function serializeBarline(barline: Barline): string {
 
   // Add ending marker after barline
   if (hasEnding && hasEnding.type === 'start') {
-    result += `[${hasEnding.number} `;
+    if (result) {
+      // Barline already present (e.g., ||, |, |:, :|) - just append number
+      result += hasEnding.number;
+    } else {
+      // Standalone ending (no barline) - use bracket notation [1
+      result += `[${hasEnding.number} `;
+    }
   }
 
   return result;

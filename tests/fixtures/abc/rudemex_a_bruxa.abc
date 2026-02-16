@@ -1,0 +1,22 @@
+%Rude Mechanicals tune library: www.rudemex.co.uk
+%Chords and arrangements by the Rude Mechanicals unless otherwise acknowledged
+X:1
+T: A Bruxa
+C: Anton Seoane
+M:3/4     %Meter
+L:1/8     %
+K:Am
+%%score [1|2]
+V:1 gchord=down
+X"Am"ec BA Bc |e2 c2 Ad |"Dm"cB F2 c2 |"E"B6 |
+"Am"ec BA Bc |e2 c2 Ad |"Dm"cB F2 B2 ||1"Am"A6 :|2A6 ||
+|:"Am"AB c2 d2 |"C"e6 |"Dm"fe d2 a2 ||1"Am"e6 :|2"E"e6 ||
+|:"G"gf ed ef |"Am"e2 c2 A2 |"C"ed cB cd |"F"c2 A2 F2 |
+"Dm"dc BA Bc |"G"B2 F2 E2 |"E"FE F2 ^G2 ||1"Am"A2 c2 e2 :|2"Am"A6 |]
+V:2
+XA2 DF GA |cB A2 E2 |A2 D4 |E2 ^G3 d |
+cA E2 DE/D/ |C3/2B,/ A,4 |D3 G3 ||DE A,2 CE :|FE DC A,B, ||
+|:CD EG BG |c3 G E2 |D2 FE FG ||A2 C2 A,2 :|^G2 B2 dc ||
+|:BA GF GA-|Ac BA GF |GF ED EF-|FE DC A,C |
+A,3/2D/- DF GA |G3 D CA, |B,2 B,C DB, ||CA, CE Ac :|C2A,4 |]
+     %End of file

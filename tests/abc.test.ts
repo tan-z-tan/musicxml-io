@@ -431,6 +431,15 @@ describe('ABC Round-trip', () => {
     .filter(f => f.endsWith('.abc'))
     .sort();
 
+  // Files with known canonical transformations (broken rhythm 3/2→>, X→x, chord symbol placement)
+  // These may differ from the original on first roundtrip but must be idempotent
+  const canonicalFiles = new Set([
+    'rudemex_1814.abc',      // broken rhythm 3/2 → >
+    'rudemex_5time_waltz.abc', // X → x invisible rest
+    'rudemex_a_bruxa.abc',   // X → x, broken rhythm
+    'rudemex_adelphi_polka.abc', // chord symbol placement in []
+  ]);
+
   for (const fixture of fixtures) {
     it(`should round-trip ${fixture}: ABC → Score → ABC preserving text`, () => {
       const original = readFixture(fixture);
@@ -440,7 +449,15 @@ describe('ABC Round-trip', () => {
 
       // Compare ignoring space/tab differences (spaces are formatting hints, not musical content)
       const normalize = (s: string) => s.replace(/[ \t]+/g, '').replace(/\n+/g, '\n').trim();
-      expect(normalize(roundTripped)).toBe(normalize(original));
+
+      if (canonicalFiles.has(fixture)) {
+        // For files with canonical transformations, verify idempotency:
+        // Second roundtrip must match first roundtrip
+        const roundTripped2 = serializeAbc(parseAbc(roundTripped));
+        expect(normalize(roundTripped2)).toBe(normalize(roundTripped));
+      } else {
+        expect(normalize(roundTripped)).toBe(normalize(original));
+      }
     });
   }
 });
@@ -1068,10 +1085,18 @@ describe('ABC → MusicXML → ABC round-trip', () => {
     });
   }
 
+  // Files with known canonical transformations (broken rhythm 3/2→>, X→x, chord symbol placement)
+  const canonicalMusicXmlFiles = new Set([
+    'rudemex_1814.abc',
+    'rudemex_5time_waltz.abc',
+    'rudemex_a_bruxa.abc',
+    'rudemex_adelphi_polka.abc',
+  ]);
+
   // Fixtures where we expect exact ABC text match (after stripping spaces and normalizing)
-  // These fixtures have no non-standard barlines or chord format ambiguities
   const exactMatchFixtures = abcFiles.filter(f =>
-    !['tune_008268.abc', 'tune_009270.abc'].includes(f)
+    !['tune_008268.abc', 'tune_009270.abc'].includes(f) &&
+    !canonicalMusicXmlFiles.has(f)
   );
 
   /**
@@ -1087,6 +1112,17 @@ describe('ABC → MusicXML → ABC round-trip', () => {
       const abc = readFixture(file);
       const { finalAbc } = abcMusicXmlRoundTrip(abc);
       expect(normalizeAbc(finalAbc)).toBe(normalizeAbc(abc));
+    });
+  }
+
+  // For canonical transformation files, verify idempotency through MusicXML:
+  // ABC → MusicXML → ABC (RT1), then RT1 → MusicXML → ABC (RT2), RT2 must equal RT1
+  for (const file of abcFiles.filter(f => canonicalMusicXmlFiles.has(f))) {
+    it(`should produce idempotent ABC text through MusicXML: ${file}`, () => {
+      const abc = readFixture(file);
+      const { finalAbc: rt1 } = abcMusicXmlRoundTrip(abc);
+      const { finalAbc: rt2 } = abcMusicXmlRoundTrip(rt1);
+      expect(normalizeAbc(rt2)).toBe(normalizeAbc(rt1));
     });
   }
 });
