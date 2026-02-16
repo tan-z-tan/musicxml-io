@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
-import { parse } from '../src';
-import { serialize } from '../src';
+import { parse, parseCompressed, serialize, serializeCompressed } from '../src';
+import { decodeBuffer } from '../src/file';
 
 const fixturesPath = join(__dirname, 'fixtures');
 
@@ -14,7 +14,11 @@ function getAllFixtures(dir: string): string[] {
     const fullPath = join(dir, entry.name);
     if (entry.isDirectory()) {
       files.push(...getAllFixtures(fullPath));
-    } else if (entry.name.endsWith('.xml')) {
+    } else if (
+      entry.name.endsWith('.xml') ||
+      entry.name.endsWith('.musicxml') ||
+      entry.name.endsWith('.mxl')
+    ) {
       files.push(fullPath);
     }
   }
@@ -27,12 +31,24 @@ describe('Round-trip', () => {
 
   for (const file of fixtures) {
     const relativePath = file.replace(fixturesPath + '/', '');
+    const isCompressedFile = file.endsWith('.mxl');
 
     it(`should preserve ${relativePath}`, () => {
-      const original = readFileSync(file, 'utf-8');
-      const score = parse(original);
-      const exported = serialize(score);
-      const reparsed = parse(exported);
+      let score;
+      let reparsed;
+
+      if (isCompressedFile) {
+        const data = readFileSync(file);
+        score = parseCompressed(new Uint8Array(data));
+        const exported = serializeCompressed(score);
+        reparsed = parseCompressed(exported);
+      } else {
+        const buffer = readFileSync(file);
+        const original = decodeBuffer(buffer);
+        score = parse(original);
+        const exported = serialize(score);
+        reparsed = parse(exported);
+      }
 
       // Compare structure
       expect(reparsed.metadata.workTitle).toEqual(score.metadata.workTitle);
