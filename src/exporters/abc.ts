@@ -39,6 +39,10 @@ export interface AbcSerializeOptions {
 
 const DIVISIONS_PER_QUARTER = 960;
 
+// Module-level flag: whether to use explicit /2 form instead of shorthand /
+let useExplicitHalf = false;
+let useIndividualChordDurations = false;
+
 /** Map KeySignature fifths to ABC key note */
 const FIFTHS_TO_KEY_MAJOR: Record<number, string> = {
   [-7]: 'Cb', [-6]: 'Gb', [-5]: 'Db', [-4]: 'Ab', [-3]: 'Eb', [-2]: 'Bb', [-1]: 'F',
@@ -191,7 +195,7 @@ function formatAbcDuration(num: number, den: number): string {
   if (num === 1 && den === 1) return '';
   if (den === 1) return String(num);
   if (num === 1) {
-    if (den === 2) return '/';
+    if (den === 2 && !useExplicitHalf) return '/';
     return `/${den}`;
   }
   return `${num}/${den}`;
@@ -328,6 +332,12 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
     includeLyrics: options?.includeLyrics ?? true,
   };
 
+  // Set module-level flag for explicit /2 duration format
+  useExplicitHalf = score.metadata.miscellaneous?.find(m => m.name === 'abc-explicit-half')?.value === 'true';
+
+  // Set module-level flag for individual chord durations
+  useIndividualChordDurations = score.metadata.miscellaneous?.some(m => m.name === 'abc-chord-individual-durations' && m.value === 'true') ?? false;
+
   // Use stored unit note length if available, otherwise compute
   const storedUnitNote = score.metadata.miscellaneous?.find(m => m.name === 'abc-unit-note-length')?.value;
   let unitNote: UnitNote;
@@ -441,6 +451,10 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
   const bodyVoiceLines: string[] = bodyVoiceLinesStr ? JSON.parse(bodyVoiceLinesStr) : [];
   const voiceFullLinesStr = score.metadata.miscellaneous?.find(m => m.name === 'abc-voice-full-lines')?.value;
   const voiceFullLines: Record<string, string> = voiceFullLinesStr ? JSON.parse(voiceFullLinesStr) : {};
+  const voiceCommentsStr = score.metadata.miscellaneous?.find(m => m.name === 'abc-voice-comments')?.value;
+  const voiceCommentsData: Record<string, Array<{barIndex: number; comment: string}>> = voiceCommentsStr ? JSON.parse(voiceCommentsStr) : {};
+  const preVoiceCommentsStr = score.metadata.miscellaneous?.find(m => m.name === 'abc-pre-voice-comments')?.value;
+  const preVoiceComments: string[][] = preVoiceCommentsStr ? JSON.parse(preVoiceCommentsStr) : [];
 
   // Body
   const multiVoice = score.parts.length > 1;
@@ -501,7 +515,6 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
   if (hasInterleave && !useInlineVoiceMarkers) {
     // Output interleaved voices using the stored pattern
     // Each voice group specifies which voices appear in sequence before a comment separator
-    // We need to track how many measures each voice has output so far
     const voiceMeasureCursor: Record<string, number> = {};
     for (const voiceId of storedVoiceIds) {
       voiceMeasureCursor[voiceId] = 0;
@@ -513,19 +526,8 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
       voiceIdToPartIdx[storedVoiceIds[i]] = i;
     }
 
-    // Determine line breaks per voice for within-group formatting
-    // lineBreaks stores 1-indexed measure counts; we need to distribute them across groups
-    const lineBreakSet = new Set(lineBreaks.map(v => Math.abs(v)));
-    const lineContinuationSet = new Set(lineBreaks.filter(v => v < 0).map(v => Math.abs(v)));
-
     // Track V: declaration line index for round-trip
     let voiceDeclIdx = 0;
-
-    // Group counter per voice (to know which chunk of measures to output)
-    const voiceGroupCounter: Record<string, number> = {};
-    for (const voiceId of storedVoiceIds) {
-      voiceGroupCounter[voiceId] = 0;
-    }
 
     let commentIdx = 0;
     for (let gi = 0; gi < voiceInterleavePattern.length; gi++) {
@@ -536,11 +538,19 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
         if (partIdx === undefined) continue;
         const measStrings = partMeasureStrings[partIdx];
 
+        // Output pre-voice comments (comments before V: declaration)
+        if (voiceDeclIdx < preVoiceComments.length) {
+          for (const c of preVoiceComments[voiceDeclIdx]) {
+            lines.push(c);
+          }
+        }
+
         // Output V: line (use full definition line if available, or body voice line)
         if (voiceDeclIdx < bodyVoiceLines.length) {
           lines.push(bodyVoiceLines[voiceDeclIdx]);
           voiceDeclIdx++;
         } else {
+          voiceDeclIdx++;
           // Fallback: construct V: line
           let voiceLine = `V:${voiceId}`;
           const partClef = score.parts[partIdx]?.measures[0]?.attributes?.clef?.[0];
@@ -554,10 +564,8 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
         }
 
         // Output measures for this voice in this group
-        // Use stored bar counts to determine how many measures this voice has in this group
         const voiceIdxInGroup = group.indexOf(voiceId);
         const barCount = groupBarCounts[gi]?.[voiceIdxInGroup] ?? 0;
-        // Bar count = number of barlines = number of measures in most cases
         const measuresInGroup = barCount > 0 ? barCount : Math.ceil((partMeasureStrings[0]?.length || 0) / voiceInterleavePattern.length);
         const startMeasure = voiceMeasureCursor[voiceId] || 0;
         const endMeasure = Math.min(startMeasure + measuresInGroup, measStrings.length);
@@ -568,8 +576,17 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
         const voiceLineBreakSet = new Set(voiceLineBreaks.map(v => Math.abs(v)));
         const voiceLineContinuationSet = new Set(voiceLineBreaks.filter(v => v < 0).map(v => Math.abs(v)));
 
+        // Get within-voice comments for this voice
+        const thisVoiceComments = voiceCommentsData[voiceId] || [];
+
         let groupMusic = '';
         for (let mi = startMeasure; mi < endMeasure; mi++) {
+          // Check for within-voice comments before this measure
+          for (const vc of thisVoiceComments) {
+            if (vc.barIndex === mi) {
+              groupMusic += vc.comment + '\n';
+            }
+          }
           groupMusic += measStrings[mi];
           // Insert line breaks
           if (mi < endMeasure - 1) {
@@ -997,6 +1014,9 @@ function serializeMeasureEntries(
             full: slurStart + pitchStr + baseDurationStr + tieStr + slurEnd,
             pitch: pitchStr,
             duration: baseDurationStr,
+            slurStart,
+            slurEnd,
+            tieStr,
           };
         }
 
@@ -1036,8 +1056,50 @@ function serializeMeasureEntries(
               }
             }
           }
+          // Handle slur/decoration ordering for chords too
+          if (chordSlurStart) {
+            let insertIdx = parts.length;
+            for (let pi = parts.length - 1; pi >= 0; pi--) {
+              const p = parts[pi];
+              if (/^[vuTM]$/.test(p) || /^![^!]+!$/.test(p) || /^"[^"]*"$/.test(p)) {
+                insertIdx = pi;
+              } else {
+                break;
+              }
+            }
+            if (insertIdx < parts.length) {
+              parts.splice(insertIdx, 0, chordSlurStart);
+              parts.push(tupletPrefix);
+              break;
+            }
+          }
           parts.push(tupletPrefix + chordSlurStart);
           break;
+        }
+
+        // Handle slur/decoration ordering: if this note has slur start and
+        // preceding parts are decorations/dynamics, the slur ( should go before them
+        // e.g. ABC "(vfg)" means slur-start, decoration v, note f - not "v(fg)"
+        // e.g. ABC "(!mf!vd=e)" means slur-start, dynamic, decoration, note
+        if (effectiveSerialized.slurStart) {
+          // Find where to insert slur start (before trailing decorations/dynamics)
+          let insertIdx = parts.length;
+          for (let pi = parts.length - 1; pi >= 0; pi--) {
+            const p = parts[pi];
+            if (/^[vuTM]$/.test(p) || /^![^!]+!$/.test(p) || /^"[^"]*"$/.test(p)) {
+              insertIdx = pi;
+            } else {
+              break;
+            }
+          }
+          if (insertIdx < parts.length) {
+            // Insert slur start before decorations
+            parts.splice(insertIdx, 0, effectiveSerialized.slurStart);
+            // Push note without slur start
+            const noteOnly = effectiveSerialized.pitch + effectiveSerialized.duration + effectiveSerialized.tieStr + effectiveSerialized.slurEnd;
+            parts.push(tupletPrefix + noteOnly);
+            break;
+          }
         }
 
         parts.push(tupletPrefix + effectiveSerialized.full);
@@ -1052,10 +1114,21 @@ function serializeMeasureEntries(
       }
 
       case 'direction': {
-        // Check for [L:...] or !decoration! in words direction types
+        // Check for special ABC markers in words direction types
         let handledAsSpecial = false;
         for (const dt of entry.directionTypes) {
           if (dt.kind === 'words') {
+            // Intra-measure line break/continuation markers
+            if (dt.text === '__abc_line_cont__') {
+              parts.push('\\\n');
+              handledAsSpecial = true;
+              break;
+            }
+            if (dt.text === '__abc_line_break__') {
+              parts.push('\n');
+              handledAsSpecial = true;
+              break;
+            }
             const lMatch = dt.text.match(/^\[L:\s*(\d+)\/(\d+)\]$/);
             if (lMatch) {
               parts.push(dt.text);
@@ -1142,15 +1215,19 @@ function detectChordPerNoteTies(entries: Measure['entries'], startIdx: number): 
 
 /**
  * Detect if a chord starting at entry index `startIdx` has individually different durations.
- * Returns true if the notes in the chord have differing durations.
+ * Returns true if the notes in the chord have differing durations,
+ * or if the score-level flag indicates individual chord durations should be used.
  */
 function detectChordIndividualDurations(entries: Measure['entries'], startIdx: number): boolean {
   // The first note is at startIdx, subsequent chord notes have chord=true
   const firstNote = entries[startIdx];
   if (firstNote.type !== 'note') return false;
 
-  // Check for explicit flag from ABC importer
+  // Check for explicit flag from ABC importer (direct ABC→ABC roundtrip)
   if ((firstNote as any)._abcIndividualChordDurations) return true;
+
+  // Check module-level flag from score metadata (survives MusicXML roundtrip)
+  if (useIndividualChordDurations) return true;
 
   const baseDuration = firstNote.duration;
   for (let i = startIdx + 1; i < entries.length; i++) {
@@ -1165,6 +1242,9 @@ interface SerializedNote {
   full: string;
   pitch: string;
   duration: string;
+  slurStart: string;
+  slurEnd: string;
+  tieStr: string;
 }
 
 function serializeNote(
@@ -1219,7 +1299,7 @@ function serializeNote(
   }
 
   const full = slurStart + pitchStr + durationStr + tieStr + slurEnd;
-  return { full, pitch: pitchStr, duration: durationStr };
+  return { full, pitch: pitchStr, duration: durationStr, slurStart, slurEnd, tieStr };
 }
 
 

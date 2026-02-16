@@ -458,15 +458,15 @@ function durationToNoteType(duration: number): { noteType: NoteType; dots: numbe
 // Tokenizer
 // ============================================================
 
-function tokenizeBody(bodyLines: string[]): { tokens: AbcToken[][]; voiceIds: string[]; inlineVoiceMarkers: Map<string, string>; voiceDeclarationLines: string[]; bodyComments: string[]; bodyDirectives: string[]; wFields: string[]; voiceInterleavePattern: string[][]; groupBarCounts: number[][] } {
+function tokenizeBody(bodyLines: string[]): { tokens: AbcToken[][]; voiceIds: string[]; inlineVoiceMarkers: Map<string, string>; voiceDeclarationLines: string[]; bodyComments: string[]; bodyDirectives: string[]; wFields: string[]; voiceInterleavePattern: string[][]; groupBarCounts: number[][]; voiceComments: Record<string, Array<{barIndex: number; comment: string}>>; preVoiceComments: string[][] } {
   const voiceTokens: Map<string, AbcToken[]> = new Map();
   let currentVoice = '1';
   voiceTokens.set(currentVoice, []);
   let isContinuation = false; // true if previous line ended with \
   const inlineVoiceMarkers: Map<string, string> = new Map(); // voiceId -> original [V:...] text
   const voiceDeclarationLines: string[] = []; // standalone V: lines in body for round-trip
-  const bodyComments: string[] = []; // comment lines in body for round-trip
-  const bodyDirectives: string[] = []; // %% directives in body for round-trip
+  const bodyComments: string[] = []; // comment lines between voice groups for round-trip
+  const bodyDirectives: string[] = []; // real %% directives in body for round-trip
   const wFields: string[] = []; // W: fields (end-of-tune words) for round-trip
   // Track voice interleaving: each element is a group of voice IDs that appear together
   // before a separator (comment line, blank line, etc.)
@@ -477,6 +477,26 @@ function tokenizeBody(bodyLines: string[]): { tokens: AbcToken[][]; voiceIds: st
   const groupBarCounts: number[][] = []; // groupBarCounts[groupIdx][voiceInGroupIdx] = number of bars
   let currentGroupBarCounts: number[] = [];
   let currentVoiceBarCount = 0;
+  // Per-voice bar counts (independent of group tracking)
+  const voiceBarCounts: Map<string, number> = new Map();
+  // Within-voice comments with their position (barIndex)
+  const voiceCommentsMap: Map<string, Array<{barIndex: number; comment: string}>> = new Map();
+  // Pre-voice comments: comments that appear before each V: declaration line
+  const preVoiceComments: string[][] = [];
+  // Deferred comments: accumulated until we know if they're within-voice or between-group
+  let pendingComments: string[] = [];
+
+  function flushPendingToVoice(voiceId: string) {
+    if (pendingComments.length === 0) return;
+    if (!voiceCommentsMap.has(voiceId)) {
+      voiceCommentsMap.set(voiceId, []);
+    }
+    const barCount = voiceBarCounts.get(voiceId) || 0;
+    for (const comment of pendingComments) {
+      voiceCommentsMap.get(voiceId)!.push({ barIndex: barCount, comment });
+    }
+    pendingComments = [];
+  }
 
   for (const rawLine of bodyLines) {
     const trimmedEnd = rawLine.trimEnd();
@@ -498,13 +518,32 @@ function tokenizeBody(bodyLines: string[]): { tokens: AbcToken[][]; voiceIds: st
       continue;
     }
 
-    // Comment lines (% but not %%)
-    if (line.startsWith('%') && !line.startsWith('%%')) {
-      bodyComments.push(rawLine);
-      // A comment line acts as a separator between voice groups
-      if (currentGroup.length > 0) {
-        // Save bar count for last voice in group
-        if (currentGroup.length > 0) {
+    // Classify % lines: real directives (%%keyword) vs comments (everything else starting with %)
+    const isRealDirective = line.startsWith('%%') && /^%%[A-Za-z]/.test(line);
+    const isComment = line.startsWith('%') && !isRealDirective;
+
+    if (isComment) {
+      // Defer: don't decide yet if this is within-voice or between-group
+      pendingComments.push(rawLine);
+      isContinuation = false;
+      continue;
+    }
+
+    if (isRealDirective) {
+      bodyDirectives.push(rawLine);
+      isContinuation = false;
+      continue;
+    }
+
+    // Check for voice change (standalone V: line)
+    const voiceMatch = line.match(/^V:\s*(\S+)/);
+    if (voiceMatch) {
+      const newVoice = voiceMatch[1];
+
+      // Detect group boundary: voice repeating in current group
+      if (currentGroup.includes(newVoice)) {
+        // Close current group
+        if (lastVoiceInGroup !== null) {
           currentGroupBarCounts.push(currentVoiceBarCount);
           currentVoiceBarCount = 0;
         }
@@ -513,28 +552,19 @@ function tokenizeBody(bodyLines: string[]): { tokens: AbcToken[][]; voiceIds: st
         voiceInterleavePattern.push(currentGroup);
         currentGroup = [];
         lastVoiceInGroup = null;
+        // Pending comments are between-group separators
+        for (const c of pendingComments) {
+          bodyComments.push(c);
+        }
+        pendingComments = [];
       }
-      isContinuation = false;
-      continue;
-    }
+      // else: not a group boundary - pending comments are pre-voice comments below
 
-    // Directive lines (%%) - embed in voice token stream for round-trip
-    if (line.startsWith('%%')) {
-      bodyDirectives.push(rawLine);
-      // Also add as inline_field token in current voice stream for position preservation
-      const currentTokens = voiceTokens.get(currentVoice);
-      if (currentTokens) {
-        currentTokens.push({ type: 'line_break', value: '\n' });
-        currentTokens.push({ type: 'inline_field', value: `%%:${rawLine}` });
-      }
-      isContinuation = false;
-      continue;
-    }
+      // Store pre-voice comments for this V: declaration
+      preVoiceComments.push([...pendingComments]);
+      pendingComments = [];
 
-    // Check for voice change (standalone V: line)
-    const voiceMatch = line.match(/^V:\s*(\S+)/);
-    if (voiceMatch) {
-      currentVoice = voiceMatch[1];
+      currentVoice = newVoice;
       if (!voiceTokens.has(currentVoice)) {
         voiceTokens.set(currentVoice, []);
       }
@@ -589,6 +619,9 @@ function tokenizeBody(bodyLines: string[]): { tokens: AbcToken[][]; voiceIds: st
       continue;
     }
 
+    // Flush pending comments to current voice before processing music
+    flushPendingToVoice(currentVoice);
+
     // Tokenize music line
     const tokens = tokenizeMusicLine(lineContent);
 
@@ -622,9 +655,11 @@ function tokenizeBody(bodyLines: string[]): { tokens: AbcToken[][]; voiceIds: st
         }
       }
       voiceTokens.get(currentVoice)!.push(token);
-      // Count bar tokens for voice interleave tracking
+      // Count bar tokens for voice interleave tracking (group-level)
       if (token.type === 'bar') {
         currentVoiceBarCount++;
+        // Also track per-voice bar counts (global, not per-group)
+        voiceBarCounts.set(currentVoice, (voiceBarCounts.get(currentVoice) || 0) + 1);
       }
     }
 
@@ -647,6 +682,9 @@ function tokenizeBody(bodyLines: string[]): { tokens: AbcToken[][]; voiceIds: st
     }
   }
 
+  // Flush any remaining pending comments to the last voice
+  flushPendingToVoice(currentVoice);
+
   // Finalize last interleave group
   if (currentGroup.length > 0) {
     currentGroupBarCounts.push(currentVoiceBarCount);
@@ -654,7 +692,13 @@ function tokenizeBody(bodyLines: string[]): { tokens: AbcToken[][]; voiceIds: st
     voiceInterleavePattern.push(currentGroup);
   }
 
-  return { tokens: result.length > 0 ? result : [[]], voiceIds, inlineVoiceMarkers, voiceDeclarationLines, bodyComments, bodyDirectives, wFields, voiceInterleavePattern, groupBarCounts };
+  // Convert voiceCommentsMap to a plain object keyed by voice ID
+  const voiceComments: Record<string, Array<{barIndex: number; comment: string}>> = {};
+  for (const [voiceId, comments] of voiceCommentsMap) {
+    voiceComments[voiceId] = comments;
+  }
+
+  return { tokens: result.length > 0 ? result : [[]], voiceIds, inlineVoiceMarkers, voiceDeclarationLines, bodyComments, bodyDirectives, wFields, voiceInterleavePattern, groupBarCounts, voiceComments, preVoiceComments };
 }
 
 function parseLyricLine(text: string): string[] {
@@ -815,11 +859,14 @@ function tokenizeMusicLine(line: string): AbcToken[] {
     }
 
     // ABC shorthand decorations: v (down-bow), u (up-bow), T (trill), M (mordent)
-    // These appear as standalone characters before a note
+    // These appear as standalone characters before a note (or another decoration)
     if ((ch === 'v' || ch === 'u' || ch === 'T' || ch === 'M') && i + 1 < line.length) {
       const nextCh = line[i + 1];
-      // Only treat as decoration if next character starts a note/chord/accidental
-      if (isNoteStart(nextCh) || nextCh === '[' || nextCh === 'z' || nextCh === 'x') {
+      // Treat as decoration if followed by a note, chord, rest, another decoration,
+      // slur start, !...! decoration, or chord symbol
+      if (isNoteStart(nextCh) || nextCh === '[' || nextCh === 'z' || nextCh === 'x' ||
+          nextCh === 'v' || nextCh === 'u' || nextCh === 'T' || nextCh === 'M' ||
+          nextCh === '(' || nextCh === '!' || nextCh === '"') {
         tokens.push({ type: 'decoration', value: ch });
         i++;
         continue;
@@ -1054,7 +1101,7 @@ function parseDuration(line: string, i: number): { num: number; den: number; nex
 // Score Builder
 // ============================================================
 
-function buildScore(header: AbcHeader, voiceTokensList: AbcToken[][], voiceIds: string[], headerFieldOrder: string[], inlineVoiceMarkers: Map<string, string> = new Map(), voiceDeclarationLines: string[] = [], bodyComments: string[] = [], bodyDirectives: string[] = [], wFields: string[] = [], voiceInterleavePattern: string[][] = [], groupBarCounts: number[][] = []): Score {
+function buildScore(header: AbcHeader, voiceTokensList: AbcToken[][], voiceIds: string[], headerFieldOrder: string[], inlineVoiceMarkers: Map<string, string> = new Map(), voiceDeclarationLines: string[] = [], bodyComments: string[] = [], bodyDirectives: string[] = [], wFields: string[] = [], voiceInterleavePattern: string[][] = [], groupBarCounts: number[][] = [], voiceComments: Record<string, Array<{barIndex: number; comment: string}>> = {}, preVoiceComments: string[][] = []): Score {
   const unitNote = parseUnitNoteLength(header.unitNoteLength, header.meter);
   const timeSignature = parseTimeSignature(header.meter || '4/4');
   const keySignature = parseKeySignature(header.key || 'C');
@@ -1131,6 +1178,14 @@ function buildScore(header: AbcHeader, voiceTokensList: AbcToken[][], voiceIds: 
   if (groupBarCounts.length > 0) {
     miscellaneous.push({ name: 'abc-group-bar-counts', value: JSON.stringify(groupBarCounts) });
   }
+  // Store within-voice comments for round-trip
+  if (Object.keys(voiceComments).length > 0) {
+    miscellaneous.push({ name: 'abc-voice-comments', value: JSON.stringify(voiceComments) });
+  }
+  // Store pre-voice comments for round-trip
+  if (preVoiceComments.length > 0) {
+    miscellaneous.push({ name: 'abc-pre-voice-comments', value: JSON.stringify(preVoiceComments) });
+  }
   // Store full voice definition lines for round-trip
   const voiceFullLines: Record<string, string> = {};
   for (const voice of header.voices || []) {
@@ -1178,6 +1233,11 @@ function buildScore(header: AbcHeader, voiceTokensList: AbcToken[][], voiceIds: 
         miscellaneous.push({ name: 'abc-line-breaks', value: JSON.stringify(buildResult.lineBreaks) });
       }
       miscellaneous.push({ name: `abc-line-breaks-${voiceIndex}`, value: JSON.stringify(buildResult.lineBreaks) });
+    }
+
+    // Store chord individual durations flag
+    if (buildResult.hasIndividualChordDurations) {
+      miscellaneous.push({ name: 'abc-chord-individual-durations', value: 'true' });
     }
 
     // Detect lyrics layout and store syllable counts per w: line
@@ -1275,9 +1335,10 @@ function buildMeasures(
   timeSignature: TimeSignature,
   measureDuration: number,
   clef?: Clef,
-): { measures: Measure[]; lineBreaks: number[] } {
+): { measures: Measure[]; lineBreaks: number[]; hasIndividualChordDurations: boolean } {
   const measures: Measure[] = [];
   let currentEntries: MeasureEntry[] = [];
+  let hasIndividualChordDurations = false;
   let currentBarlines: Barline[] = [];
   let currentPosition = 0;
   let measureNumber = 1;
@@ -1290,6 +1351,8 @@ function buildMeasures(
   let tupletState: { p: number; q: number; remaining: number } | null = null;
   let pendingChordSymbol: string | null = null;
   let pendingDynamic: string | null = null;
+  // Queue to preserve original order of dynamics, decorations, and chord symbols
+  const pendingPreNoteItems: Array<{ kind: 'dynamic' | 'harmony' | 'decoration'; value: string }> = [];
   let pendingEndingNumber: string | null = null;
   let currentLyrics: string[] = [];
   let noteCountForLyrics = 0;
@@ -1300,6 +1363,28 @@ function buildMeasures(
   let pendingTupletStart = false;
   let pendingKeyChange: string | null = null;
   const lineBreaks: number[] = []; // measure numbers after which line breaks occur
+
+  function flushPendingPreNoteItems() {
+    for (const item of pendingPreNoteItems) {
+      if (item.kind === 'harmony') {
+        const harmony = createHarmonyEntry(item.value);
+        if (harmony) currentEntries.push(harmony);
+      } else if (item.kind === 'dynamic') {
+        const dynDir = createDynamicsDirection(item.value);
+        if (dynDir) currentEntries.push(dynDir);
+      } else if (item.kind === 'decoration') {
+        const decoDir: DirectionEntry = {
+          _id: generateId(),
+          type: 'direction',
+          directionTypes: [{ kind: 'words', text: item.value }],
+        };
+        currentEntries.push(decoDir);
+      }
+    }
+    pendingPreNoteItems.length = 0;
+    pendingChordSymbol = null;
+    pendingDynamic = null;
+  }
 
   function finalizeMeasure(endBarType?: string) {
     const measure: Measure = {
@@ -1365,19 +1450,8 @@ function buildMeasures(
           pendingTupletStart = false;
         }
 
-        // Handle chord symbol
-        if (pendingChordSymbol) {
-          const harmony = createHarmonyEntry(pendingChordSymbol);
-          if (harmony) currentEntries.push(harmony);
-          pendingChordSymbol = null;
-        }
-
-        // Handle dynamics
-        if (pendingDynamic) {
-          const dynDir = createDynamicsDirection(pendingDynamic);
-          if (dynDir) currentEntries.push(dynDir);
-          pendingDynamic = null;
-        }
+        // Handle chord symbol and dynamics in original order
+        flushPendingPreNoteItems();
 
         // Handle slur start: attach pending slur starts to this note
         while (pendingSlurStarts > 0) {
@@ -1439,12 +1513,8 @@ function buildMeasures(
         if (inChord) break;
         const restEntry = createRestEntry(token, currentUnitNote, tupletState, measureDuration);
 
-        // Handle dynamics
-        if (pendingDynamic) {
-          const dynDir = createDynamicsDirection(pendingDynamic);
-          if (dynDir) currentEntries.push(dynDir);
-          pendingDynamic = null;
-        }
+        // Handle chord symbol and dynamics in original order
+        flushPendingPreNoteItems();
 
         currentEntries.push(restEntry);
         currentPosition += restEntry.duration;
@@ -1468,19 +1538,19 @@ function buildMeasures(
         inChord = false;
 
         if (chordNotes.length > 0) {
-          // Handle chord symbol
-          if (pendingChordSymbol) {
-            const harmony = createHarmonyEntry(pendingChordSymbol);
-            if (harmony) currentEntries.push(harmony);
-            pendingChordSymbol = null;
+          // Handle chord symbol and dynamics in original order
+          for (const item of pendingPreNoteItems) {
+            if (item.kind === 'harmony') {
+              const harmony = createHarmonyEntry(item.value);
+              if (harmony) currentEntries.push(harmony);
+            } else if (item.kind === 'dynamic') {
+              const dynDir = createDynamicsDirection(item.value);
+              if (dynDir) currentEntries.push(dynDir);
+            }
           }
-
-          // Handle dynamics
-          if (pendingDynamic) {
-            const dynDir = createDynamicsDirection(pendingDynamic);
-            if (dynDir) currentEntries.push(dynDir);
-            pendingDynamic = null;
-          }
+          pendingPreNoteItems.length = 0;
+          pendingChordSymbol = null;
+          pendingDynamic = null;
 
           // Use duration from the chord_end token (parsed after ']')
           // Falls back to 1/1 (default unit note length)
@@ -1494,6 +1564,7 @@ function buildMeasures(
                   (cn.durationDen !== undefined && cn.durationDen !== 1)
           );
           const useIndividualDurations = hasIndividualDurations && chordDurNum === 1 && chordDurDen === 1;
+          if (useIndividualDurations) hasIndividualChordDurations = true;
 
           for (let ci = 0; ci < chordNotes.length; ci++) {
             const chordToken = chordNotes[ci];
@@ -1546,6 +1617,8 @@ function buildMeasures(
       }
 
       case 'bar': {
+        // Flush any pending items (e.g., chord symbols at end of measure)
+        flushPendingPreNoteItems();
         const barType = token.barType || 'regular';
 
         if (barType === 'double-repeat') {
@@ -1645,22 +1718,20 @@ function buildMeasures(
 
       case 'chord_symbol':
         pendingChordSymbol = token.value;
+        pendingPreNoteItems.push({ kind: 'harmony', value: token.value });
         break;
 
       case 'decoration':
         if (DYNAMICS_VALUES.has(token.value)) {
           pendingDynamic = token.value;
+          pendingPreNoteItems.push({ kind: 'dynamic', value: token.value });
         } else {
           // Non-dynamic decorations: store as direction with words for round-trip
           // Single-char shorthand decorations (v, u, T, M) are stored without !...!
           const isShorthand = token.value.length === 1 && /^[vuTM]$/.test(token.value);
           const decoText = isShorthand ? token.value : `!${token.value}!`;
-          const decoDir: DirectionEntry = {
-            _id: generateId(),
-            type: 'direction',
-            directionTypes: [{ kind: 'words', text: decoText }],
-          };
-          currentEntries.push(decoDir);
+          // Add to pending queue to preserve order relative to dynamics/harmonies
+          pendingPreNoteItems.push({ kind: 'decoration', value: decoText });
         }
         break;
 
@@ -1711,6 +1782,18 @@ function buildMeasures(
         break;
 
       case 'line_break':
+        // Flush pending items before recording line break position
+        flushPendingPreNoteItems();
+        // Store intra-measure line breaks as direction entries for round-trip
+        if (currentEntries.length > 0) {
+          const breakText = token.value === '\\\n' ? '__abc_line_cont__' : '__abc_line_break__';
+          const lineBreakDir: DirectionEntry = {
+            _id: generateId(),
+            type: 'direction',
+            directionTypes: [{ kind: 'words', text: breakText }],
+          };
+          currentEntries.push(lineBreakDir);
+        }
         // Record line break position: after the last finalized measure
         if (measures.length > 0) {
           if (token.value === '\\\n') {
@@ -1735,7 +1818,7 @@ function buildMeasures(
   // Handle tie stop on notes after tie start
   applyTieStops(measures);
 
-  return { measures, lineBreaks };
+  return { measures, lineBreaks, hasIndividualChordDurations };
 }
 
 function applyLyricsToExistingNotes(
@@ -2050,7 +2133,17 @@ export function parseAbc(abcString: string): Score {
   const lines = abcString.split('\n');
   const { header, bodyStartIndex, headerFieldOrder } = parseHeader(lines);
   const bodyLines = lines.slice(bodyStartIndex);
-  const { tokens: voiceTokensList, voiceIds, inlineVoiceMarkers, voiceDeclarationLines, bodyComments, bodyDirectives, wFields, voiceInterleavePattern, groupBarCounts } = tokenizeBody(bodyLines);
-  const score = buildScore(header, voiceTokensList, voiceIds, headerFieldOrder, inlineVoiceMarkers, voiceDeclarationLines, bodyComments, bodyDirectives, wFields, voiceInterleavePattern, groupBarCounts);
+  const { tokens: voiceTokensList, voiceIds, inlineVoiceMarkers, voiceDeclarationLines, bodyComments, bodyDirectives, wFields, voiceInterleavePattern, groupBarCounts, voiceComments, preVoiceComments } = tokenizeBody(bodyLines);
+  const score = buildScore(header, voiceTokensList, voiceIds, headerFieldOrder, inlineVoiceMarkers, voiceDeclarationLines, bodyComments, bodyDirectives, wFields, voiceInterleavePattern, groupBarCounts, voiceComments, preVoiceComments);
+
+  // Detect if the file uses explicit /2 duration form (e.g., "f/2") vs shorthand "f/"
+  // Check body text for pattern: note letter followed by /2 (explicit)
+  const bodyText = bodyLines.join('\n');
+  const hasExplicitHalf = /[A-Ga-gzx]\/2/.test(bodyText);
+  if (hasExplicitHalf) {
+    if (!score.metadata.miscellaneous) score.metadata.miscellaneous = [];
+    score.metadata.miscellaneous.push({ name: 'abc-explicit-half', value: 'true' });
+  }
+
   return score;
 }
