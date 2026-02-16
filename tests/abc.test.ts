@@ -438,8 +438,8 @@ describe('ABC Round-trip', () => {
       // ABC → Score → ABC
       const roundTripped = serializeAbc(parseAbc(original));
 
-      // Compare ignoring whitespace differences
-      const normalize = (s: string) => s.replace(/\s+/g, ' ').trim();
+      // Compare ignoring space/tab differences (spaces are formatting hints, not musical content)
+      const normalize = (s: string) => s.replace(/[ \t]+/g, '').replace(/\n+/g, '\n').trim();
       expect(normalize(roundTripped)).toBe(normalize(original));
     });
   }
@@ -953,4 +953,140 @@ describe('User-provided ABC samples', () => {
       expect(partMatches?.length).toBe(4);
     });
   });
+});
+
+// ============================================================
+// ABC → MusicXML → ABC Round-trip Tests (Phase 2)
+// ============================================================
+
+describe('ABC → MusicXML → ABC round-trip', () => {
+  /**
+   * Full round-trip: ABC → Score → MusicXML → Score → ABC
+   * Then re-parse the final ABC and compare musical content with the original Score.
+   */
+  function abcMusicXmlRoundTrip(abcText: string): { originalScore: ReturnType<typeof parseAbc>; finalAbc: string; finalScore: ReturnType<typeof parseAbc> } {
+    const score1 = parseAbc(abcText);
+    const xml = serialize(score1);
+    const score2 = parse(xml);
+    const abc2 = serializeAbc(score2);
+    const score3 = parseAbc(abc2);
+    return { originalScore: score1, finalAbc: abc2, finalScore: score3 };
+  }
+
+  /**
+   * Compare two scores for musical equivalence (not string equality).
+   * Checks: note count, pitches, durations, key signatures, time signatures.
+   */
+  function expectMusicallyEqual(
+    original: ReturnType<typeof parseAbc>,
+    final: ReturnType<typeof parseAbc>,
+    label: string,
+  ) {
+    expect(final.parts.length).toBe(original.parts.length);
+
+    for (let pi = 0; pi < original.parts.length; pi++) {
+      const oPart = original.parts[pi];
+      const fPart = final.parts[pi];
+
+      // Collect pitched notes (non-grace, non-chord second+ notes)
+      const oNotes = collectNotes(oPart);
+      const fNotes = collectNotes(fPart);
+
+      expect(fNotes.length).toBe(oNotes.length);
+
+      for (let ni = 0; ni < oNotes.length; ni++) {
+        const on = oNotes[ni];
+        const fn = fNotes[ni];
+
+        if (on.pitch && fn.pitch) {
+          expect(fn.pitch.step).toBe(on.pitch.step);
+          expect(fn.pitch.octave).toBe(on.pitch.octave);
+          expect(fn.pitch.alter ?? 0).toBe(on.pitch.alter ?? 0);
+        }
+        expect(fn.duration).toBe(on.duration);
+
+        // Compare rest status
+        expect(!!fn.rest).toBe(!!on.rest);
+
+        // Compare grace note status
+        expect(!!fn.grace).toBe(!!on.grace);
+
+        // Compare chord status
+        expect(!!fn.chord).toBe(!!on.chord);
+
+        // Compare tuplet status
+        if (on.timeModification) {
+          expect(fn.timeModification?.actualNotes).toBe(on.timeModification.actualNotes);
+          expect(fn.timeModification?.normalNotes).toBe(on.timeModification.normalNotes);
+        }
+
+        // Compare ties
+        if (on.tie?.type === 'start') {
+          expect(fn.tie?.type).toBe('start');
+        }
+      }
+
+      // Compare key signatures
+      const oKey = oPart.measures[0]?.attributes?.key;
+      const fKey = fPart.measures[0]?.attributes?.key;
+      if (oKey) {
+        expect(fKey?.fifths).toBe(oKey.fifths);
+      }
+
+      // Compare time signatures
+      const oTime = oPart.measures[0]?.attributes?.time;
+      const fTime = fPart.measures[0]?.attributes?.time;
+      if (oTime) {
+        expect(fTime?.beats).toBe(oTime.beats);
+        expect(fTime?.beatType).toBe(oTime.beatType);
+      }
+    }
+  }
+
+  type NoteEntryFromParse = Extract<ReturnType<typeof parseAbc>['parts'][0]['measures'][0]['entries'][0], { type: 'note' }>;
+
+  function collectNotes(part: ReturnType<typeof parseAbc>['parts'][0]): NoteEntryFromParse[] {
+    const notes: NoteEntryFromParse[] = [];
+    for (const measure of part.measures) {
+      for (const entry of measure.entries) {
+        if (entry.type === 'note') {
+          notes.push(entry as NoteEntryFromParse);
+        }
+      }
+    }
+    return notes;
+  }
+
+  // Get all ABC fixtures
+  const abcFiles = readdirSync(fixturesPath).filter(f => f.endsWith('.abc'));
+
+  for (const file of abcFiles) {
+    it(`should preserve musical content through MusicXML: ${file}`, () => {
+      const abc = readFixture(file);
+      const { originalScore, finalAbc, finalScore } = abcMusicXmlRoundTrip(abc);
+      expectMusicallyEqual(originalScore, finalScore, file);
+    });
+  }
+
+  // Fixtures where we expect exact ABC text match (after stripping spaces and normalizing)
+  // These fixtures have no non-standard barlines or chord format ambiguities
+  const exactMatchFixtures = abcFiles.filter(f =>
+    !['tune_008268.abc', 'tune_009270.abc'].includes(f)
+  );
+
+  /**
+   * Normalize ABC text for comparison: remove spaces (formatting hint only),
+   * collapse multiple newlines.
+   */
+  function normalizeAbc(text: string): string {
+    return text.replace(/[ \t]+/g, '').replace(/\n+/g, '\n').trim();
+  }
+
+  for (const file of exactMatchFixtures) {
+    it(`should produce matching ABC text through MusicXML: ${file}`, () => {
+      const abc = readFixture(file);
+      const { finalAbc } = abcMusicXmlRoundTrip(abc);
+      expect(normalizeAbc(finalAbc)).toBe(normalizeAbc(abc));
+    });
+  }
 });

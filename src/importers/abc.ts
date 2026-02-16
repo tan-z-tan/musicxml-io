@@ -1136,7 +1136,7 @@ function buildMeasures(
   let pendingKeyChange: string | null = null;
   const lineBreaks: number[] = []; // measure numbers after which line breaks occur
 
-  function finalizeMeasure(endBarType?: string, spaceBeforeBar?: boolean) {
+  function finalizeMeasure(endBarType?: string) {
     const measure: Measure = {
       _id: generateId(),
       number: String(measureNumber),
@@ -1156,7 +1156,6 @@ function buildMeasures(
 
     // Apply pending key change to this measure
     if (pendingKeyChange) {
-      (measure as any).abcKeyChange = pendingKeyChange;
       if (!measure.attributes) {
         measure.attributes = {};
       }
@@ -1165,20 +1164,12 @@ function buildMeasures(
       pendingKeyChange = null;
     }
 
-    // Store space before barline on the measure for regular barlines
-    if (spaceBeforeBar) {
-      (measure as any).abcSpaceBeforeBar = true;
-    }
-
     // Add barlines
     if (endBarType || currentBarlines.length > 0) {
       measure.barlines = [...currentBarlines];
       if (endBarType) {
         const barline = createBarline(endBarType, 'right', pendingEndingNumber);
         if (barline) {
-          if (spaceBeforeBar) {
-            (barline as any).abcSpaceBefore = true;
-          }
           measure.barlines.push(barline);
         }
         pendingEndingNumber = null;
@@ -1205,15 +1196,11 @@ function buildMeasures(
         const entry = createNoteEntry(token, currentUnitNote, pendingTie, inGrace, tupletState);
         pendingTie = false;
 
-        // Mark space before this note
         if (pendingSpace) {
-          (entry as any).abcSpaceBefore = true;
           pendingSpace = false;
         }
 
-        // Mark tuplet start
         if (pendingTupletStart && !inGrace) {
-          (entry as any).abcTupletStart = true;
           pendingTupletStart = false;
         }
 
@@ -1293,7 +1280,6 @@ function buildMeasures(
 
         // Mark space before this rest
         if (pendingSpace) {
-          (restEntry as any).abcSpaceBefore = true;
           pendingSpace = false;
         }
 
@@ -1366,11 +1352,6 @@ function buildMeasures(
 
             const entry = createNoteEntry(chordToken, currentUnitNote, false, inGrace, tupletState);
 
-            // Mark if this chord uses individual durations (for serializer)
-            if (useIndividualDurations) {
-              (entry as any).abcIndividualChordDuration = true;
-            }
-
             // Restore for any other processing
             chordToken.durationNum = originalNum;
             chordToken.durationDen = originalDen;
@@ -1378,7 +1359,6 @@ function buildMeasures(
             if (ci === 0) {
               // Mark space before chord
               if (pendingChordSpace) {
-                (entry as any).abcSpaceBefore = true;
                 pendingChordSpace = false;
               }
               // Handle slur start on first note of chord
@@ -1404,26 +1384,25 @@ function buildMeasures(
 
       case 'bar': {
         const barType = token.barType || 'regular';
-        const barSpaceBefore = pendingSpace;
         pendingSpace = false;
 
         if (barType === 'double-repeat') {
-          finalizeMeasure('end-repeat', barSpaceBefore);
+          finalizeMeasure('end-repeat');
           currentBarlines.push(createBarline('start-repeat', 'left', null)!);
         } else if (barType === 'end-repeat') {
-          finalizeMeasure('end-repeat', barSpaceBefore);
+          finalizeMeasure('end-repeat');
         } else if (barType === 'start-repeat') {
           if (currentEntries.length > 0) {
-            finalizeMeasure('regular', barSpaceBefore);
+            finalizeMeasure('regular');
           }
           currentBarlines.push(createBarline('start-repeat', 'left', null)!);
         } else if (barType === 'final') {
-          finalizeMeasure('final', barSpaceBefore);
+          finalizeMeasure('final');
         } else if (barType === 'end-repeat-final') {
-          finalizeMeasure('end-repeat', barSpaceBefore);
+          finalizeMeasure('end-repeat');
         } else {
           if (currentEntries.length > 0 || currentBarlines.length > 0) {
-            finalizeMeasure(barType !== 'regular' ? barType : undefined, barSpaceBefore);
+            finalizeMeasure(barType !== 'regular' ? barType : undefined);
           }
         }
         break;
@@ -1533,14 +1512,12 @@ function buildMeasures(
         const lMatch = token.value.match(/^L:\s*(\d+)\/(\d+)/);
         if (lMatch) {
           currentUnitNote = { num: parseInt(lMatch[1], 10), den: parseInt(lMatch[2], 10) };
-          // Store inline L: for round-trip as a direction entry
-          const inlineEntry: MeasureEntry = {
+          // Store inline L: as a direction with words, so it can survive MusicXML round-trip
+          const inlineEntry: DirectionEntry = {
             _id: generateId(),
             type: 'direction',
-            directionType: 'words',
-            words: '',
+            directionTypes: [{ kind: 'words', text: `[L:${lMatch[1]}/${lMatch[2]}]` }],
           };
-          (inlineEntry as any).abcInlineField = `[L:${lMatch[1]}/${lMatch[2]}]`;
           currentEntries.push(inlineEntry);
         }
         const kMatch = token.value.match(/^K:\s*(.*)/);
@@ -1717,9 +1694,16 @@ function createNoteEntry(
     };
   }
 
-  // Preserve explicit natural flag for round-trip
+  // Set accidental info for MusicXML compatibility
   if ((token as any).explicitNatural) {
-    (entry as any).abcExplicitNatural = true;
+    entry.accidental = { value: 'natural' };
+  } else if (token.accidental !== undefined && token.accidental !== 0) {
+    switch (token.accidental) {
+      case 1: entry.accidental = { value: 'sharp' }; break;
+      case 2: entry.accidental = { value: 'double-sharp' }; break;
+      case -1: entry.accidental = { value: 'flat' }; break;
+      case -2: entry.accidental = { value: 'double-flat' }; break;
+    }
   }
 
   return entry;
@@ -1794,7 +1778,6 @@ function createBarline(barType: string, location: 'left' | 'right', endingNumber
       break;
     case 'thick-thin':
       barline.barStyle = 'heavy-light';
-      (barline as any).abcBarlineText = '|>|';
       break;
     default:
       return null; // regular barlines don't need explicit representation

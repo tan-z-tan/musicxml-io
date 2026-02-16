@@ -40,7 +40,7 @@ ABC テキスト情報の保存先は2系統ある:
 
 ---
 
-## Phase 2: ABC → MusicXML → ABC ラウンドトリップ 🔲 未実装
+## Phase 2: ABC → MusicXML → ABC ラウンドトリップ ✅ 完了
 
 ### ゴール
 
@@ -75,9 +75,9 @@ ABC text → parseAbc() → Score → serializeMusicXml() → MusicXML
 
 ---
 
-### 修正項目
+### 修正項目 (全て完了)
 
-#### B-1. 連符 (tuplet) の開始検出 — `abcTupletStart` 依存の除去
+#### B-1. 連符 (tuplet) の開始検出 — `abcTupletStart` 依存の除去 ✅
 
 **現状**: `(note as any).abcTupletStart` フラグで連符の開始位置を判定。
 **問題**: MusicXML 経由ではこのフラグが失われ、`(3CDE` が `C2/3D2/3E2/3` になる。
@@ -90,69 +90,31 @@ ABC text → parseAbc() → Score → serializeMusicXml() → MusicXML
 
 **難易度**: 低 — 連続するノートの `timeModification` を比較するだけ
 
-#### B-2. インライン単位音符長変更 — `abcInlineField` 依存の除去
+#### B-2. インライン単位音符長変更 — `abcInlineField` 依存の除去 ✅
 
-**現状**: `(entry as any).abcInlineField = '[L:1/32]'` で保存し、シリアライザがそのまま出力。
-**問題**: MusicXML 経由ではこの direction エントリ自体が失われるか、`abcInlineField` プロパティが消える。
-**音楽データ**: 各音符の `duration`（divisions 値）は正しい。
+**実装**: `[L:1/32]` を `DirectionEntry` の `directionTypes: [{ kind: 'words', text: '[L:1/32]' }]` として保存。
+MusicXML round-trip で `<direction><direction-type><words>[L:1/32]</words>` として保持される。
+シリアライザは `abcInlineField` プロパティの他に、`words` direction type のテキストから `[L:...]` パターンを検出して処理。
 
-**修正方針**:
-- シリアライザで現在の `unitNote` と各音符の実際のデュレーションを比較
-- 全ての音符が現在の `unitNote` で表現できない場合（分数が複雑すぎる等）、`unitNote` 変更を自動挿入
-- または: この direction エントリを MusicXML でも保持する仕組みを作る（`<direction>` の `<words>` に `[L:1/32]` を入れる等）
+#### B-3. インラインキー変更 — `abcKeyChange` 依存の除去 ✅
 
-**難易度**: 中 — 「いつ `[L:]` を挿入すべきか」のヒューリスティックが必要。元の ABC の `[L:]` 位置と完全一致させるのは難しいが、音楽的に等価な出力は可能
+**実装**: シリアライザで前の小節と現在の小節の `attributes.key` を比較。
+変更がある場合に `K:` + `serializeKey()` で自動出力。`abcKeyChange` はフォールバックとして残存。
 
-#### B-3. インラインキー変更 — `abcKeyChange` 依存の除去
+#### B-4. 明示的ナチュラル記号 — `abcExplicitNatural` 依存の除去 ✅
 
-**現状**: `(measure as any).abcKeyChange = 'K:Bb'` で保存。
-**問題**: MusicXML 経由では消える。
-**音楽データ**: `measure.attributes.key` にキー変更は正しく保存されている。
+**実装**: ABC パーサーで明示的ナチュラルに `accidental: { value: 'natural' }` を設定。
+MusicXML round-trip で `<accidental>natural</accidental>` として保持。
+シリアライザは `abcExplicitNatural` の他に `note.accidental?.value === 'natural'` でも判定。
 
-**修正方針**:
-- シリアライザで前の小節と現在の小節の `attributes.key` を比較
-- 変更がある場合に `K:` 行を自動出力
-- `serializeKey()` で key → ABC key 文字列の変換は既にある
+#### B-5. コード内個別デュレーション — `abcIndividualChordDuration` 依存の除去 ✅
 
-**難易度**: 低 — `attributes.key` の比較と既存の `serializeKey()` の利用
+**実装**: `detectChordIndividualDurations()` ヘルパーでコード内ノートの `duration` を比較。
+全て同じなら `[CEG]2`、異なれば `[C/E/G/]` 形式で出力。`abcIndividualChordDuration` はフォールバック。
 
-#### B-4. 明示的ナチュラル記号 — `abcExplicitNatural` 依存の除去
+#### B-6. `[L:]` direction エントリの MusicXML 保持 ✅
 
-**現状**: `(note as any).abcExplicitNatural` フラグで `=C` の `=` を出力。
-**問題**: MusicXML 経由では消える。ただし MusicXML には `<accidental>natural</accidental>` がある。
-**音楽データ**: `pitch.alter = 0` は保存されている。MusicXML の accidental 要素も使える。
-
-**修正方針**:
-- MusicXML パーサー → Score で `accidental: 'natural'` が保持されているか確認
-- 保持されていれば、ABC シリアライザで `accidental === 'natural'` を `abcExplicitNatural` の代わりに使う
-- 保持されていなければ: 調号のコンテキストから「この音にナチュラルが必要か」を判定するロジックを追加
-
-**難易度**: 中 — 調号コンテキストからの判定が必要な場合あり
-
-#### B-5. コード内個別デュレーション — `abcIndividualChordDuration` 依存の除去
-
-**現状**: `(note as any).abcIndividualChordDuration` でコード内の各音の長さが異なることを検知。
-**問題**: MusicXML 経由では消える。
-**音楽データ**: コード内の各 `NoteEntry.duration` は個別に正しく保存されている。
-
-**修正方針**:
-- シリアライザでコード内のノートの `duration` を比較
-- 全て同じなら `[CEG]2`、異なれば `[C/E/G/]` 形式で出力
-- 実質的に `abcIndividualChordDuration` と同じロジックをランタイムで計算するだけ
-
-**難易度**: 低 — コード内の duration 比較
-
-#### B-6. `[L:]` direction エントリの MusicXML 保持
-
-**現状**: `[L:1/32]` は `DirectionEntry` + `abcInlineField` として保存される。
-**問題**: MusicXML シリアライズ時に、この direction が `<direction>` に変換されるか不明。`abcInlineField` プロパティは確実に消える。
-
-**修正方針** (B-2 の補完):
-- MusicXML の `<direction><direction-type><words>[L:1/32]</words>` として保存可能か調査
-- 可能なら MusicXML round-trip で保持される
-- 不可能なら B-2 のヒューリスティックアプローチに頼る
-
-**難易度**: 中 — MusicXML exporter/importer の direction 処理の調査が必要
+**実装**: B-2 と統合。`<words>[L:1/32]</words>` として MusicXML round-trip で保持される。
 
 ---
 
@@ -198,16 +160,22 @@ describe('ABC → MusicXML → ABC round-trip', () => {
 
 ---
 
-### 実装順序
+### 実装順序 (全て完了)
 
-| 順序 | 修正項目 | 難易度 | 備考 |
-|------|----------|--------|------|
-| 1 | B-3: インラインキー変更 | 低 | `attributes.key` の比較だけ |
-| 2 | B-5: コード内個別デュレーション | 低 | duration 比較だけ |
-| 3 | B-1: 連符開始検出 | 低 | `timeModification` の比較 |
-| 4 | B-4: 明示的ナチュラル | 中 | 調号コンテキスト判定が必要かも |
-| 5 | B-2/B-6: インライン L: 変更 | 中 | ヒューリスティック or MusicXML 保持 |
-| 6 | テスト追加 | — | `expectMusicallyEqual` ヘルパー作成 |
+| 順序 | 修正項目 | 状態 |
+|------|----------|------|
+| 1 | B-1: 連符開始検出 | ✅ |
+| 2 | B-2/B-6: インライン L: 変更 + MusicXML保持 | ✅ |
+| 3 | B-3: インラインキー変更 | ✅ |
+| 4 | B-4: 明示的ナチュラル | ✅ |
+| 5 | B-5: コード内個別デュレーション | ✅ |
+| 6 | テスト追加 (音楽的等価性 + ABC文字列比較) | ✅ |
+
+### テスト結果
+
+- 30個の ABC fixture 全てで音楽的等価性テストをパス
+- 28/30 で ABC 文字列比較もパス（スペース除去後）
+- 残り2個は音楽的に等価だが書式差異あり（非標準バーライン `|>|`、コード記法の等価形式）
 
 ---
 

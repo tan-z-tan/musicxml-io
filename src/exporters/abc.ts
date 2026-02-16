@@ -514,13 +514,22 @@ function serializePartBody(
   const musicParts: string[] = [];
   const allLyrics: Map<number, string[]> = new Map(); // measureIndex -> lyrics array
 
+  // Track current key for detecting inline key changes
+  let currentKey: KeySignature | undefined = part.measures[0]?.attributes?.key;
+
   for (let mi = 0; mi < part.measures.length; mi++) {
     const measure = part.measures[mi];
     const measDivisions = measure.attributes?.divisions ?? divisions;
 
-    // Check for inline key change on this measure
-    if ((measure as any).abcKeyChange) {
-      musicParts.push('\n' + (measure as any).abcKeyChange + '\n');
+    // Detect inline key change by comparing with previous key
+    if (mi > 0 && measure.attributes?.key) {
+      const newKey = measure.attributes.key;
+      if (currentKey === undefined ||
+          newKey.fifths !== currentKey.fifths ||
+          (newKey.mode || 'major') !== (currentKey.mode || 'major')) {
+        musicParts.push('\nK:' + serializeKey(newKey) + '\n');
+        currentKey = newKey;
+      }
     }
 
     // Check for left barline (repeats, etc.)
@@ -546,15 +555,11 @@ function serializePartBody(
     // Right barline
     const rightBarline = measure.barlines?.find(b => b.location === 'right');
     if (rightBarline) {
-      // Check for space before barline
-      const spaceBefore = (rightBarline as any).abcSpaceBefore ? ' ' : '';
-      musicParts.push(spaceBefore + serializeBarline(rightBarline));
+      musicParts.push(serializeBarline(rightBarline));
     } else if (mi < part.measures.length - 1) {
-      const spaceBefore = (measure as any).abcSpaceBeforeBar ? ' ' : '';
-      musicParts.push(spaceBefore + '|');
+      musicParts.push('|');
     } else {
-      const spaceBefore = (measure as any).abcSpaceBeforeBar ? ' ' : '';
-      musicParts.push(spaceBefore + '|');
+      musicParts.push('|');
     }
 
     // Insert line break after measure if this is a line break position
@@ -701,6 +706,9 @@ function serializeMeasureEntries(
   let chordSlurStart = '';
   let chordSlurEnd = '';
   let inChord = false;
+  let chordHasIndividualDurations = false;
+  // Tuplet group tracking: how many notes remain in current tuplet group
+  let tupletRemaining = 0;
 
   for (let ei = 0; ei < measure.entries.length; ei++) {
     const entry = measure.entries[ei];
@@ -723,8 +731,7 @@ function serializeMeasureEntries(
               break;
             }
           }
-          const spacePrefix = (entry as any).abcSpaceBefore ? ' ' : '';
-          parts.push(spacePrefix + '{' + graceNotes.join('') + '}');
+          parts.push('{' + graceNotes.join('') + '}');
           ei = gi - 1; // Skip the grouped grace notes
           break;
         }
@@ -736,7 +743,7 @@ function serializeMeasureEntries(
           if (!inChord) {
             inChord = true;
           }
-          if ((note as any).abcIndividualChordDuration) {
+          if (chordHasIndividualDurations) {
             chordPitches.push(serialized.pitch + serialized.duration);
           } else {
             chordPitches.push(serialized.pitch);
@@ -748,6 +755,7 @@ function serializeMeasureEntries(
         if (inChord) {
           parts.push('[' + chordPitches.join('') + ']' + chordDurationStr + chordTieStr + chordSlurEnd);
           inChord = false;
+          chordHasIndividualDurations = false;
           chordPitches = [];
           chordDurationStr = '';
           chordTieStr = '';
@@ -765,13 +773,19 @@ function serializeMeasureEntries(
           }
         }
 
-        // Check for space before this entry
-        const spacePrefix = (entry as any).abcSpaceBefore ? ' ' : '';
+        const spacePrefix = '';
 
-        // Handle tuplet prefix - use the explicit marker from the parser
+        // Handle tuplet prefix - detect tuplet group start from timeModification
         let tupletPrefix = '';
-        if ((note as any).abcTupletStart && note.timeModification) {
-          tupletPrefix = `(${note.timeModification.actualNotes}`;
+        if (note.timeModification && !note.chord && !note.grace && tupletRemaining <= 0) {
+          // Start of a new tuplet group
+          // Default group size is p (actualNotes), e.g. (3 means 3 notes in the time of 2
+          const p = note.timeModification.actualNotes;
+          tupletRemaining = p;
+          tupletPrefix = `(${p}`;
+        }
+        if (note.timeModification && !note.chord && !note.grace) {
+          tupletRemaining--;
         }
 
         // For tuplet notes, compute the pre-tuplet duration for ABC output
@@ -782,7 +796,7 @@ function serializeMeasureEntries(
           const baseDuration = Math.round(note.duration * note.timeModification.actualNotes / note.timeModification.normalNotes);
           const { num, den } = durationToAbcFraction(baseDuration, divisions, currentUnitNote);
           const baseDurationStr = formatAbcDuration(num, den);
-          const pitchStr = serializePitch(note.pitch, (note as any).abcExplicitNatural);
+          const pitchStr = serializePitch(note.pitch, note.accidental?.value === 'natural');
           // Rebuild serialized with base duration
           let tieStr = '';
           if (note.tie?.type === 'start' || note.ties?.some(t => t.type === 'start')) {
@@ -810,7 +824,10 @@ function serializeMeasureEntries(
         if (nextEntry && nextEntry.type === 'note' && nextEntry.chord) {
           // Start collecting chord pitches
           inChord = true;
-          const hasIndividualDur = (note as any).abcIndividualChordDuration;
+          // Detect individual durations: use explicit flag if available (ABC→ABC),
+          // otherwise detect from duration comparison (MusicXML→ABC)
+          const hasIndividualDur = detectChordIndividualDurations(measure.entries, ei);
+          chordHasIndividualDurations = hasIndividualDur;
           chordPitches = [hasIndividualDur ? effectiveSerialized.pitch + effectiveSerialized.duration : effectiveSerialized.pitch];
           chordDurationStr = hasIndividualDur ? '' : effectiveSerialized.duration;
           chordTieStr = '';
@@ -837,24 +854,26 @@ function serializeMeasureEntries(
 
       case 'harmony': {
         if (opts.includeChordSymbols) {
-          const harmSpacePrefix = (entry as any).abcSpaceBefore ? ' ' : '';
-          parts.push(harmSpacePrefix + serializeHarmony(entry));
+          parts.push(serializeHarmony(entry));
         }
         break;
       }
 
       case 'direction': {
-        // Check for inline field (e.g., [L:1/32])
-        if ((entry as any).abcInlineField) {
-          const inlineFieldStr: string = (entry as any).abcInlineField;
-          parts.push(inlineFieldStr);
-          // Update current unit note if it's an [L:] change
-          const lMatch = inlineFieldStr.match(/^\[L:\s*(\d+)\/(\d+)\]$/);
-          if (lMatch) {
-            currentUnitNote = { num: parseInt(lMatch[1], 10), den: parseInt(lMatch[2], 10) };
+        // Check for [L:...] in words direction types
+        let handledAsInlineField = false;
+        for (const dt of entry.directionTypes) {
+          if (dt.kind === 'words') {
+            const lMatch = dt.text.match(/^\[L:\s*(\d+)\/(\d+)\]$/);
+            if (lMatch) {
+              parts.push(dt.text);
+              currentUnitNote = { num: parseInt(lMatch[1], 10), den: parseInt(lMatch[2], 10) };
+              handledAsInlineField = true;
+              break;
+            }
           }
-          break;
         }
+        if (handledAsInlineField) break;
         if (opts.includeDynamics) {
           const dynStr = serializeDynamics(entry);
           if (dynStr) {
@@ -889,6 +908,24 @@ function serializeMeasureEntries(
   return { noteStr: parts.join(''), lyrics, updatedUnitNote: unitNoteChanged ? currentUnitNote : undefined };
 }
 
+/**
+ * Detect if a chord starting at entry index `startIdx` has individually different durations.
+ * Returns true if the notes in the chord have differing durations.
+ */
+function detectChordIndividualDurations(entries: Measure['entries'], startIdx: number): boolean {
+  // The first note is at startIdx, subsequent chord notes have chord=true
+  const firstNote = entries[startIdx];
+  if (firstNote.type !== 'note') return false;
+  const baseDuration = firstNote.duration;
+
+  for (let i = startIdx + 1; i < entries.length; i++) {
+    const e = entries[i];
+    if (e.type !== 'note' || !e.chord) break;
+    if (e.duration !== baseDuration) return true;
+  }
+  return false;
+}
+
 interface SerializedNote {
   full: string;
   pitch: string;
@@ -918,11 +955,11 @@ function serializeNote(
   } else if (note.grace) {
     // Grace notes - pitch only (grouping handled in serializeMeasureEntries)
     if (note.pitch) {
-      pitchStr = serializePitch(note.pitch, (note as any).abcExplicitNatural);
+      pitchStr = serializePitch(note.pitch, note.accidental?.value === 'natural');
     }
     durationStr = '';
   } else if (note.pitch) {
-    pitchStr = serializePitch(note.pitch, (note as any).abcExplicitNatural);
+    pitchStr = serializePitch(note.pitch, note.accidental?.value === 'natural');
     const effectiveDuration = note.duration;
     const { num, den } = durationToAbcFraction(effectiveDuration, divisions, unitNote);
     durationStr = formatAbcDuration(num, den);
@@ -952,11 +989,6 @@ function serializeNote(
 
 
 function serializeBarline(barline: Barline): string {
-  // Check for stored ABC barline text (for non-standard barlines)
-  if ((barline as any).abcBarlineText) {
-    return (barline as any).abcBarlineText;
-  }
-
   const hasRepeatForward = barline.repeat?.direction === 'forward';
   const hasRepeatBackward = barline.repeat?.direction === 'backward';
   const hasEnding = barline.ending;
