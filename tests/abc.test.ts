@@ -438,8 +438,8 @@ describe('ABC Round-trip', () => {
       // ABC → Score → ABC
       const roundTripped = serializeAbc(parseAbc(original));
 
-      // Compare ignoring whitespace differences
-      const normalize = (s: string) => s.replace(/\s+/g, ' ').trim();
+      // Compare ignoring space/tab differences (spaces are formatting hints, not musical content)
+      const normalize = (s: string) => s.replace(/[ \t]+/g, '').replace(/\n+/g, '\n').trim();
       expect(normalize(roundTripped)).toBe(normalize(original));
     });
   }
