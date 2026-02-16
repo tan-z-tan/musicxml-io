@@ -773,7 +773,13 @@ describe('User-provided ABC samples', () => {
       // After & overlay, x3 should be parsed as a rest of duration 3 eighth notes
       const entries = v1.measures[0].entries;
       const backupIdx = entries.findIndex(e => e.type === 'backup');
-      const restAfterBackup = entries[backupIdx + 1];
+      // Skip any direction entries (e.g. inline [L:]) to find the rest
+      let restAfterBackup = entries[backupIdx + 1];
+      let idx = backupIdx + 1;
+      while (idx < entries.length && restAfterBackup.type === 'direction') {
+        idx++;
+        restAfterBackup = entries[idx];
+      }
       expect(restAfterBackup.type).toBe('note');
       if (restAfterBackup.type === 'note') {
         expect(restAfterBackup.rest).toBeTruthy();
@@ -798,8 +804,8 @@ describe('User-provided ABC samples', () => {
       const abc = readFixture('piano.abc');
       const score = parseAbc(abc);
       const out = serializeAbc(score);
-      expect(out).toContain('V:1');
-      expect(out).toContain('V:2');
+      expect(out).toContain('[V:V1]');
+      expect(out).toContain('[V:V2]');
       expect(out).toContain('&');
     });
   });

@@ -1,172 +1,236 @@
-# ABC Round-trip Fix Plan
+# ABC Format Import/Export Plan
 
-30個の round-trip テストが全て失敗している。修正対象は `src/importers/abc.ts` (パーサー) と `src/exporters/abc.ts` (シリアライザ)。
+## 現状のまとめ
 
-## 修正一覧
+### Phase 1: ABC → Score → ABC ラウンドトリップ ✅ 完了
 
-### 1. L: 単位音符長の保存・復元 (20+ テストに影響)
+30/30 の ABC round-trip テスト + 128 ABC テスト全てパス。
+ABC テキストを Score モデルにパースし、Score モデルから ABC テキストを再構築する。
 
-**問題**: シリアライザが常に `computeUnitNoteLength()` で `L:1/8` を再計算する。`L:1/4` の曲で全音符の長さ文字列が倍になる（例: `C` → `C2`）。
+音楽的内容（音符・ピッチ・デュレーション・調号・拍子・歌詞・和音記号・強弱・タイ・スラー・連符・装飾音・リピート等）は全て Score モデルの標準フィールドに正しくパースされている。
 
-**修正**:
-- パーサー: `abc-unit-note-length` を `score.metadata.miscellaneous` に保存
-- シリアライザ: 保存された値を使用し、計算をフォールバックにする
+### 現在の実装の仕組み
 
-### 2. ヘッダーフィールド保存 (8テストに影響)
+ABC テキスト情報の保存先は2系統ある:
 
-**問題**: R:, S:, N:, I:, %%MIDI, %%staves がパース時に破棄される。
+**1. `score.metadata.miscellaneous` (MusicXML round-trip で保持される)**
+- `abc-header-order` — ヘッダー行の元の順番と文字列
+- `abc-reference-number` — X: フィールドの値
+- `abc-unit-note-length` — L: フィールドの値
+- `abc-tempo` — Q: フィールドの元の文字列
+- `abc-extra-fields` — R:, S:, N:, I: 等の非標準ヘッダー
+- `abc-directives` — %% ディレクティブ
+- `abc-voice-ids` — Voice ID の元の名前
+- `abc-inline-voice-markers` — `[V:V1]` 等のインライン形式
+- `abc-voice-declaration-lines` — スタンドアロン V: 宣言行
+- `abc-line-breaks` — 改行位置（小節番号）
+- `abc-lyrics-after-all` — 歌詞が全音楽の後にまとめて書かれているか
+- `abc-lyrics-line-counts` — 各 w: 行のシラブル数
 
-**影響ファイル**: piano.abc, tune_008268.abc, tune_009270.abc, real-cooleys-reel.abc, real-kesh-jig.abc, real-irish-washerwoman.abc, real-si-bheag.abc, real-star-county-down.abc
+**2. `(entry as any).abcXxx` ランタイムプロパティ (MusicXML round-trip で失われる)**
+- `abcSpaceBefore` — 音符/和音記号の前のスペース
+- `abcTupletStart` — 連符グループの開始位置
+- `abcExplicitNatural` — 明示的ナチュラル `=`
+- `abcIndividualChordDuration` — コード内個別デュレーション
+- `abcInlineField` — インライン `[L:1/32]` 等のフィールド変更
+- `abcKeyChange` (measure) — インライン K: キー変更
+- `abcSpaceBeforeBar` (measure) — 小節線前のスペース
+- `abcSpaceBefore` (barline) — 小節線前のスペース
+- `abcBarlineText` (barline) — 特殊小節線の元テキスト
 
-**修正**:
-- パーサー: `parseHeader()` で未知フィールドを `abc-header-{field}` として miscellaneous に保存。%%ディレクティブも同様に保存
-- シリアライザ: T:/C: の後、K: の前に保存されたフィールドを出力
+---
 
-### 3. ノート間スペース保存 (~10テストに影響)
+## Phase 2: ABC → MusicXML → ABC ラウンドトリップ 🔲 未実装
 
-**問題**: `EBBA B2 EB` のスペースがトークナイザで破棄され、シリアライザは `EBBAB2EB` を出力する。
+### ゴール
 
-**影響ファイル**: durations.abc, real-cooleys-reel.abc, real-kesh-jig.abc, real-irish-washerwoman.abc, real-dotted-rhythms.abc, real-complex-keys.abc, tune_009270.abc, piano.abc
+ABC フォーマットの音楽的内容を Score モデルに正しく落とし込み、MusicXML を経由しても ABC に再変換できることを検証する。
 
-**修正**:
-- パーサー `tokenizeMusicLine()`: スペースを `{ type: 'space' }` トークンとして保持
-- パーサー `buildMeasures()`: 各ノートエントリに `abcSpaceBefore: true` フラグを付与
-- シリアライザ: フラグがあるノートの前にスペースを出力
+```
+ABC text → parseAbc() → Score → serializeMusicXml() → MusicXML
+→ parseMusicXml() → Score → serializeAbc() → ABC text
+```
 
-### 4. Voice ID 保存 (2テストに影響)
+元の ABC と最終 ABC で**音楽的内容が一致**すること（書式的な差異は許容）。
 
-**問題**: シリアライザが `V:{partIdx+1}` (V:1, V:2) を出力する。元の ID (V:V1, V:P1) が失われる。
+### 分析: MusicXML 経由時に失われる情報
 
-**影響ファイル**: piano.abc (V:V1), tune_009270.abc (V:P1)
+#### カテゴリ A: 書式ヒントのみ（失われて問題なし）
 
-**修正**:
-- パーサー: `partList` エントリの `id` に元の voice ID を保存（既に `voiceIds` はある）
-- シリアライザ: `score.partList` から voice ID を読み取って使用
+| プロパティ | 内容 | 理由 |
+|-----------|------|------|
+| `abcSpaceBefore` | 音符前のスペース | 純粋に見た目の問題 |
+| `abcSpaceBeforeBar` | 小節線前のスペース | 同上 |
+| `abcBarlineText` | `\|>\|` 等の元テキスト | `barStyle` に音楽的意味は保存済み |
+| `abc-line-breaks` | 改行位置 | レイアウトの問題 |
+| `abc-header-order` | ヘッダー順 | フォーマットの問題 |
+| `abc-lyrics-after-all` | 歌詞配置方法 | レイアウトの問題 |
+| `abc-lyrics-line-counts` | 歌詞行の分割 | 同上 |
+| `abc-inline-voice-markers` | `[V:]` vs `V:` 形式 | 表記スタイルの問題 |
+| `abc-voice-declaration-lines` | V: 宣言行 | 同上 |
 
-### 5. Q: テンポ形式保存 (1テストに影響)
+#### カテゴリ B: 音楽内容は標準フィールドにもあるが、シリアライザが `as any` に依存
 
-**問題**: `Q:3/8=120` がパース時に beatUnit=`eighth` に変換され、シリアライザが `Q:1/8=120` ではなく `Q:1/4=...` のような別形式で出力する。
+**これらが Phase 2 の修正対象。** 音楽的な情報自体は Score の標準フィールドに存在するが、現在の ABC シリアライザが `as any` プロパティの存在を前提としており、それがないと正しく ABC を出力できない。
 
-**影響ファイル**: real-irish-washerwoman.abc
+---
 
-**修正**:
-- パーサー: `abc-tempo` を miscellaneous に保存
-- シリアライザ: 保存された Q: 文字列をそのまま出力
+### 修正項目
 
-### 6. タプレット記法 (1テストに影響)
+#### B-1. 連符 (tuplet) の開始検出 — `abcTupletStart` 依存の除去
 
-**問題**: `(3CDE` が `C2/3D2/3E2/3` のような分数表記に展開される。
+**現状**: `(note as any).abcTupletStart` フラグで連符の開始位置を判定。
+**問題**: MusicXML 経由ではこのフラグが失われ、`(3CDE` が `C2/3D2/3E2/3` になる。
+**音楽データ**: `note.timeModification` に `actualNotes`/`normalNotes` は正しく保存されている。
 
-**影響ファイル**: tuplets.abc
+**修正方針**:
+- シリアライザで `timeModification` を持つ連続ノートを走査
+- 前のノートが `timeModification` を持たない（または異なるグループ）場合に連符開始と判定
+- `abcTupletStart` フラグはフォールバック確認用に残してもよい
 
-**修正**:
-- シリアライザ: `timeModification` を持つ連続ノートを検出し、`(p` プレフィックスを出力
-- ノートの duration は tuplet 適用前の値で出力（q/p 倍を戻す）
+**難易度**: 低 — 連続するノートの `timeModification` を比較するだけ
 
-### 7. 不可視レスト x (1テストに影響)
+#### B-2. インライン単位音符長変更 — `abcInlineField` 依存の除去
 
-**問題**: `x` (不可視レスト) が `z` (可視レスト) として出力される。
+**現状**: `(entry as any).abcInlineField = '[L:1/32]'` で保存し、シリアライザがそのまま出力。
+**問題**: MusicXML 経由ではこの direction エントリ自体が失われるか、`abcInlineField` プロパティが消える。
+**音楽データ**: 各音符の `duration`（divisions 値）は正しい。
 
-**影響ファイル**: piano.abc
+**修正方針**:
+- シリアライザで現在の `unitNote` と各音符の実際のデュレーションを比較
+- 全ての音符が現在の `unitNote` で表現できない場合（分数が複雑すぎる等）、`unitNote` 変更を自動挿入
+- または: この direction エントリを MusicXML でも保持する仕組みを作る（`<direction>` の `<words>` に `[L:1/32]` を入れる等）
 
-**修正**:
-- パーサー: rest オブジェクトに `printObject: false` を設定
-- シリアライザ: フラグを見て `x` を出力
+**難易度**: 中 — 「いつ `[L:]` を挿入すべきか」のヒューリスティックが必要。元の ABC の `[L:]` 位置と完全一致させるのは難しいが、音楽的に等価な出力は可能
 
-### 8. グレースノートグループ化 (1テストに影響)
+#### B-3. インラインキー変更 — `abcKeyChange` 依存の除去
 
-**問題**: `{DE}` が `{D}{E}` として個別に出力される。
+**現状**: `(measure as any).abcKeyChange = 'K:Bb'` で保存。
+**問題**: MusicXML 経由では消える。
+**音楽データ**: `measure.attributes.key` にキー変更は正しく保存されている。
 
-**影響ファイル**: grace-notes.abc
+**修正方針**:
+- シリアライザで前の小節と現在の小節の `attributes.key` を比較
+- 変更がある場合に `K:` 行を自動出力
+- `serializeKey()` で key → ABC key 文字列の変換は既にある
 
-**修正**:
-- シリアライザ: 連続する grace ノートを検出し、単一の `{...}` でグループ化
+**難易度**: 低 — `attributes.key` の比較と既存の `serializeKey()` の利用
 
-### 9. Volta 記号 [1, [2 (1テストに影響)
+#### B-4. 明示的ナチュラル記号 — `abcExplicitNatural` 依存の除去
 
-**問題**: volta ending マーカーの出力位置・形式が不正。
+**現状**: `(note as any).abcExplicitNatural` フラグで `=C` の `=` を出力。
+**問題**: MusicXML 経由では消える。ただし MusicXML には `<accidental>natural</accidental>` がある。
+**音楽データ**: `pitch.alter = 0` は保存されている。MusicXML の accidental 要素も使える。
 
-**影響ファイル**: repeats.abc
+**修正方針**:
+- MusicXML パーサー → Score で `accidental: 'natural'` が保持されているか確認
+- 保持されていれば、ABC シリアライザで `accidental === 'natural'` を `abcExplicitNatural` の代わりに使う
+- 保持されていなければ: 調号のコンテキストから「この音にナチュラルが必要か」を判定するロジックを追加
 
-**修正**:
-- シリアライザ `serializeBarline()`: ending が left barline にある場合、`[1` を正しい位置に出力
-- ending.type === 'start' の場合は barline の後に `[N ` を付加
+**難易度**: 中 — 調号コンテキストからの判定が必要な場合あり
 
-### 10. 歌詞インターリーブ (3テストに影響)
+#### B-5. コード内個別デュレーション — `abcIndividualChordDuration` 依存の除去
 
-**問題**: `w:` 行がパート末尾にまとめて出力される。元は音楽行の直後に配置。
+**現状**: `(note as any).abcIndividualChordDuration` でコード内の各音の長さが異なることを検知。
+**問題**: MusicXML 経由では消える。
+**音楽データ**: コード内の各 `NoteEntry.duration` は個別に正しく保存されている。
 
-**影響ファイル**: lyrics.abc, real-amazing-grace.abc, real-scarborough-fair.abc
+**修正方針**:
+- シリアライザでコード内のノートの `duration` を比較
+- 全て同じなら `[CEG]2`、異なれば `[C/E/G/]` 形式で出力
+- 実質的に `abcIndividualChordDuration` と同じロジックをランタイムで計算するだけ
 
-**修正**:
-- シリアライザ: 歌詞を持つノートが含まれる小節の後に `w:` 行を出力
-- 各音楽行の後に対応する歌詞行を挿入する形に変更
+**難易度**: 低 — コード内の duration 比較
 
-### 11. 行継続バックスラッシュ (1テストに影響)
+#### B-6. `[L:]` direction エントリの MusicXML 保持
 
-**問題**: `\` 行継続マーカーが失われる。
+**現状**: `[L:1/32]` は `DirectionEntry` + `abcInlineField` として保存される。
+**問題**: MusicXML シリアライズ時に、この direction が `<direction>` に変換されるか不明。`abcInlineField` プロパティは確実に消える。
 
-**影響ファイル**: tune_008268.abc
+**修正方針** (B-2 の補完):
+- MusicXML の `<direction><direction-type><words>[L:1/32]</words>` として保存可能か調査
+- 可能なら MusicXML round-trip で保持される
+- 不可能なら B-2 のヒューリスティックアプローチに頼る
 
-**修正**:
-- パーサー: 行継続位置（小節番号）を miscellaneous に保存
-- シリアライザ: 該当小節の後に `\` + 改行を出力
+**難易度**: 中 — MusicXML exporter/importer の direction 処理の調査が必要
 
-### 12. インライン [V: P1] マーカー (1テストに影響)
+---
 
-**問題**: tune_009270.abc は `[V: P1]` インライン形式を使うが、シリアライザはスタンドアロン `V:1` を出力する。
+### テスト計画
 
-**修正**:
-- パーサー: インライン vs スタンドアロンの voice 形式を miscellaneous に保存
-- シリアライザ: インライン形式が保存されていれば `[V: {id}]` を出力
+#### 新規テストの追加
 
-### 13. 特殊バーライン |>| (1テストに影響)
+```typescript
+describe('ABC → MusicXML → ABC round-trip', () => {
+  for (const file of abcFixtures) {
+    it(`should preserve musical content: ${file}`, () => {
+      const abc = readFixture(file);
+      const score1 = parseAbc(abc);
+      const xml = serializeMusicXml(score1);
+      const score2 = parseMusicXml(xml);
+      const abc2 = serializeAbc(score2);
 
-**問題**: tune_008268.abc の末尾 `|>|` が通常の `|` になる。
+      // 比較: 音楽的内容の一致（書式は許容）
+      const score3 = parseAbc(abc2);
+      // 音符数、ピッチ、デュレーション、調号、拍子が一致
+      expectMusicallyEqual(score1, score3);
+    });
+  }
+});
+```
 
-**修正**:
-- パーサー: `|>|` をバーラインタイプとして認識・保存
-- シリアライザ: 対応するバーラインスタイルから `|>|` を復元
+#### 比較の粒度
 
-### 14. インライン K: キー変更 (1テストに影響)
+完全一致（文字列比較）ではなく、音楽的等価性を検証:
+- 各パートの音符数が一致
+- 各音符のピッチ（step, octave, alter）が一致
+- 各音符のデュレーションが一致
+- 調号・拍子記号が一致
+- 歌詞テキストが一致
+- リピート・エンディングが一致
 
-**問題**: real-complex-keys.abc に本文中の `K:Bb` があるが、シリアライズ時に失われる。
+書式的な差異は許容:
+- スペースの有無
+- 改行位置
+- ヘッダー順序
+- `[V:V1]` vs `V:V1` の記法差異
+- `[L:]` の位置（音楽的に等価なら OK）
 
-**修正**:
-- パーサー: インライン K: をアトリビュート変更エントリとして保存（既存の attributes エントリ機構を使用）
-- シリアライザ: アトリビュート変更を検出し `K:` 行を出力
+---
 
-### 15. バーライン前後スペース (複数テストに影響)
+### 実装順序
 
-**問題**: ` | ` (スペース付き) が `|` になる。` :|` が `:|` になる。
+| 順序 | 修正項目 | 難易度 | 備考 |
+|------|----------|--------|------|
+| 1 | B-3: インラインキー変更 | 低 | `attributes.key` の比較だけ |
+| 2 | B-5: コード内個別デュレーション | 低 | duration 比較だけ |
+| 3 | B-1: 連符開始検出 | 低 | `timeModification` の比較 |
+| 4 | B-4: 明示的ナチュラル | 中 | 調号コンテキスト判定が必要かも |
+| 5 | B-2/B-6: インライン L: 変更 | 中 | ヒューリスティック or MusicXML 保持 |
+| 6 | テスト追加 | — | `expectMusicallyEqual` ヘルパー作成 |
 
-**修正**: #3 のスペース保存と同様に、バーライン前後のスペースも保存・復元
+---
 
-### 16. = ナチュラル記号の保存
+## Phase 1 修正履歴 (完了)
 
-**問題**: `=E`（明示的ナチュラル）が `E`（暗黙ナチュラル）として出力される可能性。
+<details>
+<summary>展開: 全16項目の修正詳細</summary>
 
-**修正**:
-- パーサー: 明示的 natural を alter=0 + explicit フラグで保存
-- シリアライザ: explicit フラグがあれば `=` を出力
+### 1. L: 単位音符長の保存・復元 ✅
+### 2. ヘッダーフィールド保存 ✅
+### 3. ノート間スペース保存 ✅
+### 4. Voice ID 保存 ✅
+### 5. Q: テンポ形式保存 ✅
+### 6. タプレット記法 ✅
+### 7. 不可視レスト x ✅
+### 8. グレースノートグループ化 ✅
+### 9. Volta 記号 ✅
+### 10. 歌詞インターリーブ ✅
+### 11. 行継続バックスラッシュ ✅
+### 12. インライン [V:] マーカー ✅
+### 13. 特殊バーライン |>| ✅
+### 14. インライン K: キー変更 ✅
+### 15. バーライン前後スペース ✅
+### 16. = ナチュラル記号の保存 ✅
 
-## 実装順序（インパクト順）
-
-| 順序 | 修正項目 | 修正テスト数 |
-|------|----------|-------------|
-| 1 | L: 保存・復元 | ~20 |
-| 2 | ヘッダーフィールド保存 | +8 |
-| 3 | スペース保存 | +10 |
-| 4 | Voice ID 保存 | +2 |
-| 5 | タプレット記法 | +1 |
-| 6 | グレースノートグループ化 | +1 |
-| 7 | Q: テンポ形式保存 | +1 |
-| 8 | 不可視レスト x | +1 |
-| 9 | 歌詞インターリーブ | +3 |
-| 10 | Volta 記号 | +1 |
-| 11 | 行継続 \ | +1 |
-| 12 | インライン V: | +1 |
-| 13 | 特殊バーライン | +1 |
-| 14 | インライン K: | +1 |
-| 15 | バーラインスペース | 上記に含む |
-| 16 | ナチュラル記号 | 上記に含む |
+</details>
