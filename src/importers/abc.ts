@@ -48,6 +48,10 @@ interface AbcHeader {
   tempo?: string;
   key?: string;
   voices?: AbcVoice[];
+  /** Extra header fields (R:, S:, N:, I:, etc.) preserved for round-trip */
+  extraFields?: { field: string; value: string }[];
+  /** %% directives preserved for round-trip */
+  directives?: string[];
 }
 
 interface AbcVoice {
@@ -154,14 +158,25 @@ const DYNAMICS_VALUES = new Set([
 // Header Parsing
 // ============================================================
 
-function parseHeader(lines: string[]): { header: AbcHeader; bodyStartIndex: number } {
-  const header: AbcHeader = { voices: [] };
+function parseHeader(lines: string[]): { header: AbcHeader; bodyStartIndex: number; headerFieldOrder: string[] } {
+  const header: AbcHeader = { voices: [], extraFields: [], directives: [] };
   let bodyStartIndex = 0;
   let foundKey = false;
+  const headerFieldOrder: string[] = []; // Track order of all header fields
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
-    if (line === '' || line.startsWith('%')) continue;
+    if (line === '') continue;
+
+    // %% directives in header (before K:)
+    if (line.startsWith('%%') && !foundKey) {
+      header.directives!.push(line);
+      headerFieldOrder.push(line);
+      continue;
+    }
+
+    // Regular comments
+    if (line.startsWith('%')) continue;
 
     // Header fields are in format "X:value"
     const fieldMatch = line.match(/^([A-Za-z]):\s*(.*)/);
@@ -170,26 +185,33 @@ function parseHeader(lines: string[]): { header: AbcHeader; bodyStartIndex: numb
       switch (field) {
         case 'X':
           header.referenceNumber = parseInt(value, 10);
+          headerFieldOrder.push(line);
           break;
         case 'T':
           header.title = value.trim();
+          headerFieldOrder.push(line);
           break;
         case 'C':
           header.composer = value.trim();
+          headerFieldOrder.push(line);
           break;
         case 'M':
           header.meter = value.trim();
+          headerFieldOrder.push(line);
           break;
         case 'L':
           header.unitNoteLength = value.trim();
+          headerFieldOrder.push(line);
           break;
         case 'Q':
           header.tempo = value.trim();
+          headerFieldOrder.push(line);
           break;
         case 'K':
           header.key = value.trim();
           foundKey = true;
           bodyStartIndex = i + 1;
+          headerFieldOrder.push(line);
           break;
         case 'V': {
           const voiceValue = value.trim();
@@ -208,20 +230,28 @@ function parseHeader(lines: string[]): { header: AbcHeader; bodyStartIndex: numb
               clef: clefMatch ? clefMatch[1] : undefined,
             });
           }
+          // Only include V: in header order if it appears BEFORE K:
+          if (!foundKey) {
+            headerFieldOrder.push(line);
+          }
           break;
         }
+        default:
+          // Unknown header fields (R:, S:, N:, I:, etc.)
+          header.extraFields!.push({ field, value: value.trim() });
+          headerFieldOrder.push(line);
+          break;
       }
     } else if (!foundKey) {
       // Non-field line before K: - treat as part of header (comment, etc.)
       continue;
     } else {
       // After K: found, continue scanning for V: definitions anywhere in the file
-      // (V: can appear interspersed with music lines in the body)
       continue;
     }
   }
 
-  return { header, bodyStartIndex };
+  return { header, bodyStartIndex, headerFieldOrder };
 }
 
 // ============================================================
@@ -414,6 +444,22 @@ function tokenizeBody(bodyLines: string[]): { tokens: AbcToken[][]; voiceIds: st
       continue;
     }
 
+    // Handle body K: line (key change mid-tune)
+    const bodyKeyMatch = line.match(/^K:\s*(.*)/);
+    if (bodyKeyMatch) {
+      const currentTokens = voiceTokens.get(currentVoice)!;
+      if (currentTokens.length > 0) {
+        const lastToken = currentTokens[currentTokens.length - 1];
+        if (lastToken.type !== 'line_break') {
+          currentTokens.push({ type: 'line_break', value: '\n' });
+        }
+      }
+      currentTokens.push({ type: 'inline_field', value: `K:${bodyKeyMatch[1]}` });
+      // Add a line_break after K: so the next music line starts on a new line
+      currentTokens.push({ type: 'line_break', value: '\n' });
+      continue;
+    }
+
     // Skip other header-like fields in body (but not inline fields starting with [)
     if (/^[A-Za-z]:\s*/.test(line) && !/^\[/.test(line)) {
       continue;
@@ -421,6 +467,17 @@ function tokenizeBody(bodyLines: string[]): { tokens: AbcToken[][]; voiceIds: st
 
     // Tokenize music line
     const tokens = tokenizeMusicLine(line);
+
+    // Add a line_break token before this music line's tokens
+    // (if this voice already has tokens from a previous line)
+    const currentTokens = voiceTokens.get(currentVoice)!;
+    if (currentTokens.length > 0) {
+      // Check if previous token is not already a line_break
+      const lastToken = currentTokens[currentTokens.length - 1];
+      if (lastToken.type !== 'line_break') {
+        currentTokens.push({ type: 'line_break', value: '\n' });
+      }
+    }
 
     // Process tokens, handling inline voice changes
     for (const token of tokens) {
@@ -474,9 +531,11 @@ function tokenizeMusicLine(line: string): AbcToken[] {
   while (i < line.length) {
     const ch = line[i];
 
-    // Skip whitespace
+    // Emit space token (preserve spaces for round-trip)
     if (ch === ' ' || ch === '\t') {
-      i++;
+      tokens.push({ type: 'space', value: ' ' });
+      // Consume all consecutive whitespace as a single space
+      while (i < line.length && (line[i] === ' ' || line[i] === '\t')) i++;
       continue;
     }
 
@@ -720,6 +779,7 @@ function parseNoteToken(line: string, i: number): { token: AbcToken; nextIndex: 
 
   // Accidental
   let accidental = 0;
+  let explicitNatural = false;
   if (line[i] === '^') {
     accidental = 1;
     i++;
@@ -736,8 +796,8 @@ function parseNoteToken(line: string, i: number): { token: AbcToken; nextIndex: 
     }
   } else if (line[i] === '=') {
     accidental = 0; // natural (explicit)
+    explicitNatural = true;
     i++;
-    // Mark that this is an explicit natural
   }
 
   // Note letter
@@ -765,15 +825,22 @@ function parseNoteToken(line: string, i: number): { token: AbcToken; nextIndex: 
   const dur = parseDuration(line, i);
   i = dur.nextIndex;
 
+  const token: AbcToken = {
+    type: 'note',
+    value: line.slice(start, i),
+    pitch,
+    durationNum: dur.num,
+    durationDen: dur.den,
+    accidental: accidental !== 0 || explicitNatural ? accidental : undefined,
+  };
+
+  // Mark explicit natural for round-trip
+  if (explicitNatural) {
+    (token as any).explicitNatural = true;
+  }
+
   return {
-    token: {
-      type: 'note',
-      value: line.slice(start, i),
-      pitch,
-      durationNum: dur.num,
-      durationDen: dur.den,
-      accidental: accidental !== 0 || (start < line.length && line[start] === '=') ? accidental : undefined,
-    },
+    token,
     nextIndex: i,
   };
 }
@@ -826,7 +893,7 @@ function parseDuration(line: string, i: number): { num: number; den: number; nex
 // Score Builder
 // ============================================================
 
-function buildScore(header: AbcHeader, voiceTokensList: AbcToken[][], voiceIds: string[]): Score {
+function buildScore(header: AbcHeader, voiceTokensList: AbcToken[][], voiceIds: string[], headerFieldOrder: string[]): Score {
   const unitNote = parseUnitNoteLength(header.unitNoteLength, header.meter);
   const timeSignature = parseTimeSignature(header.meter || '4/4');
   const keySignature = parseKeySignature(header.key || 'C');
@@ -838,6 +905,34 @@ function buildScore(header: AbcHeader, voiceTokensList: AbcToken[][], voiceIds: 
 
   const parts: Part[] = [];
   const partListEntries: Score['partList'] = [];
+
+  // Build miscellaneous metadata for ABC round-trip
+  const miscellaneous: { name: string; value: string }[] = [];
+  if (header.referenceNumber !== undefined) {
+    miscellaneous.push({ name: 'abc-reference-number', value: String(header.referenceNumber) });
+  }
+  if (header.unitNoteLength) {
+    miscellaneous.push({ name: 'abc-unit-note-length', value: header.unitNoteLength });
+  }
+  if (header.tempo) {
+    miscellaneous.push({ name: 'abc-tempo', value: header.tempo });
+  }
+  // Store extra header fields for round-trip
+  if (header.extraFields && header.extraFields.length > 0) {
+    miscellaneous.push({ name: 'abc-extra-fields', value: JSON.stringify(header.extraFields) });
+  }
+  // Store %% directives for round-trip
+  if (header.directives && header.directives.length > 0) {
+    miscellaneous.push({ name: 'abc-directives', value: JSON.stringify(header.directives) });
+  }
+  // Store original header field order for round-trip
+  if (headerFieldOrder.length > 0) {
+    miscellaneous.push({ name: 'abc-header-order', value: JSON.stringify(headerFieldOrder) });
+  }
+  // Store voice IDs for round-trip
+  if (voiceIds.length > 0) {
+    miscellaneous.push({ name: 'abc-voice-ids', value: JSON.stringify(voiceIds) });
+  }
 
   for (let voiceIndex = 0; voiceIndex < voiceTokensList.length; voiceIndex++) {
     const tokens = voiceTokensList[voiceIndex];
@@ -862,12 +957,41 @@ function buildScore(header: AbcHeader, voiceTokensList: AbcToken[][], voiceIds: 
     const voiceClef = headerVoice
       ? abcClefToMusicXml(headerVoice.clef)
       : undefined;
-    const measures = buildMeasures(tokens, unitNote, keySignature, timeSignature, measureDuration, voiceClef);
+    const buildResult = buildMeasures(tokens, unitNote, keySignature, timeSignature, measureDuration, voiceClef);
     parts.push({
       _id: generateId(),
       id: partId,
-      measures,
+      measures: buildResult.measures,
     });
+
+    // Store line breaks for the first part (all parts share the same line break structure)
+    if (voiceIndex === 0 && buildResult.lineBreaks.length > 0) {
+      miscellaneous.push({ name: 'abc-line-breaks', value: JSON.stringify(buildResult.lineBreaks) });
+    }
+
+    // Detect lyrics layout and store syllable counts per w: line
+    if (voiceIndex === 0) {
+      let hasLyrics = false;
+      let lyricsAfterAll = true;
+      let seenLyrics = false;
+      const lyricLineCounts: number[] = []; // syllable count for each w: line
+      for (const token of tokens) {
+        if (token.type === 'lyrics') {
+          hasLyrics = true;
+          seenLyrics = true;
+          lyricLineCounts.push(token.syllables?.length || 0);
+        } else if (seenLyrics && (token.type === 'note' || token.type === 'rest' || token.type === 'bar')) {
+          // Music after lyrics means interleaved layout
+          lyricsAfterAll = false;
+        }
+      }
+      if (hasLyrics && lyricsAfterAll) {
+        miscellaneous.push({ name: 'abc-lyrics-after-all', value: 'true' });
+      }
+      if (hasLyrics && lyricLineCounts.length > 0) {
+        miscellaneous.push({ name: 'abc-lyrics-line-counts', value: JSON.stringify(lyricLineCounts) });
+      }
+    }
   }
 
   // Build tempo direction if specified
@@ -886,9 +1010,7 @@ function buildScore(header: AbcHeader, voiceTokensList: AbcToken[][], voiceIds: 
       encoding: {
         software: ['musicxml-io (ABC import)'],
       },
-      miscellaneous: header.referenceNumber !== undefined
-        ? [{ name: 'abc-reference-number', value: String(header.referenceNumber) }]
-        : undefined,
+      miscellaneous: miscellaneous.length > 0 ? miscellaneous : undefined,
     },
     partList: partListEntries,
     parts,
@@ -942,7 +1064,7 @@ function buildMeasures(
   timeSignature: TimeSignature,
   measureDuration: number,
   clef?: Clef,
-): Measure[] {
+): { measures: Measure[]; lineBreaks: number[] } {
   const measures: Measure[] = [];
   let currentEntries: MeasureEntry[] = [];
   let currentBarlines: Barline[] = [];
@@ -963,8 +1085,13 @@ function buildMeasures(
   let inChord = false;
   let chordNotes: AbcToken[] = [];
   let currentUnitNote = { ...unitNote };
+  let pendingSpace = false;
+  let pendingChordSpace = false;
+  let pendingTupletStart = false;
+  let pendingKeyChange: string | null = null;
+  const lineBreaks: number[] = []; // measure numbers after which line breaks occur
 
-  function finalizeMeasure(endBarType?: string) {
+  function finalizeMeasure(endBarType?: string, spaceBeforeBar?: boolean) {
     const measure: Measure = {
       _id: generateId(),
       number: String(measureNumber),
@@ -982,12 +1109,28 @@ function buildMeasures(
       isFirstMeasure = false;
     }
 
+    // Apply pending key change to this measure
+    if (pendingKeyChange) {
+      (measure as any).abcKeyChange = pendingKeyChange;
+      if (!measure.attributes) {
+        measure.attributes = {};
+      }
+      const kValue = pendingKeyChange.replace(/^K:\s*/, '');
+      measure.attributes.key = parseKeySignature(kValue);
+      pendingKeyChange = null;
+    }
+
     // Add barlines
     if (endBarType || currentBarlines.length > 0) {
       measure.barlines = [...currentBarlines];
       if (endBarType) {
         const barline = createBarline(endBarType, 'right', pendingEndingNumber);
-        if (barline) measure.barlines.push(barline);
+        if (barline) {
+          if (spaceBeforeBar) {
+            (barline as any).abcSpaceBefore = true;
+          }
+          measure.barlines.push(barline);
+        }
         pendingEndingNumber = null;
       }
     }
@@ -1011,6 +1154,18 @@ function buildMeasures(
 
         const entry = createNoteEntry(token, currentUnitNote, pendingTie, inGrace, tupletState);
         pendingTie = false;
+
+        // Mark space before this note
+        if (pendingSpace) {
+          (entry as any).abcSpaceBefore = true;
+          pendingSpace = false;
+        }
+
+        // Mark tuplet start
+        if (pendingTupletStart && !inGrace) {
+          (entry as any).abcTupletStart = true;
+          pendingTupletStart = false;
+        }
 
         // Handle chord symbol
         if (pendingChordSymbol) {
@@ -1086,6 +1241,12 @@ function buildMeasures(
         if (inChord) break;
         const restEntry = createRestEntry(token, currentUnitNote, tupletState, measureDuration);
 
+        // Mark space before this rest
+        if (pendingSpace) {
+          (restEntry as any).abcSpaceBefore = true;
+          pendingSpace = false;
+        }
+
         // Handle dynamics
         if (pendingDynamic) {
           const dynDir = createDynamicsDirection(pendingDynamic);
@@ -1108,6 +1269,8 @@ function buildMeasures(
       case 'chord_start':
         inChord = true;
         chordNotes = [];
+        pendingChordSpace = pendingSpace;
+        pendingSpace = false;
         break;
 
       case 'chord_end': {
@@ -1148,6 +1311,11 @@ function buildMeasures(
             chordToken.durationDen = originalDen;
 
             if (ci === 0) {
+              // Mark space before chord
+              if (pendingChordSpace) {
+                (entry as any).abcSpaceBefore = true;
+                pendingChordSpace = false;
+              }
               // Handle slur start on first note of chord
               while (pendingSlurStarts > 0) {
                 if (!entry.notations) entry.notations = [];
@@ -1171,33 +1339,44 @@ function buildMeasures(
 
       case 'bar': {
         const barType = token.barType || 'regular';
+        const barSpaceBefore = pendingSpace;
+        pendingSpace = false;
 
         if (barType === 'double-repeat') {
-          // Double repeat: end current measure with backward repeat, start next with forward
-          finalizeMeasure('end-repeat');
+          finalizeMeasure('end-repeat', barSpaceBefore);
           currentBarlines.push(createBarline('start-repeat', 'left', null)!);
         } else if (barType === 'end-repeat') {
-          finalizeMeasure('end-repeat');
+          finalizeMeasure('end-repeat', barSpaceBefore);
         } else if (barType === 'start-repeat') {
           if (currentEntries.length > 0) {
-            finalizeMeasure('regular');
+            finalizeMeasure('regular', barSpaceBefore);
           }
           currentBarlines.push(createBarline('start-repeat', 'left', null)!);
         } else if (barType === 'final') {
-          finalizeMeasure('final');
+          finalizeMeasure('final', barSpaceBefore);
         } else if (barType === 'end-repeat-final') {
-          finalizeMeasure('end-repeat');
+          finalizeMeasure('end-repeat', barSpaceBefore);
         } else {
           if (currentEntries.length > 0 || currentBarlines.length > 0) {
-            finalizeMeasure(barType !== 'regular' ? barType : undefined);
+            finalizeMeasure(barType !== 'regular' ? barType : undefined, barSpaceBefore);
           }
         }
         break;
       }
 
-      case 'ending':
-        pendingEndingNumber = token.value;
+      case 'ending': {
+        // Create a left barline with ending marker for the current measure
+        const endingBarline: Barline = {
+          _id: generateId(),
+          location: 'left',
+          ending: {
+            number: token.value,
+            type: 'start',
+          },
+        };
+        currentBarlines.push(endingBarline);
         break;
+      }
 
       case 'tie':
         pendingTie = true;
@@ -1248,6 +1427,7 @@ function buildMeasures(
           q: token.tupletQ!,
           remaining: token.tupletR || token.tupletP!,
         };
+        pendingTupletStart = true;
         break;
 
       case 'chord_symbol':
@@ -1289,8 +1469,25 @@ function buildMeasures(
         if (lMatch) {
           currentUnitNote = { num: parseInt(lMatch[1], 10), den: parseInt(lMatch[2], 10) };
         }
+        const kMatch = token.value.match(/^K:\s*(.*)/);
+        if (kMatch) {
+          // Store inline K: key change - will be attached to the next measure
+          pendingKeyChange = `K:${kMatch[1]}`;
+        }
         break;
       }
+
+      case 'space':
+        pendingSpace = true;
+        break;
+
+      case 'line_break':
+        // Record line break position: after the last finalized measure
+        if (measures.length > 0) {
+          lineBreaks.push(measures.length);
+        }
+        pendingSpace = false;
+        break;
 
       default:
         break;
@@ -1305,7 +1502,7 @@ function buildMeasures(
   // Handle tie stop on notes after tie start
   applyTieStops(measures);
 
-  return measures;
+  return { measures, lineBreaks };
 }
 
 function applyLyricsToExistingNotes(
@@ -1439,13 +1636,11 @@ function createNoteEntry(
       actualNotes: tupletState.p,
       normalNotes: tupletState.q,
     };
+  }
 
-    // Add tuplet notation for first and last notes
-    if (!entry.notations) entry.notations = [];
-    if (tupletState.remaining === tupletState.p) {
-      // First note of tuplet (remaining was just set to p but about to be decremented)
-      // Actually remaining is decremented after this function, so remaining===p means first note
-    }
+  // Preserve explicit natural flag for round-trip
+  if ((token as any).explicitNatural) {
+    (entry as any).abcExplicitNatural = true;
   }
 
   return entry;
@@ -1462,6 +1657,8 @@ function createRestEntry(
 
   // Check if this is a whole-measure rest (Z)
   const isWholeMeasure = token.value.startsWith('Z');
+  // Check if this is an invisible rest (x or X)
+  const isInvisible = token.value.startsWith('x') || token.value.startsWith('X');
   let duration: number;
 
   if (isWholeMeasure) {
@@ -1475,7 +1672,7 @@ function createRestEntry(
 
   const { noteType, dots } = durationToNoteType(duration);
 
-  return {
+  const entry: NoteEntry = {
     _id: generateId(),
     type: 'note',
     rest: isWholeMeasure ? { measure: true } : {},
@@ -1484,6 +1681,12 @@ function createRestEntry(
     noteType,
     dots: dots > 0 ? dots : undefined,
   };
+
+  if (isInvisible) {
+    entry.printObject = false;
+  }
+
+  return entry;
 }
 
 function createBarline(barType: string, location: 'left' | 'right', endingNumber: string | null): Barline | null {
@@ -1595,9 +1798,9 @@ function createDynamicsDirection(dynamic: string): DirectionEntry | null {
  */
 export function parseAbc(abcString: string): Score {
   const lines = abcString.split('\n');
-  const { header, bodyStartIndex } = parseHeader(lines);
+  const { header, bodyStartIndex, headerFieldOrder } = parseHeader(lines);
   const bodyLines = lines.slice(bodyStartIndex);
   const { tokens: voiceTokensList, voiceIds } = tokenizeBody(bodyLines);
-  const score = buildScore(header, voiceTokensList, voiceIds);
+  const score = buildScore(header, voiceTokensList, voiceIds, headerFieldOrder);
   return score;
 }
