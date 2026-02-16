@@ -410,13 +410,29 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
   const lyricsLineCountsStr = score.metadata.miscellaneous?.find(m => m.name === 'abc-lyrics-line-counts')?.value;
   const lyricsLineCounts: number[] = lyricsLineCountsStr ? JSON.parse(lyricsLineCountsStr) : [];
 
+  // Check for inline voice markers
+  const inlineVoiceMarkersStr = score.metadata.miscellaneous?.find(m => m.name === 'abc-inline-voice-markers')?.value;
+  const inlineVoiceMarkers: Record<string, string> = inlineVoiceMarkersStr ? JSON.parse(inlineVoiceMarkersStr) : {};
+  const useInlineVoiceMarkers = Object.keys(inlineVoiceMarkers).length > 0;
+
+  // Output standalone V: declaration lines (when inline [V:] markers are used)
+  if (useInlineVoiceMarkers) {
+    const voiceDeclStr = score.metadata.miscellaneous?.find(m => m.name === 'abc-voice-declaration-lines')?.value;
+    if (voiceDeclStr) {
+      const voiceDeclLines: string[] = JSON.parse(voiceDeclStr);
+      for (const vl of voiceDeclLines) {
+        lines.push(vl);
+      }
+    }
+  }
+
   // Body
   const multiVoice = score.parts.length > 1;
 
   for (let partIdx = 0; partIdx < score.parts.length; partIdx++) {
     const part = score.parts[partIdx];
 
-    if (multiVoice) {
+    if (multiVoice && !useInlineVoiceMarkers) {
       // Use stored voice ID if available, otherwise generate one
       const voiceId = storedVoiceIds[partIdx] || String(partIdx + 1);
       let voiceLine = `V:${voiceId}`;
@@ -433,7 +449,16 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
     const divisions = getPartDivisions(part);
     const bodyResult = serializePartBody(part, divisions, unitNote, opts, lineBreaks, lyricsAfterAll, lyricsLineCounts);
 
-    lines.push(bodyResult.music);
+    let musicLine = bodyResult.music;
+
+    // Prefix with inline voice marker if applicable
+    if (multiVoice && useInlineVoiceMarkers) {
+      const voiceId = storedVoiceIds[partIdx] || String(partIdx + 1);
+      const marker = inlineVoiceMarkers[voiceId] || `[V:${voiceId}]`;
+      musicLine = marker + musicLine;
+    }
+
+    lines.push(musicLine);
 
     if (opts.includeLyrics && bodyResult.lyrics) {
       lines.push(bodyResult.lyrics);
@@ -479,12 +504,13 @@ interface PartBodyResult {
 function serializePartBody(
   part: Part,
   divisions: number,
-  unitNote: UnitNote,
+  initialUnitNote: UnitNote,
   opts: Required<AbcSerializeOptions>,
   lineBreaks: number[] = [],
   lyricsAfterAll: boolean = false,
   lyricsLineCounts: number[] = [],
 ): PartBodyResult {
+  let unitNote = { ...initialUnitNote };
   const musicParts: string[] = [];
   const allLyrics: Map<number, string[]> = new Map(); // measureIndex -> lyrics array
 
@@ -503,10 +529,14 @@ function serializePartBody(
       musicParts.push(serializeBarline(leftBarline));
     }
 
-    // Serialize entries
-    const { noteStr, lyrics } = serializeMeasureEntries(
+    // Serialize entries (pass mutable unitNote reference for inline L: tracking)
+    const { noteStr, lyrics, updatedUnitNote } = serializeMeasureEntries(
       measure, measDivisions, unitNote, opts,
     );
+    // Update unitNote if inline [L:] changed it
+    if (updatedUnitNote) {
+      unitNote = updatedUnitNote;
+    }
     musicParts.push(noteStr);
 
     if (lyrics.length > 0) {
@@ -520,9 +550,11 @@ function serializePartBody(
       const spaceBefore = (rightBarline as any).abcSpaceBefore ? ' ' : '';
       musicParts.push(spaceBefore + serializeBarline(rightBarline));
     } else if (mi < part.measures.length - 1) {
-      musicParts.push('|');
+      const spaceBefore = (measure as any).abcSpaceBeforeBar ? ' ' : '';
+      musicParts.push(spaceBefore + '|');
     } else {
-      musicParts.push('|');
+      const spaceBefore = (measure as any).abcSpaceBeforeBar ? ' ' : '';
+      musicParts.push(spaceBefore + '|');
     }
 
     // Insert line break after measure if this is a line break position
@@ -657,9 +689,11 @@ function serializeMeasureEntries(
   divisions: number,
   unitNote: UnitNote,
   opts: Required<AbcSerializeOptions>,
-): { noteStr: string; lyrics: string[] } {
+): { noteStr: string; lyrics: string[]; updatedUnitNote?: UnitNote } {
   const parts: string[] = [];
   const lyrics: string[] = [];
+  // Mutable unit note for inline [L:] changes
+  let currentUnitNote = { ...unitNote };
   // Collect chord pitches to emit them as [CEG] when the chord ends
   let chordPitches: string[] = [];
   let chordDurationStr = '';
@@ -682,7 +716,7 @@ function serializeMeasureEntries(
           while (gi < measure.entries.length) {
             const ge = measure.entries[gi];
             if (ge.type === 'note' && ge.grace) {
-              const gs = serializeNote(ge, divisions, unitNote, false);
+              const gs = serializeNote(ge, divisions, currentUnitNote, false);
               graceNotes.push(gs.pitch);
               gi++;
             } else {
@@ -695,14 +729,18 @@ function serializeMeasureEntries(
           break;
         }
 
-        const serialized = serializeNote(note, divisions, unitNote, false);
+        const serialized = serializeNote(note, divisions, currentUnitNote, false);
 
         if (note.chord) {
-          // Accumulate chord pitch
+          // Accumulate chord pitch (with individual duration if applicable)
           if (!inChord) {
             inChord = true;
           }
-          chordPitches.push(serialized.pitch);
+          if ((note as any).abcIndividualChordDuration) {
+            chordPitches.push(serialized.pitch + serialized.duration);
+          } else {
+            chordPitches.push(serialized.pitch);
+          }
           break;
         }
 
@@ -742,7 +780,7 @@ function serializeMeasureEntries(
           // Undo the tuplet modification: ABC notation expects the base duration
           // with the (p prefix handling the modification
           const baseDuration = Math.round(note.duration * note.timeModification.actualNotes / note.timeModification.normalNotes);
-          const { num, den } = durationToAbcFraction(baseDuration, divisions, unitNote);
+          const { num, den } = durationToAbcFraction(baseDuration, divisions, currentUnitNote);
           const baseDurationStr = formatAbcDuration(num, den);
           const pitchStr = serializePitch(note.pitch, (note as any).abcExplicitNatural);
           // Rebuild serialized with base duration
@@ -772,8 +810,9 @@ function serializeMeasureEntries(
         if (nextEntry && nextEntry.type === 'note' && nextEntry.chord) {
           // Start collecting chord pitches
           inChord = true;
-          chordPitches = [effectiveSerialized.pitch];
-          chordDurationStr = effectiveSerialized.duration;
+          const hasIndividualDur = (note as any).abcIndividualChordDuration;
+          chordPitches = [hasIndividualDur ? effectiveSerialized.pitch + effectiveSerialized.duration : effectiveSerialized.pitch];
+          chordDurationStr = hasIndividualDur ? '' : effectiveSerialized.duration;
           chordTieStr = '';
           chordSlurStart = '';
           chordSlurEnd = '';
@@ -805,6 +844,17 @@ function serializeMeasureEntries(
       }
 
       case 'direction': {
+        // Check for inline field (e.g., [L:1/32])
+        if ((entry as any).abcInlineField) {
+          const inlineFieldStr: string = (entry as any).abcInlineField;
+          parts.push(inlineFieldStr);
+          // Update current unit note if it's an [L:] change
+          const lMatch = inlineFieldStr.match(/^\[L:\s*(\d+)\/(\d+)\]$/);
+          if (lMatch) {
+            currentUnitNote = { num: parseInt(lMatch[1], 10), den: parseInt(lMatch[2], 10) };
+          }
+          break;
+        }
         if (opts.includeDynamics) {
           const dynStr = serializeDynamics(entry);
           if (dynStr) {
@@ -834,7 +884,9 @@ function serializeMeasureEntries(
     parts.push('[' + chordPitches.join('') + ']' + chordDurationStr + chordTieStr + chordSlurEnd);
   }
 
-  return { noteStr: parts.join(''), lyrics };
+  // Return updated unit note if it changed (from inline [L:] fields)
+  const unitNoteChanged = currentUnitNote.num !== unitNote.num || currentUnitNote.den !== unitNote.den;
+  return { noteStr: parts.join(''), lyrics, updatedUnitNote: unitNoteChanged ? currentUnitNote : undefined };
 }
 
 interface SerializedNote {

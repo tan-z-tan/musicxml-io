@@ -168,10 +168,11 @@ function parseHeader(lines: string[]): { header: AbcHeader; bodyStartIndex: numb
     const line = lines[i].trim();
     if (line === '') continue;
 
-    // %% directives in header (before K:)
-    if (line.startsWith('%%') && !foundKey) {
+    // %% directives in header
+    if (line.startsWith('%%')) {
       header.directives!.push(line);
       headerFieldOrder.push(line);
+      if (foundKey) bodyStartIndex = i + 1;
       continue;
     }
 
@@ -180,8 +181,20 @@ function parseHeader(lines: string[]): { header: AbcHeader; bodyStartIndex: numb
 
     // Header fields are in format "X:value"
     const fieldMatch = line.match(/^([A-Za-z]):\s*(.*)/);
-    if (fieldMatch && (!foundKey || fieldMatch[1] === 'V')) {
+    // After K: is found, only accept specific header-like fields (I:, N:)
+    // V: lines after K: are handled separately - they go to both header (for voice defs)
+    // and remain in the body (for voice switching), so they DON'T go in headerFieldOrder
+    const postKFields = new Set(['I', 'N']);
+    if (fieldMatch && (!foundKey || fieldMatch[1] === 'V' || (foundKey && postKFields.has(fieldMatch[1])))) {
       const [, field, value] = fieldMatch;
+      // If we're after K: and this is a post-K: header field (I:, N:)
+      if (foundKey && field !== 'V') {
+        // Post-K: fields (I:, N:, etc.) - store as extra fields
+        header.extraFields!.push({ field, value: value.trim() });
+        headerFieldOrder.push(line);
+        bodyStartIndex = i + 1;
+        continue;
+      }
       switch (field) {
         case 'X':
           header.referenceNumber = parseInt(value, 10);
@@ -396,11 +409,13 @@ function durationToNoteType(duration: number): { noteType: NoteType; dots: numbe
 // Tokenizer
 // ============================================================
 
-function tokenizeBody(bodyLines: string[]): { tokens: AbcToken[][]; voiceIds: string[] } {
+function tokenizeBody(bodyLines: string[]): { tokens: AbcToken[][]; voiceIds: string[]; inlineVoiceMarkers: Map<string, string>; voiceDeclarationLines: string[] } {
   const voiceTokens: Map<string, AbcToken[]> = new Map();
   let currentVoice = '1';
   voiceTokens.set(currentVoice, []);
   let isContinuation = false; // true if previous line ended with \
+  const inlineVoiceMarkers: Map<string, string> = new Map(); // voiceId -> original [V:...] text
+  const voiceDeclarationLines: string[] = []; // standalone V: lines in body for round-trip
 
   for (const rawLine of bodyLines) {
     const trimmedEnd = rawLine.trimEnd();
@@ -426,6 +441,7 @@ function tokenizeBody(bodyLines: string[]): { tokens: AbcToken[][]; voiceIds: st
       if (!voiceTokens.has(currentVoice)) {
         voiceTokens.set(currentVoice, []);
       }
+      voiceDeclarationLines.push(line);
       isContinuation = false;
       continue;
     }
@@ -484,11 +500,16 @@ function tokenizeBody(bodyLines: string[]): { tokens: AbcToken[][]; voiceIds: st
     // Process tokens, handling inline voice changes
     for (const token of tokens) {
       if (token.type === 'inline_field') {
-        const fieldMatch = token.value.match(/^V:\s*(\S+)/);
+        const fieldMatch = token.value.match(/^V:\s*(.+)/);
         if (fieldMatch) {
-          currentVoice = fieldMatch[1];
+          const voiceId = fieldMatch[1].trim().split(/\s+/)[0];
+          currentVoice = voiceId;
           if (!voiceTokens.has(currentVoice)) {
             voiceTokens.set(currentVoice, []);
+          }
+          // Store the original inline voice marker text for round-trip
+          if (!inlineVoiceMarkers.has(voiceId)) {
+            inlineVoiceMarkers.set(voiceId, `[${token.value}]`);
           }
           continue;
         }
@@ -515,7 +536,7 @@ function tokenizeBody(bodyLines: string[]): { tokens: AbcToken[][]; voiceIds: st
     }
   }
 
-  return { tokens: result.length > 0 ? result : [[]], voiceIds };
+  return { tokens: result.length > 0 ? result : [[]], voiceIds, inlineVoiceMarkers, voiceDeclarationLines };
 }
 
 function parseLyricLine(text: string): string[] {
@@ -904,7 +925,7 @@ function parseDuration(line: string, i: number): { num: number; den: number; nex
 // Score Builder
 // ============================================================
 
-function buildScore(header: AbcHeader, voiceTokensList: AbcToken[][], voiceIds: string[], headerFieldOrder: string[]): Score {
+function buildScore(header: AbcHeader, voiceTokensList: AbcToken[][], voiceIds: string[], headerFieldOrder: string[], inlineVoiceMarkers: Map<string, string> = new Map(), voiceDeclarationLines: string[] = []): Score {
   const unitNote = parseUnitNoteLength(header.unitNoteLength, header.meter);
   const timeSignature = parseTimeSignature(header.meter || '4/4');
   const keySignature = parseKeySignature(header.key || 'C');
@@ -943,6 +964,19 @@ function buildScore(header: AbcHeader, voiceTokensList: AbcToken[][], voiceIds: 
   // Store voice IDs for round-trip
   if (voiceIds.length > 0) {
     miscellaneous.push({ name: 'abc-voice-ids', value: JSON.stringify(voiceIds) });
+  }
+  // Store inline voice markers for round-trip (e.g., "[V: P1]" format)
+  if (inlineVoiceMarkers.size > 0) {
+    const markersObj: Record<string, string> = {};
+    for (const [id, marker] of inlineVoiceMarkers) {
+      markersObj[id] = marker;
+    }
+    miscellaneous.push({ name: 'abc-inline-voice-markers', value: JSON.stringify(markersObj) });
+  }
+  // Store standalone V: declaration lines from body for round-trip
+  // (used when inline [V:] markers are present and V: declarations need separate output)
+  if (voiceDeclarationLines.length > 0 && inlineVoiceMarkers.size > 0) {
+    miscellaneous.push({ name: 'abc-voice-declaration-lines', value: JSON.stringify(voiceDeclarationLines) });
   }
 
   for (let voiceIndex = 0; voiceIndex < voiceTokensList.length; voiceIndex++) {
@@ -1131,6 +1165,11 @@ function buildMeasures(
       pendingKeyChange = null;
     }
 
+    // Store space before barline on the measure for regular barlines
+    if (spaceBeforeBar) {
+      (measure as any).abcSpaceBeforeBar = true;
+    }
+
     // Add barlines
     if (endBarType || currentBarlines.length > 0) {
       measure.barlines = [...currentBarlines];
@@ -1307,15 +1346,30 @@ function buildMeasures(
           const chordDurNum = token.durationNum || 1;
           const chordDurDen = token.durationDen || 1;
 
+          // Check if individual notes have non-default durations
+          // If so, use individual durations instead of chord-level duration
+          const hasIndividualDurations = chordNotes.some(
+            cn => (cn.durationNum !== undefined && cn.durationNum !== 1) ||
+                  (cn.durationDen !== undefined && cn.durationDen !== 1)
+          );
+          const useIndividualDurations = hasIndividualDurations && chordDurNum === 1 && chordDurDen === 1;
+
           for (let ci = 0; ci < chordNotes.length; ci++) {
             const chordToken = chordNotes[ci];
-            // Override duration with chord duration
+            // Override duration with chord duration (unless using individual durations)
             const originalNum = chordToken.durationNum;
             const originalDen = chordToken.durationDen;
-            chordToken.durationNum = chordDurNum;
-            chordToken.durationDen = chordDurDen;
+            if (!useIndividualDurations) {
+              chordToken.durationNum = chordDurNum;
+              chordToken.durationDen = chordDurDen;
+            }
 
             const entry = createNoteEntry(chordToken, currentUnitNote, false, inGrace, tupletState);
+
+            // Mark if this chord uses individual durations (for serializer)
+            if (useIndividualDurations) {
+              (entry as any).abcIndividualChordDuration = true;
+            }
 
             // Restore for any other processing
             chordToken.durationNum = originalNum;
@@ -1479,6 +1533,15 @@ function buildMeasures(
         const lMatch = token.value.match(/^L:\s*(\d+)\/(\d+)/);
         if (lMatch) {
           currentUnitNote = { num: parseInt(lMatch[1], 10), den: parseInt(lMatch[2], 10) };
+          // Store inline L: for round-trip as a direction entry
+          const inlineEntry: MeasureEntry = {
+            _id: generateId(),
+            type: 'direction',
+            directionType: 'words',
+            words: '',
+          };
+          (inlineEntry as any).abcInlineField = `[L:${lMatch[1]}/${lMatch[2]}]`;
+          currentEntries.push(inlineEntry);
         }
         const kMatch = token.value.match(/^K:\s*(.*)/);
         if (kMatch) {
@@ -1820,7 +1883,7 @@ export function parseAbc(abcString: string): Score {
   const lines = abcString.split('\n');
   const { header, bodyStartIndex, headerFieldOrder } = parseHeader(lines);
   const bodyLines = lines.slice(bodyStartIndex);
-  const { tokens: voiceTokensList, voiceIds } = tokenizeBody(bodyLines);
-  const score = buildScore(header, voiceTokensList, voiceIds, headerFieldOrder);
+  const { tokens: voiceTokensList, voiceIds, inlineVoiceMarkers, voiceDeclarationLines } = tokenizeBody(bodyLines);
+  const score = buildScore(header, voiceTokensList, voiceIds, headerFieldOrder, inlineVoiceMarkers, voiceDeclarationLines);
   return score;
 }
