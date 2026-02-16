@@ -22,3 +22,6 @@ npm-debug.log*
 coverage/
 coverage-report.json
 *.mid
+
+# Claude code
+.claude/
