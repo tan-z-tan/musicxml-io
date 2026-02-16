@@ -1533,12 +1533,11 @@ function buildMeasures(
         const lMatch = token.value.match(/^L:\s*(\d+)\/(\d+)/);
         if (lMatch) {
           currentUnitNote = { num: parseInt(lMatch[1], 10), den: parseInt(lMatch[2], 10) };
-          // Store inline L: for round-trip as a direction entry
-          const inlineEntry: MeasureEntry = {
+          // Store inline L: as a direction with words, so it can survive MusicXML round-trip
+          const inlineEntry: DirectionEntry = {
             _id: generateId(),
             type: 'direction',
-            directionType: 'words',
-            words: '',
+            directionTypes: [{ kind: 'words', text: `[L:${lMatch[1]}/${lMatch[2]}]` }],
           };
           (inlineEntry as any).abcInlineField = `[L:${lMatch[1]}/${lMatch[2]}]`;
           currentEntries.push(inlineEntry);
@@ -1717,9 +1716,17 @@ function createNoteEntry(
     };
   }
 
-  // Preserve explicit natural flag for round-trip
+  // Set accidental info for MusicXML compatibility
   if ((token as any).explicitNatural) {
+    entry.accidental = { value: 'natural' };
     (entry as any).abcExplicitNatural = true;
+  } else if (token.accidental !== undefined && token.accidental !== 0) {
+    switch (token.accidental) {
+      case 1: entry.accidental = { value: 'sharp' }; break;
+      case 2: entry.accidental = { value: 'double-sharp' }; break;
+      case -1: entry.accidental = { value: 'flat' }; break;
+      case -2: entry.accidental = { value: 'double-flat' }; break;
+    }
   }
 
   return entry;
