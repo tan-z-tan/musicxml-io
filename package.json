@@ -1,7 +1,7 @@
 {
   "name": "musicxml-io",
   "version": "0.3.3",
-  "description": "Parse and serialize MusicXML (.xml/.mxl) with high round-trip fidelity",
+  "description": "Parse and serialize MusicXML (.xml/.mxl) and ABC notation with high round-trip fidelity",
   "author": "tan-z-tan",
   "license": "MIT",
   "repository": {
@@ -65,7 +65,9 @@
     "sheet-music",
     "score",
     "midi",
-    "mxl"
+    "mxl",
+    "abc",
+    "abc-notation"
   ],
   "devDependencies": {
     "@types/node": "^20.10.0",

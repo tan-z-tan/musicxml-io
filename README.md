@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/musicxml-io.svg)](https://www.npmjs.com/package/musicxml-io)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
-TypeScript library for parsing and serializing MusicXML.
+TypeScript library for parsing and serializing MusicXML and ABC notation.
 
 ## Architecture
 
@@ -13,10 +13,15 @@ TypeScript library for parsing and serializing MusicXML.
 │   .xml / .mxl   │─────▶│      Score      │─────▶│   .xml / .mxl   │
 └─────────────────┘      │                 │      └─────────────────┘
                    parse │   ┌─────────┐   │ serialize
-                         │   │ parts   │   │      ┌─────────────────┐
-                         │   │  └─measures │      │     MIDI        │
-                         │   │    └─entries│─────▶│   .mid          │
-                         │   └─────────┘   │      └─────────────────┘
+┌─────────────────┐      │   │ parts   │   │      ┌─────────────────┐
+│   ABC notation  │      │   │  └─measures │      │   ABC notation  │
+│   .abc          │─────▶│   │    └─entries│─────▶│   .abc          │
+└─────────────────┘      │   └─────────┘   │      └─────────────────┘
+              parseAbc   │                 │ serializeAbc
+                         │                 │      ┌─────────────────┐
+                         │                 │      │     MIDI        │
+                         │                 │─────▶│   .mid          │
+                         │                 │      └─────────────────┘
                          │                 │ exportMidi
                          └────────┬────────┘
                                   │
@@ -67,6 +72,27 @@ import { parse, serialize, transpose } from 'musicxml-io';
 const score = parse(xmlString);
 const transposed = transpose(score, 2);  // up 2 semitones
 const output = serialize(transposed);
+```
+
+### ABC Notation
+
+```typescript
+import { parseAbc, serializeAbc } from 'musicxml-io';
+
+// ABC → Score
+const score = parseAbc(abcString);
+
+// Score → ABC
+const abc = serializeAbc(score, {
+  referenceNumber: 1,
+  includeChordSymbols: true,
+  includeDynamics: true,
+  includeLyrics: true,
+});
+
+// Auto-detect format (MusicXML, .mxl, or ABC)
+import { parseAuto } from 'musicxml-io';
+const score2 = parseAuto(input);
 ```
 
 ⚠️ **Warning**: This library's API is not yet stable and may change between versions.
@@ -170,10 +196,12 @@ const { valid, errors } = validate(score);
 | `parse(xml)` | Parse MusicXML string |
 | `parseFile(path)` | Parse from file |
 | `parseCompressed(buffer)` | Parse .mxl |
-| `parseAuto(data)` | Auto-detect format |
+| `parseAbc(abc)` | Parse ABC notation string |
+| `parseAuto(data)` | Auto-detect format (MusicXML / .mxl / ABC) |
 | `serialize(score)` | To MusicXML string |
 | `serializeToFile(score, path)` | To file |
 | `serializeCompressed(score)` | To .mxl |
+| `serializeAbc(score, options?)` | To ABC notation string |
 | `exportMidi(score)` | To MIDI |
 
 ### Operations
@@ -324,11 +352,20 @@ This feature enables:
 
 ## Round-trip Fidelity
 
+### MusicXML
+
 | Metric | Score |
 |--------|------:|
 | Overall | 99.6% |
 | Node coverage | 99.9% |
 | Attribute coverage | 95.9% |
+
+### ABC Notation
+
+| Path | Fidelity |
+|------|----------|
+| ABC → Score → ABC | High (42 fixtures passing) |
+| ABC → MusicXML → ABC | Musical content preserved |
 
 ## Contributing
 
