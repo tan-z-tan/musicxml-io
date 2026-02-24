@@ -371,7 +371,7 @@ export interface NoteEntry {
   rest?: RestInfo;
   unpitched?: { displayStep?: string; displayOctave?: number };
   duration: number;
-  voice?: number; // Optional - some MusicXML files don't include voice
+  voice?: string; // Optional - some MusicXML files don't include voice (MusicXML spec: xs:string)
   staff?: number;
   chord?: boolean;
   cue?: boolean;
@@ -431,7 +431,7 @@ export interface ForwardEntry {
   _id: string;
   type: 'forward';
   duration: number;
-  voice?: number;
+  voice?: string;
   staff?: number;
 }
 
@@ -457,7 +457,7 @@ export interface DirectionEntry {
   placement?: 'above' | 'below';
   directive?: boolean;
   staff?: number;
-  voice?: number;
+  voice?: string;
   offset?: number;
   offsetSound?: boolean;
   sound?: DirectionSound;
@@ -896,7 +896,7 @@ export interface Lyric {
 // ============================================================
 export interface VoiceGroup {
   staff: number;
-  voice: number;
+  voice: string;
   notes: NoteEntry[];
 }
 
@@ -930,9 +930,9 @@ export interface NoteIteratorItem {
  * Voice to Staff mapping for inferring staff when not explicitly specified
  */
 export interface VoiceToStaffMap {
-  get(voice: number): number | undefined;
-  has(voice: number): boolean;
-  entries(): IterableIterator<[number, number]>;
+  get(voice: string): number | undefined;
+  has(voice: string): boolean;
+  entries(): IterableIterator<[string, number]>;
   size: number;
 }
 
@@ -985,7 +985,7 @@ export interface StaffRange {
  */
 export interface PositionQueryOptions {
   staff?: number;
-  voice?: number;
+  voice?: string;
   includeChordNotes?: boolean;
 }
 
@@ -1003,7 +1003,7 @@ export interface VerticalSlice {
  */
 export interface VoiceLine {
   partIndex: number;
-  voice: number;
+  voice: string;
   staff?: number;
   notes: NoteWithContext[];
 }

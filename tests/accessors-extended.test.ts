@@ -101,8 +101,8 @@ describe('Phase 1: Staff Enhancement', () => {
       const map = buildVoiceToStaffMap(measure);
 
       expect(map.size).toBe(2);
-      expect(map.get(1)).toBe(1); // Voice 1 -> Staff 1
-      expect(map.get(2)).toBe(2); // Voice 2 -> Staff 2
+      expect(map.get('1')).toBe(1); // Voice '1' -> Staff 1
+      expect(map.get('2')).toBe(2); // Voice '2' -> Staff 2
     });
   });
 
@@ -115,8 +115,8 @@ describe('Phase 1: Staff Enhancement', () => {
       const map = buildVoiceToStaffMapForPart(part);
 
       expect(map.size).toBe(2);
-      expect(map.get(1)).toBe(1);
-      expect(map.get(2)).toBe(2);
+      expect(map.get('1')).toBe(1);
+      expect(map.get('2')).toBe(2);
     });
   });
 
@@ -134,9 +134,9 @@ describe('Phase 1: Staff Enhancement', () => {
 
     it('should infer staff from voice when staff is not set', () => {
       const map = {
-        get: (voice: number) => (voice === 1 ? 1 : voice === 2 ? 2 : undefined),
-        has: (voice: number) => voice === 1 || voice === 2,
-        entries: () => new Map([[1, 1], [2, 2]]).entries(),
+        get: (voice: string) => (voice === '1' ? 1 : voice === '2' ? 2 : undefined),
+        has: (voice: string) => voice === '1' || voice === '2',
+        entries: () => new Map([['1', 1], ['2', 2]]).entries(),
         size: 2,
       };
 
@@ -144,7 +144,7 @@ describe('Phase 1: Staff Enhancement', () => {
         type: 'note',
         pitch: { step: 'C', octave: 4 },
         duration: 1,
-        voice: 2,
+        voice: '2',
         // staff is undefined
       };
 
@@ -156,7 +156,7 @@ describe('Phase 1: Staff Enhancement', () => {
       const emptyMap = {
         get: () => undefined,
         has: () => false,
-        entries: () => new Map<number, number>().entries(),
+        entries: () => new Map<string, number>().entries(),
         size: 0,
       };
 
@@ -164,7 +164,7 @@ describe('Phase 1: Staff Enhancement', () => {
         type: 'note',
         pitch: { step: 'C', octave: 4 },
         duration: 1,
-        voice: 5,
+        voice: '5',
       };
 
       const staff = inferStaff(noteWithoutStaff, emptyMap);
@@ -211,8 +211,8 @@ describe('Phase 1: Staff Enhancement', () => {
       const voicesStaff1 = getVoicesForStaff(measure, 1);
       const voicesStaff2 = getVoicesForStaff(measure, 2);
 
-      expect(voicesStaff1).toEqual([1]);
-      expect(voicesStaff2).toEqual([2]);
+      expect(voicesStaff1).toEqual(['1']);
+      expect(voicesStaff2).toEqual(['2']);
     });
   });
 
@@ -331,10 +331,10 @@ describe('Phase 2: Position and Voice Line', () => {
       const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
       const score = parse(xml);
 
-      const voiceLine = getVoiceLine(score, { partIndex: 0, voice: 1 });
+      const voiceLine = getVoiceLine(score, { partIndex: 0, voice: '1' });
 
       expect(voiceLine.partIndex).toBe(0);
-      expect(voiceLine.voice).toBe(1);
+      expect(voiceLine.voice).toBe('1');
       expect(voiceLine.notes.length).toBe(8); // 4 notes in each of 2 measures
     });
 
@@ -342,8 +342,8 @@ describe('Phase 2: Position and Voice Line', () => {
       const xml = readFileSync(join(lilypondPath, '43a-PianoStaff.xml'), 'utf-8');
       const score = parse(xml);
 
-      const voiceLine1 = getVoiceLine(score, { partIndex: 0, voice: 1, staff: 1 });
-      const voiceLine2 = getVoiceLine(score, { partIndex: 0, voice: 2, staff: 2 });
+      const voiceLine1 = getVoiceLine(score, { partIndex: 0, voice: '1', staff: 1 });
+      const voiceLine2 = getVoiceLine(score, { partIndex: 0, voice: '2', staff: 2 });
 
       expect(voiceLine1.notes.length).toBeGreaterThan(0);
       expect(voiceLine2.notes.length).toBeGreaterThan(0);
@@ -357,7 +357,7 @@ describe('Phase 2: Position and Voice Line', () => {
 
       const voiceLine = getVoiceLineInRange(score, {
         partIndex: 0,
-        voice: 1,
+        voice: '1',
         startMeasure: 0,
         endMeasure: 0,
       });

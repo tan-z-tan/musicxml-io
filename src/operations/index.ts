@@ -205,7 +205,7 @@ interface EntryWithPosition {
   endPosition: number;
 }
 
-function getVoiceEntries(measure: Measure, voice?: number, staff?: number): EntryWithPosition[] {
+function getVoiceEntries(measure: Measure, voice?: string, staff?: number): EntryWithPosition[] {
   const result: EntryWithPosition[] = [];
   let position = 0;
 
@@ -277,7 +277,7 @@ function hasNotesInRange(
 /**
  * Create a rest note entry
  */
-function createRest(duration: number, voice?: number, staff?: number): NoteEntry {
+function createRest(duration: number, voice?: string, staff?: number): NoteEntry {
   const note: NoteEntry = {
     _id: generateId(),
     type: 'note',
@@ -297,7 +297,7 @@ function createRest(duration: number, voice?: number, staff?: number): NoteEntry
  */
 function rebuildMeasureWithVoice(
   measure: Measure,
-  voice: number | undefined,
+  voice: string | undefined,
   newEntries: Array<{ position: number; entry: NoteEntry }>,
   measureDuration: number,
   staff?: number
@@ -379,7 +379,7 @@ function rebuildMeasureWithVoice(
         _id: generateId(),
         type: 'forward',
         duration: diff,
-        voice: entry.type === 'note' ? entry.voice : 1,
+        voice: entry.type === 'note' ? entry.voice : '1',
         staff: entry.type === 'note' ? entry.staff : undefined,
       });
       currentPosition = targetPos;
@@ -404,7 +404,7 @@ function rebuildMeasureWithVoice(
 export interface InsertNoteOptions {
   partIndex: number;
   measureIndex: number;
-  voice: number;
+  voice: string;
   staff?: number;
   position: number;
   pitch: Pitch;
@@ -1164,7 +1164,7 @@ export function lowerAccidental(
 export interface AddVoiceOptions {
   partIndex: number;
   measureIndex: number;
-  voice: number;
+  voice: string;
   staff?: number;
 }
 
@@ -2302,7 +2302,7 @@ export const addNote = (score: Score, options: {
   partIndex: number;
   measureIndex: number;
   staff?: number;
-  voice: number;
+  voice: string;
   position: number;
   note: Omit<NoteEntry, 'type' | 'voice' | 'staff'>;
 }): Score => {
@@ -2350,7 +2350,7 @@ export const addNoteChecked = (score: Score, options: {
   partIndex: number;
   measureIndex: number;
   staff?: number;
-  voice: number;
+  voice: string;
   position: number;
   note: Omit<NoteEntry, 'type' | 'voice' | 'staff'>;
 }): OperationResult<Score> => {
@@ -2869,7 +2869,7 @@ export interface AutoBeamOptions {
   partIndex: number;
   measureIndex: number;
   /** Optional voice filter */
-  voice?: number;
+  voice?: string;
   /** Group by beat (default: true) */
   groupByBeat?: boolean;
 }
@@ -2908,13 +2908,13 @@ export function autoBeam(
   }
 
   // Collect notes with their positions
-  const notesByVoice = new Map<number, Array<{ note: NoteEntry; position: number }>>();
+  const notesByVoice = new Map<string, Array<{ note: NoteEntry; position: number }>>();
   let position = 0;
 
   for (const entry of measure.entries) {
     if (entry.type === 'note') {
       if (!entry.chord && !entry.rest) {
-        const voice = entry.voice ?? 1;
+        const voice = entry.voice ?? '1';
         if (options.voice === undefined || voice === options.voice) {
           if (!notesByVoice.has(voice)) {
             notesByVoice.set(voice, []);
@@ -3021,7 +3021,7 @@ export interface NoteSelection {
     measureIndex: number;
     startPosition: number;
     endPosition: number;
-    voice: number;
+    voice: string;
     staff?: number;
   };
   /** Copied notes with their relative positions */
@@ -3043,7 +3043,7 @@ export interface CopyNotesOptions {
   /** End position in the measure (in divisions) */
   endPosition: number;
   /** Voice to copy from */
-  voice: number;
+  voice: string;
   /** Staff to copy from (optional) */
   staff?: number;
 }
@@ -3152,7 +3152,7 @@ export interface PasteNotesOptions {
   /** Target position in the measure */
   position: number;
   /** Target voice (defaults to original voice) */
-  voice?: number;
+  voice?: string;
   /** Target staff (defaults to original staff) */
   staff?: number;
   /** Clear existing notes in the paste range (default: true) */
@@ -3401,7 +3401,7 @@ export interface CopyNotesMultiMeasureOptions {
   /** Ending measure index (inclusive) */
   endMeasureIndex: number;
   /** Voice to copy from */
-  voice: number;
+  voice: string;
   /** Staff to copy from (optional) */
   staff?: number;
 }
@@ -3414,7 +3414,7 @@ export interface MultiMeasureSelection {
     partIndex: number;
     startMeasureIndex: number;
     endMeasureIndex: number;
-    voice: number;
+    voice: string;
     staff?: number;
   };
   /** Notes grouped by measure offset */
@@ -3515,7 +3515,7 @@ export interface PasteNotesMultiMeasureOptions {
   /** Target starting measure index */
   startMeasureIndex: number;
   /** Target voice (defaults to original voice) */
-  voice?: number;
+  voice?: string;
   /** Target staff (defaults to original staff) */
   staff?: number;
   /** Clear existing notes in paste measures (default: true) */
@@ -4994,7 +4994,7 @@ export interface AddGraceNoteOptions {
   pitch: Pitch;
   noteType?: NoteType;
   slash?: boolean;
-  voice?: number;
+  voice?: string;
   staff?: number;
 }
 

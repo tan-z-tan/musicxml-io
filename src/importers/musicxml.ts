@@ -1073,9 +1073,9 @@ function parseNote(elements: OrderedElement[], attrs: Record<string, string>): N
     duration: getElementTextAsInt(elements, 'duration', 0)!,
   };
 
-  // Voice - only set if present in the XML
-  const voiceValue = getElementTextAsInt(elements, 'voice');
-  if (voiceValue !== undefined) {
+  // Voice - only set if present in the XML (MusicXML spec: xs:string)
+  const voiceValue = getElementText(elements, 'voice');
+  if (voiceValue !== undefined && voiceValue !== '') {
     note.voice = voiceValue;
   }
 
@@ -1822,7 +1822,7 @@ function parseForward(elements: OrderedElement[]): ForwardEntry {
   };
 
   const voice = getElementText(elements, 'voice');
-  if (voice) forward.voice = parseInt(voice, 10);
+  if (voice) forward.voice = voice;
 
   const staff = getElementText(elements, 'staff');
   if (staff) forward.staff = parseInt(staff, 10);
@@ -1853,7 +1853,7 @@ function parseDirection(elements: OrderedElement[], attrs: Record<string, string
   if (staff) direction.staff = parseInt(staff, 10);
 
   const voice = getElementText(elements, 'voice');
-  if (voice) direction.voice = parseInt(voice, 10);
+  if (voice) direction.voice = voice;
 
   // Parse offset with sound attribute
   parseFirstElement(elements, 'offset', (c, a) => {

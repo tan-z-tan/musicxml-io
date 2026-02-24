@@ -29,14 +29,14 @@ describe('Accessors', () => {
       const score = parse(xml);
       const measure = score.parts[0].measures[0];
 
-      const voice1Notes = getNotesForVoice(measure, { voice: 1 });
-      const voice2Notes = getNotesForVoice(measure, { voice: 2 });
+      const voice1Notes = getNotesForVoice(measure, { voice: '1' });
+      const voice2Notes = getNotesForVoice(measure, { voice: '2' });
 
       expect(voice1Notes).toHaveLength(2);
       expect(voice2Notes).toHaveLength(4);
 
-      expect(voice1Notes.every((n) => n.voice === 1)).toBe(true);
-      expect(voice2Notes.every((n) => n.voice === 2)).toBe(true);
+      expect(voice1Notes.every((n) => n.voice === '1')).toBe(true);
+      expect(voice2Notes.every((n) => n.voice === '2')).toBe(true);
     });
 
     it('should filter notes by voice and staff', () => {
@@ -78,9 +78,9 @@ describe('Accessors', () => {
       const groups = groupByVoice(measure);
 
       expect(groups).toHaveLength(2);
-      expect(groups[0].voice).toBe(1);
+      expect(groups[0].voice).toBe('1');
       expect(groups[0].notes).toHaveLength(2);
-      expect(groups[1].voice).toBe(2);
+      expect(groups[1].voice).toBe('2');
       expect(groups[1].notes).toHaveLength(4);
     });
   });
@@ -119,7 +119,7 @@ describe('Accessors', () => {
       const measure = score.parts[0].measures[0];
 
       // Voice 2 starts after backup, so position should be 0
-      const voice2Notes = getNotesForVoice(measure, { voice: 2 });
+      const voice2Notes = getNotesForVoice(measure, { voice: '2' });
       expect(getAbsolutePosition(voice2Notes[0], measure)).toBe(0);
     });
   });
@@ -201,7 +201,7 @@ describe('Accessors', () => {
 
       const voices = getVoices(measure);
 
-      expect(voices).toEqual([1, 2]);
+      expect(voices).toEqual(['1', '2']);
     });
   });
 

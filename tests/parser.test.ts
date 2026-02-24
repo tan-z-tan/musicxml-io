@@ -41,7 +41,7 @@ describe('Parser', () => {
         expect(note.pitch?.step).toBe('C');
         expect(note.pitch?.octave).toBe(4);
         expect(note.duration).toBe(4);
-        expect(note.voice).toBe(1);
+        expect(note.voice).toBe('1');
         expect(note.noteType).toBe('whole');
       }
     });
@@ -112,8 +112,8 @@ describe('Parser', () => {
       expect(notes.length).toBe(6); // 2 half notes + 4 quarter notes
       expect(backups.length).toBe(1);
 
-      const voice1Notes = notes.filter((n) => n.type === 'note' && n.voice === 1);
-      const voice2Notes = notes.filter((n) => n.type === 'note' && n.voice === 2);
+      const voice1Notes = notes.filter((n) => n.type === 'note' && n.voice === '1');
+      const voice2Notes = notes.filter((n) => n.type === 'note' && n.voice === '2');
 
       expect(voice1Notes).toHaveLength(2);
       expect(voice2Notes).toHaveLength(4);
