@@ -67,7 +67,7 @@ export interface ValidationLocation {
   measureIndex?: number;
   measureNumber?: string;
   entryIndex?: number;
-  voice?: number;
+  voice?: string;
   staff?: number;
 }
 
@@ -336,7 +336,9 @@ export function validateMeasureDuration(
   const voiceDurations = calculateVoiceDurations(measure);
 
   for (const [voiceKey, actualDuration] of voiceDurations.entries()) {
-    const [staff, voice] = voiceKey.split('-').map(Number);
+    const dashIndex = voiceKey.indexOf('-');
+    const staff = Number(voiceKey.slice(0, dashIndex));
+    const voice = voiceKey.slice(dashIndex + 1);
     const diff = actualDuration - expectedDuration;
 
     if (Math.abs(diff) > tolerance) {
@@ -456,7 +458,7 @@ export function validateMeasureFullness(
       currentPosition -= entry.duration;
     } else if (entry.type === 'forward') {
       const staff = entry.staff ?? 1;
-      const voice = entry.voice ?? 1;
+      const voice = entry.voice ?? '1';
       const key = `${staff}-${voice}`;
 
       if (!voiceCoverage.has(key)) {
@@ -472,7 +474,9 @@ export function validateMeasureFullness(
 
   // Check each voice for completeness
   for (const [voiceKey, { segments }] of voiceCoverage.entries()) {
-    const [staff, voice] = voiceKey.split('-').map(Number);
+    const dashIndex = voiceKey.indexOf('-');
+    const staff = Number(voiceKey.slice(0, dashIndex));
+    const voice = voiceKey.slice(dashIndex + 1);
 
     // Sort segments by start position
     const sorted = [...segments].sort((a, b) => a.start - b.start);
@@ -682,7 +686,9 @@ export function validateBeams(
 
   // Report unclosed beams
   for (const [beamKey, { entryIndex: startIndex, staff }] of openBeams.entries()) {
-    const [beamNumber, voice] = beamKey.split('-').map(Number);
+    const beamDashIndex = beamKey.indexOf('-');
+    const beamNumber = Number(beamKey.slice(0, beamDashIndex));
+    const voice = beamKey.slice(beamDashIndex + 1);
     errors.push({
       code: 'BEAM_BEGIN_WITHOUT_END',
       level: 'error',
@@ -792,7 +798,11 @@ export function validateTuplets(
 
   // Report unclosed tuplets
   for (const [tupletKey, startIndex] of openTuplets.entries()) {
-    const [tupletNumber, voice, staff] = tupletKey.split('-').map(Number);
+    const firstDash = tupletKey.indexOf('-');
+    const lastDash = tupletKey.lastIndexOf('-');
+    const tupletNumber = Number(tupletKey.slice(0, firstDash));
+    const voice = tupletKey.slice(firstDash + 1, lastDash);
+    const staff = Number(tupletKey.slice(lastDash + 1));
     errors.push({
       code: 'TUPLET_START_WITHOUT_STOP',
       level: 'error',
@@ -867,12 +877,12 @@ export function validateVoiceStaff(
     const entry = measure.entries[entryIndex];
     if (entry.type !== 'note') continue;
 
-    // Check voice number (only if voice is explicitly defined)
-    if (entry.voice !== undefined && entry.voice <= 0) {
+    // Check voice value (only if voice is explicitly defined)
+    if (entry.voice !== undefined && entry.voice.trim() === '') {
       errors.push({
         code: 'INVALID_VOICE_NUMBER',
         level: 'error',
-        message: `Invalid voice number: ${entry.voice}. Must be positive.`,
+        message: `Invalid voice: empty string.`,
         location: { ...location, entryIndex, voice: entry.voice },
       });
     }
@@ -1556,7 +1566,11 @@ export function validateSlursAcrossMeasures(part: Part): ValidationError[] {
 
   // Report unclosed slurs at end of part
   for (const [slurKey, { measureIndex, entryIndex }] of openSlurs.entries()) {
-    const [slurNumber, voice, staff] = slurKey.split('-').map(Number);
+    const firstDash = slurKey.indexOf('-');
+    const lastDash = slurKey.lastIndexOf('-');
+    const slurNumber = Number(slurKey.slice(0, firstDash));
+    const voice = slurKey.slice(firstDash + 1, lastDash);
+    const staff = Number(slurKey.slice(lastDash + 1));
     const measure = part.measures[measureIndex];
     errors.push({
       code: 'SLUR_START_WITHOUT_STOP',

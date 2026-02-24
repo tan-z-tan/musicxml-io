@@ -304,7 +304,7 @@ describe('Entry Accessors', () => {
           type: 'note',
           unpitched: { displayStep: 'E', displayOctave: 4 },
           duration: 1,
-          voice: 1,
+          voice: '1',
         };
 
         expect(isUnpitchedNote(unpitchedNote)).toBe(true);
@@ -325,7 +325,7 @@ describe('Entry Accessors', () => {
           type: 'note',
           pitch: { step: 'C', octave: 4 },
           duration: 1,
-          voice: 1,
+          voice: '1',
           chord: true,
         };
 
@@ -347,7 +347,7 @@ describe('Entry Accessors', () => {
           type: 'note',
           pitch: { step: 'C', octave: 4 },
           duration: 0,
-          voice: 1,
+          voice: '1',
           grace: { slash: true },
         };
 
@@ -369,7 +369,7 @@ describe('Entry Accessors', () => {
           type: 'note',
           pitch: { step: 'C', octave: 4 },
           duration: 1,
-          voice: 1,
+          voice: '1',
           tie: { type: 'start' },
         };
 
@@ -382,7 +382,7 @@ describe('Entry Accessors', () => {
           type: 'note',
           pitch: { step: 'C', octave: 4 },
           duration: 1,
-          voice: 1,
+          voice: '1',
           ties: [{ type: 'start' }, { type: 'stop' }],
         };
 
@@ -397,7 +397,7 @@ describe('Entry Accessors', () => {
           type: 'note',
           pitch: { step: 'C', octave: 4 },
           duration: 1,
-          voice: 1,
+          voice: '1',
           tie: { type: 'start' },
         };
 
@@ -411,7 +411,7 @@ describe('Entry Accessors', () => {
           type: 'note',
           pitch: { step: 'C', octave: 4 },
           duration: 1,
-          voice: 1,
+          voice: '1',
           tie: { type: 'stop' },
         };
 
@@ -425,7 +425,7 @@ describe('Entry Accessors', () => {
           type: 'note',
           pitch: { step: 'C', octave: 4 },
           duration: 1,
-          voice: 1,
+          voice: '1',
           ties: [{ type: 'start' }, { type: 'stop' }],
         };
 
@@ -448,7 +448,7 @@ describe('Entry Accessors', () => {
           type: 'note',
           pitch: { step: 'C', octave: 4 },
           duration: 1,
-          voice: 1,
+          voice: '1',
           cue: true,
         };
 
@@ -463,7 +463,7 @@ describe('Entry Accessors', () => {
           type: 'note',
           pitch: { step: 'C', octave: 4 },
           duration: 1,
-          voice: 1,
+          voice: '1',
         };
 
         expect(hasBeam(note)).toBe(false);
@@ -475,7 +475,7 @@ describe('Entry Accessors', () => {
           type: 'note',
           pitch: { step: 'C', octave: 4 },
           duration: 1,
-          voice: 1,
+          voice: '1',
           beam: [{ number: 1, type: 'begin' }],
         };
 
@@ -490,7 +490,7 @@ describe('Entry Accessors', () => {
           type: 'note',
           pitch: { step: 'C', octave: 4 },
           duration: 1,
-          voice: 1,
+          voice: '1',
         };
 
         expect(hasLyrics(note)).toBe(false);
@@ -525,7 +525,7 @@ describe('Entry Accessors', () => {
           type: 'note',
           pitch: { step: 'C', octave: 4 },
           duration: 1,
-          voice: 1,
+          voice: '1',
           notations: [{ type: 'slur', slurType: 'start', number: 1 }],
         };
 
@@ -547,7 +547,7 @@ describe('Entry Accessors', () => {
           type: 'note',
           pitch: { step: 'C', octave: 4 },
           duration: 1,
-          voice: 1,
+          voice: '1',
           timeModification: { actualNotes: 3, normalNotes: 2 },
         };
 

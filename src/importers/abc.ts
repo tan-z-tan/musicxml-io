@@ -2072,7 +2072,7 @@ function createNoteEntry(
     type: 'note',
     pitch: token.pitch,
     duration,
-    voice: 1,
+    voice: '1',
     noteType,
     dots: dots > 0 ? dots : undefined,
   };
@@ -2135,7 +2135,7 @@ function createRestEntry(
     type: 'note',
     rest: isWholeMeasure ? { measure: true } : {},
     duration,
-    voice: 1,
+    voice: '1',
     noteType,
     dots: dots > 0 ? dots : undefined,
   };

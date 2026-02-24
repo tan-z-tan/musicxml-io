@@ -53,7 +53,7 @@ import { getAbsolutePositionForNote, createPositionState, updatePositionForEntry
  * Filter options for voice/staff selection
  */
 export interface VoiceFilter {
-  voice?: number;
+  voice?: string;
   staff?: number;
 }
 
@@ -89,7 +89,7 @@ export function groupByVoice(measure: Measure): VoiceGroup[] {
     if (entry.type !== 'note') continue;
 
     const staff = entry.staff ?? 1;
-    const voice = entry.voice ?? 1;
+    const voice = entry.voice ?? '1';
     const key = `${staff}-${voice}`;
 
     if (!groups.has(key)) {
@@ -102,7 +102,7 @@ export function groupByVoice(measure: Measure): VoiceGroup[] {
   // Sort by staff, then by voice
   return Array.from(groups.values()).sort((a, b) => {
     if (a.staff !== b.staff) return a.staff - b.staff;
-    return a.voice - b.voice;
+    return a.voice.localeCompare(b.voice, undefined, { numeric: true });
   });
 }
 
@@ -234,16 +234,16 @@ export function getAllNotes(score: Score): NoteIteratorItem[] {
 /**
  * Get unique voices used in a measure
  */
-export function getVoices(measure: Measure): number[] {
-  const voices = new Set<number>();
+export function getVoices(measure: Measure): string[] {
+  const voices = new Set<string>();
 
   for (const entry of measure.entries) {
     if (entry.type === 'note') {
-      voices.add(entry.voice ?? 1);
+      voices.add(entry.voice ?? '1');
     }
   }
 
-  return Array.from(voices).sort((a, b) => a - b);
+  return Array.from(voices).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 }
 
 /**
@@ -342,11 +342,11 @@ export function getEntriesForStaff(measure: Measure, staff: number): MeasureEntr
  * Uses explicitly specified staff values to infer staff for voices
  */
 export function buildVoiceToStaffMap(measure: Measure): VoiceToStaffMap {
-  const map = new Map<number, number>();
+  const map = new Map<string, number>();
 
   for (const entry of measure.entries) {
     if (entry.type === 'note' && entry.staff !== undefined) {
-      const voice = entry.voice ?? 1;
+      const voice = entry.voice ?? '1';
       const staff = entry.staff;
       // Use the first occurrence for each voice
       if (!map.has(voice)) {
@@ -356,8 +356,8 @@ export function buildVoiceToStaffMap(measure: Measure): VoiceToStaffMap {
   }
 
   return {
-    get: (voice: number) => map.get(voice),
-    has: (voice: number) => map.has(voice),
+    get: (voice: string) => map.get(voice),
+    has: (voice: string) => map.has(voice),
     entries: () => map.entries(),
     size: map.size,
   };
@@ -367,12 +367,12 @@ export function buildVoiceToStaffMap(measure: Measure): VoiceToStaffMap {
  * Build a Voice to Staff mapping from all measures in a part
  */
 export function buildVoiceToStaffMapForPart(part: Part): VoiceToStaffMap {
-  const map = new Map<number, number>();
+  const map = new Map<string, number>();
 
   for (const measure of part.measures) {
     for (const entry of measure.entries) {
       if (entry.type === 'note' && entry.staff !== undefined) {
-        const voice = entry.voice ?? 1;
+        const voice = entry.voice ?? '1';
         const staff = entry.staff;
         if (!map.has(voice)) {
           map.set(voice, staff);
@@ -382,8 +382,8 @@ export function buildVoiceToStaffMapForPart(part: Part): VoiceToStaffMap {
   }
 
   return {
-    get: (voice: number) => map.get(voice),
-    has: (voice: number) => map.has(voice),
+    get: (voice: string) => map.get(voice),
+    has: (voice: string) => map.has(voice),
     entries: () => map.entries(),
     size: map.size,
   };
@@ -403,7 +403,7 @@ export function inferStaff(
   }
 
   // Try to infer from voice mapping
-  const inferredStaff = voiceToStaffMap.get(entry.voice ?? 1);
+  const inferredStaff = voiceToStaffMap.get(entry.voice ?? '1');
   if (inferredStaff !== undefined) {
     return inferredStaff;
   }
@@ -465,19 +465,19 @@ export function getClefForStaff(
 /**
  * Get all voices used within a specific staff
  */
-export function getVoicesForStaff(measure: Measure, staff: number): number[] {
-  const voices = new Set<number>();
+export function getVoicesForStaff(measure: Measure, staff: number): string[] {
+  const voices = new Set<string>();
 
   for (const entry of measure.entries) {
     if (entry.type === 'note') {
       const entryStaff = entry.staff ?? 1;
       if (entryStaff === staff) {
-        voices.add(entry.voice ?? 1);
+        voices.add(entry.voice ?? '1');
       }
     }
   }
 
-  return Array.from(voices).sort((a, b) => a - b);
+  return Array.from(voices).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 }
 
 /**
@@ -650,7 +650,7 @@ export function getVerticalSlice(
  */
 export function getVoiceLine(
   score: Score,
-  options: { partIndex: number; voice: number; staff?: number }
+  options: { partIndex: number; voice: string; staff?: number }
 ): VoiceLine {
   const part = score.parts[options.partIndex];
   if (!part) {
@@ -698,7 +698,7 @@ export function getVoiceLine(
  */
 export function getVoiceLineInRange(
   score: Score,
-  options: { partIndex: number; voice: number; startMeasure: number; endMeasure: number; staff?: number }
+  options: { partIndex: number; voice: string; startMeasure: number; endMeasure: number; staff?: number }
 ): VoiceLine {
   const part = score.parts[options.partIndex];
   if (!part) {
@@ -2236,7 +2236,7 @@ export interface PitchRange {
  */
 export interface FindNotesFilter {
   pitchRange?: PitchRange;
-  voice?: number;
+  voice?: string;
   staff?: number;
   noteType?: string;
   hasTie?: boolean;

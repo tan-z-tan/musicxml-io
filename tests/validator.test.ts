@@ -56,7 +56,7 @@ function createNote(overrides: Partial<NoteEntry> = {}): NoteEntry {
     type: 'note',
     pitch: { step: 'C', octave: 4 },
     duration: 1,
-    voice: 1,
+    voice: '1',
     ...overrides,
   };
 }
@@ -165,7 +165,7 @@ describe('Validator', () => {
       const measure: Measure = {
         number: '1',
         entries: [
-          createNote({ duration: 4, voice: 1 }),
+          createNote({ duration: 4, voice: '1' }),
         ],
       };
 
@@ -182,7 +182,7 @@ describe('Validator', () => {
       const measure: Measure = {
         number: '1',
         entries: [
-          createNote({ duration: 8, voice: 1 }), // 8 beats in 4/4 time
+          createNote({ duration: 8, voice: '1' }), // 8 beats in 4/4 time
         ],
       };
 
@@ -200,7 +200,7 @@ describe('Validator', () => {
       const measure: Measure = {
         number: '1',
         entries: [
-          createNote({ duration: 2, voice: 1 }), // 2 beats in 4/4 time
+          createNote({ duration: 2, voice: '1' }), // 2 beats in 4/4 time
         ],
       };
 
@@ -219,7 +219,7 @@ describe('Validator', () => {
       const measure: Measure = {
         number: '1',
         entries: [
-          createNote({ duration: 3, voice: 1 }), // Off by 1
+          createNote({ duration: 3, voice: '1' }), // Off by 1
         ],
       };
 
@@ -237,7 +237,7 @@ describe('Validator', () => {
       const measure: Measure = {
         number: '1',
         entries: [
-          createNote({ duration: 100, voice: 1 }),
+          createNote({ duration: 100, voice: '1' }),
         ],
       };
 
@@ -255,7 +255,7 @@ describe('Validator', () => {
     it('should pass when voice fills entire measure', () => {
       const score = createMinimalScore();
       score.parts[0].measures[0].entries = [
-        createNote({ duration: 4, voice: 1 }), // 4 beats fill 4/4 time
+        createNote({ duration: 4, voice: '1' }), // 4 beats fill 4/4 time
       ];
 
       const result = validate(score, { checkMeasureFullness: true });
@@ -268,7 +268,7 @@ describe('Validator', () => {
     it('should warn when voice is incomplete', () => {
       const score = createMinimalScore();
       score.parts[0].measures[0].entries = [
-        createNote({ duration: 2, voice: 1 }), // Only 2 beats in 4/4 time
+        createNote({ duration: 2, voice: '1' }), // Only 2 beats in 4/4 time
       ];
 
       const result = validate(score, { checkMeasureFullness: true });
@@ -280,9 +280,9 @@ describe('Validator', () => {
     it('should warn when voice has gap', () => {
       const score = createMinimalScore();
       score.parts[0].measures[0].entries = [
-        createNote({ duration: 1, voice: 1 }),
-        { type: 'forward', duration: 1, voice: 1 }, // Gap filled by forward, not note
-        createNote({ duration: 2, voice: 1 }),
+        createNote({ duration: 1, voice: '1' }),
+        { type: 'forward', duration: 1, voice: '1' }, // Gap filled by forward, not note
+        createNote({ duration: 2, voice: '1' }),
       ];
 
       // No gap with forward entries - they count as filling
@@ -294,7 +294,7 @@ describe('Validator', () => {
     it('should not check fullness by default', () => {
       const score = createMinimalScore();
       score.parts[0].measures[0].entries = [
-        createNote({ duration: 1, voice: 1 }), // Only 1 beat
+        createNote({ duration: 1, voice: '1' }), // Only 1 beat
       ];
 
       // Default: checkMeasureFullness is false
@@ -311,9 +311,9 @@ describe('Validator', () => {
       const measure: Measure = {
         number: '1',
         entries: [
-          createNote({ duration: 4, voice: 1 }),
+          createNote({ duration: 4, voice: '1' }),
           { type: 'backup', duration: 4 },
-          createNote({ duration: 4, voice: 2 }),
+          createNote({ duration: 4, voice: '2' }),
         ],
       };
 
@@ -325,7 +325,7 @@ describe('Validator', () => {
       const measure: Measure = {
         number: '1',
         entries: [
-          createNote({ duration: 2, voice: 1 }),
+          createNote({ duration: 2, voice: '1' }),
           { type: 'backup', duration: 4 }, // Backing up more than we advanced
         ],
       };
@@ -352,9 +352,9 @@ describe('Validator', () => {
         number: '1',
         entries: [
           { type: 'forward', duration: 2 },
-          createNote({ duration: 2, voice: 1 }),
+          createNote({ duration: 2, voice: '1' }),
           { type: 'backup', duration: 4 },
-          createNote({ duration: 4, voice: 2 }),
+          createNote({ duration: 4, voice: '2' }),
         ],
       };
 
@@ -368,9 +368,9 @@ describe('Validator', () => {
       const measure: Measure = {
         number: '1',
         entries: [
-          createNote({ voice: 1, beam: [{ number: 1, type: 'begin' }] }),
-          createNote({ voice: 1, beam: [{ number: 1, type: 'continue' }] }),
-          createNote({ voice: 1, beam: [{ number: 1, type: 'end' }] }),
+          createNote({ voice: '1', beam: [{ number: 1, type: 'begin' }] }),
+          createNote({ voice: '1', beam: [{ number: 1, type: 'continue' }] }),
+          createNote({ voice: '1', beam: [{ number: 1, type: 'end' }] }),
         ],
       };
 
@@ -382,8 +382,8 @@ describe('Validator', () => {
       const measure: Measure = {
         number: '1',
         entries: [
-          createNote({ voice: 1, beam: [{ number: 1, type: 'begin' }] }),
-          createNote({ voice: 1 }),
+          createNote({ voice: '1', beam: [{ number: 1, type: 'begin' }] }),
+          createNote({ voice: '1' }),
         ],
       };
 
@@ -396,8 +396,8 @@ describe('Validator', () => {
       const measure: Measure = {
         number: '1',
         entries: [
-          createNote({ voice: 1 }),
-          createNote({ voice: 1, beam: [{ number: 1, type: 'end' }] }),
+          createNote({ voice: '1' }),
+          createNote({ voice: '1', beam: [{ number: 1, type: 'end' }] }),
         ],
       };
 
@@ -410,9 +410,9 @@ describe('Validator', () => {
       const measure: Measure = {
         number: '1',
         entries: [
-          createNote({ voice: 1, beam: [{ number: 1, type: 'begin' }, { number: 2, type: 'begin' }] }),
-          createNote({ voice: 1, beam: [{ number: 1, type: 'continue' }, { number: 2, type: 'end' }] }),
-          createNote({ voice: 1, beam: [{ number: 1, type: 'end' }] }),
+          createNote({ voice: '1', beam: [{ number: 1, type: 'begin' }, { number: 2, type: 'begin' }] }),
+          createNote({ voice: '1', beam: [{ number: 1, type: 'continue' }, { number: 2, type: 'end' }] }),
+          createNote({ voice: '1', beam: [{ number: 1, type: 'end' }] }),
         ],
       };
 
@@ -426,8 +426,8 @@ describe('Validator', () => {
       const measure: Measure = {
         number: '1',
         entries: [
-          createNote({ pitch: { step: 'C', octave: 4 }, voice: 1, tie: { type: 'start' } }),
-          createNote({ pitch: { step: 'C', octave: 4 }, voice: 1, tie: { type: 'stop' } }),
+          createNote({ pitch: { step: 'C', octave: 4 }, voice: '1', tie: { type: 'start' } }),
+          createNote({ pitch: { step: 'C', octave: 4 }, voice: '1', tie: { type: 'stop' } }),
         ],
       };
 
@@ -439,7 +439,7 @@ describe('Validator', () => {
       const measure: Measure = {
         number: '1',
         entries: [
-          createNote({ pitch: { step: 'C', octave: 4 }, voice: 1, tie: { type: 'stop' } }),
+          createNote({ pitch: { step: 'C', octave: 4 }, voice: '1', tie: { type: 'stop' } }),
         ],
       };
 
@@ -454,12 +454,12 @@ describe('Validator', () => {
         entries: [
           createNote({
             pitch: { step: 'C', octave: 4 },
-            voice: 1,
+            voice: '1',
             ties: [{ type: 'start' }],
           }),
           createNote({
             pitch: { step: 'C', octave: 4 },
-            voice: 1,
+            voice: '1',
             ties: [{ type: 'stop' }],
           }),
         ],
@@ -476,11 +476,11 @@ describe('Validator', () => {
         number: '1',
         entries: [
           createNote({
-            voice: 1,
+            voice: '1',
             notations: [{ type: 'slur', slurType: 'start' }],
           }),
           createNote({
-            voice: 1,
+            voice: '1',
             notations: [{ type: 'slur', slurType: 'stop' }],
           }),
         ],
@@ -495,14 +495,14 @@ describe('Validator', () => {
         number: '1',
         entries: [
           createNote({
-            voice: 1,
+            voice: '1',
             notations: [
               { type: 'slur', slurType: 'start', number: 1 },
               { type: 'slur', slurType: 'start', number: 2 },
             ],
           }),
           createNote({
-            voice: 1,
+            voice: '1',
             notations: [
               { type: 'slur', slurType: 'stop', number: 1 },
               { type: 'slur', slurType: 'stop', number: 2 },
@@ -522,12 +522,12 @@ describe('Validator', () => {
         number: '1',
         entries: [
           createNote({
-            voice: 1,
+            voice: '1',
             notations: [{ type: 'tuplet', tupletType: 'start' }],
           }),
-          createNote({ voice: 1 }),
+          createNote({ voice: '1' }),
           createNote({
-            voice: 1,
+            voice: '1',
             notations: [{ type: 'tuplet', tupletType: 'stop' }],
           }),
         ],
@@ -542,10 +542,10 @@ describe('Validator', () => {
         number: '1',
         entries: [
           createNote({
-            voice: 1,
+            voice: '1',
             notations: [{ type: 'tuplet', tupletType: 'start' }],
           }),
-          createNote({ voice: 1 }),
+          createNote({ voice: '1' }),
         ],
       };
 
@@ -558,9 +558,9 @@ describe('Validator', () => {
       const measure: Measure = {
         number: '1',
         entries: [
-          createNote({ voice: 1 }),
+          createNote({ voice: '1' }),
           createNote({
-            voice: 1,
+            voice: '1',
             notations: [{ type: 'tuplet', tupletType: 'stop' }],
           }),
         ],
@@ -603,8 +603,8 @@ describe('Validator', () => {
       const measure: Measure = {
         number: '1',
         entries: [
-          createNote({ voice: 1, staff: 1 }),
-          createNote({ voice: 2, staff: 1 }),
+          createNote({ voice: '1', staff: 1 }),
+          createNote({ voice: '2', staff: 1 }),
         ],
       };
 
@@ -616,7 +616,7 @@ describe('Validator', () => {
       const measure: Measure = {
         number: '1',
         entries: [
-          createNote({ voice: 0 }), // Invalid
+          createNote({ voice: '' }), // Invalid - empty string
         ],
       };
 
@@ -629,7 +629,7 @@ describe('Validator', () => {
       const measure: Measure = {
         number: '1',
         entries: [
-          createNote({ voice: 1, staff: 0 }), // Invalid
+          createNote({ voice: '1', staff: 0 }), // Invalid
         ],
       };
 
@@ -642,7 +642,7 @@ describe('Validator', () => {
       const measure: Measure = {
         number: '1',
         entries: [
-          createNote({ voice: 1, staff: 3 }), // Only 2 staves declared
+          createNote({ voice: '1', staff: 3 }), // Only 2 staves declared
         ],
       };
 
@@ -655,7 +655,7 @@ describe('Validator', () => {
       const measure: Measure = {
         number: '1',
         entries: [
-          createNote({ voice: 1, duration: -1 }),
+          createNote({ voice: '1', duration: -1 }),
         ],
       };
 
@@ -673,13 +673,13 @@ describe('Validator', () => {
           {
             number: '1',
             entries: [
-              createNote({ pitch: { step: 'C', octave: 4 }, voice: 1, tie: { type: 'start' } }),
+              createNote({ pitch: { step: 'C', octave: 4 }, voice: '1', tie: { type: 'start' } }),
             ],
           },
           {
             number: '2',
             entries: [
-              createNote({ pitch: { step: 'C', octave: 4 }, voice: 1, tie: { type: 'stop' } }),
+              createNote({ pitch: { step: 'C', octave: 4 }, voice: '1', tie: { type: 'stop' } }),
             ],
           },
         ],
@@ -696,7 +696,7 @@ describe('Validator', () => {
           {
             number: '1',
             entries: [
-              createNote({ pitch: { step: 'C', octave: 4 }, voice: 1, tie: { type: 'start' } }),
+              createNote({ pitch: { step: 'C', octave: 4 }, voice: '1', tie: { type: 'start' } }),
             ],
           },
         ],
@@ -716,13 +716,13 @@ describe('Validator', () => {
           {
             number: '1',
             entries: [
-              createNote({ voice: 1, notations: [{ type: 'slur', slurType: 'start' }] }),
+              createNote({ voice: '1', notations: [{ type: 'slur', slurType: 'start' }] }),
             ],
           },
           {
             number: '2',
             entries: [
-              createNote({ voice: 1, notations: [{ type: 'slur', slurType: 'stop' }] }),
+              createNote({ voice: '1', notations: [{ type: 'slur', slurType: 'stop' }] }),
             ],
           },
         ],
@@ -739,7 +739,7 @@ describe('Validator', () => {
           {
             number: '1',
             entries: [
-              createNote({ voice: 1, notations: [{ type: 'slur', slurType: 'start' }] }),
+              createNote({ voice: '1', notations: [{ type: 'slur', slurType: 'start' }] }),
             ],
           },
         ],
@@ -857,7 +857,7 @@ describe('Validator', () => {
           attributes: {
             clef: [{ sign: 'G', line: 2 }],
           },
-          entries: [createNote({ voice: 1 })],
+          entries: [createNote({ voice: '1' })],
         }],
       };
 
@@ -925,8 +925,8 @@ describe('Validator', () => {
         measures: [{
           number: '1',
           entries: [
-            createNote({ voice: 1, staff: 1 }),
-            createNote({ voice: 2, staff: 2 }),
+            createNote({ voice: '1', staff: 1 }),
+            createNote({ voice: '2', staff: 2 }),
           ],
         }],
       };
@@ -964,7 +964,7 @@ describe('Validator', () => {
         partId: 'P1',
         measureNumber: '5',
         entryIndex: 3,
-        voice: 2,
+        voice: '2',
         staff: 1,
       };
 
@@ -1057,7 +1057,7 @@ describe('Validator', () => {
         const measure: Measure = {
           number: '1',
           entries: [
-            createNote({ duration: 4, voice: 1 }),
+            createNote({ duration: 4, voice: '1' }),
           ],
         };
 
@@ -1078,7 +1078,7 @@ describe('Validator', () => {
         const measure: Measure = {
           number: '1',
           entries: [
-            createNote({ duration: 8, voice: 1 }), // Too long for 4/4
+            createNote({ duration: 8, voice: '1' }), // Too long for 4/4
           ],
         };
 
@@ -1099,7 +1099,7 @@ describe('Validator', () => {
         const measure: Measure = {
           number: '1',
           entries: [
-            createNote({ duration: 8, voice: 1 }), // Would overflow
+            createNote({ duration: 8, voice: '1' }), // Would overflow
           ],
         };
 
@@ -1122,7 +1122,7 @@ describe('Validator', () => {
     describe('assertMeasureValid', () => {
       it('should not throw for valid measure', () => {
         const score = createMinimalScore();
-        score.parts[0].measures[0].entries.push(createNote({ duration: 4, voice: 1 }));
+        score.parts[0].measures[0].entries.push(createNote({ duration: 4, voice: '1' }));
 
         expect(() => assertMeasureValid(score, 0, 0)).not.toThrow();
       });
@@ -1130,7 +1130,7 @@ describe('Validator', () => {
       it('should throw for invalid measure', () => {
         const score = createMinimalScore();
         score.parts[0].measures[0].entries.push(
-          createNote({ duration: 8, voice: 1 }), // Overflow
+          createNote({ duration: 8, voice: '1' }), // Overflow
         );
 
         expect(() => assertMeasureValid(score, 0, 0)).toThrow(ValidationException);

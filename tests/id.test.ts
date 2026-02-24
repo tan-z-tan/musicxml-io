@@ -121,7 +121,7 @@ describe('Unique Element IDs', () => {
       const result = insertNote(score, {
         partIndex: 0,
         measureIndex: 1,
-        voice: 2,
+        voice: '2',
         position: 0,
         pitch: { step: 'E', octave: 4 },
         duration: 1,
@@ -235,7 +235,7 @@ describe('Unique Element IDs', () => {
       const copyResult = copyNotes(score, {
         partIndex: 0,
         measureIndex: 0,
-        voice: 1,
+        voice: '1',
         startPosition: 0,
         endPosition: 4,
       });
@@ -258,7 +258,7 @@ describe('Unique Element IDs', () => {
       const copyResult = copyNotes(score, {
         partIndex: 0,
         measureIndex: 0,
-        voice: 1,
+        voice: '1',
         startPosition: 0,
         endPosition: 2,
       });
@@ -275,7 +275,7 @@ describe('Unique Element IDs', () => {
         partIndex: 0,
         measureIndex: 1,
         position: 0,
-        voice: 1,
+        voice: '1',
         overwrite: true,
       });
 
@@ -312,7 +312,7 @@ describe('Unique Element IDs', () => {
         partIndex: 0,
         startMeasureIndex: 0,
         endMeasureIndex: 1,
-        voice: 1,
+        voice: '1',
       });
 
       expect(copyResult.success).toBe(true);
@@ -345,7 +345,7 @@ describe('Unique Element IDs', () => {
         const result = insertNote(score, {
           partIndex: 0,
           measureIndex: 1,
-          voice: 2, // Use voice 2 to avoid conflicts
+          voice: '2', // Use voice 2 to avoid conflicts
           position: i,
           pitch: { step: 'C', octave: 4 + i },
           duration: 1,
@@ -376,7 +376,7 @@ describe('Unique Element IDs', () => {
       const copyResult = copyNotes(score, {
         partIndex: 0,
         measureIndex: 0,
-        voice: 1,
+        voice: '1',
         startPosition: 0,
         endPosition: 1,
       });
@@ -393,7 +393,7 @@ describe('Unique Element IDs', () => {
         partIndex: 0,
         measureIndex: 1,
         position: 0,
-        voice: 1,
+        voice: '1',
         overwrite: true,
       });
 
@@ -411,13 +411,13 @@ describe('Unique Element IDs', () => {
         partIndex: 0,
         measureIndex: 1,
         position: 0,
-        voice: 2, // Different voice to avoid conflict
+        voice: '2', // Different voice to avoid conflict
       });
 
       if (result2.success) {
         score = result2.data;
         const notes = score.parts[0].measures[1].entries.filter(
-          (e) => e.type === 'note' && e.voice === 2
+          (e) => e.type === 'note' && e.voice === '2'
         ) as NoteEntry[];
         notes.forEach((n) => pastedIds.push(n._id));
       }

@@ -59,7 +59,7 @@ export function getAlteredStepsInKey(key: KeySignature): Map<Pitch['step'], numb
 export function getAccidentalsInMeasure(
   measure: Measure,
   upToPosition: number,
-  voice?: number
+  voice?: string
 ): Map<string, number> {
   const accidentals = new Map<string, number>();
   let position = 0;

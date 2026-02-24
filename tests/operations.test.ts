@@ -211,7 +211,7 @@ describe('Operations', () => {
       const updated = addNote(score, {
         partIndex: 0,
         measureIndex: 0,
-        voice: 2,
+        voice: '2',
         position: 0,
         note: {
           pitch: { step: 'D', octave: 4 },
@@ -232,7 +232,7 @@ describe('Operations', () => {
       const updated = addNote(score, {
         partIndex: 0,
         measureIndex: 0,
-        voice: 2,
+        voice: '2',
         position: 0, // Same position as existing note
         note: {
           pitch: { step: 'E', octave: 3 },
@@ -420,7 +420,7 @@ describe('Operations', () => {
       const result = addNoteChecked(score, {
         partIndex: 0,
         measureIndex: 0,
-        voice: 2, // Use different voice to avoid duration overflow in voice 1
+        voice: '2', // Use different voice to avoid duration overflow in voice 1
         position: 0,
         note: {
           pitch: { step: 'D', octave: 4 },
@@ -448,7 +448,7 @@ describe('Operations', () => {
       const result = addNoteChecked(score, {
         partIndex: 99,
         measureIndex: 0,
-        voice: 1,
+        voice: '1',
         position: 0,
         note: {
           pitch: { step: 'C', octave: 4 },
@@ -470,7 +470,7 @@ describe('Operations', () => {
       const result = addNoteChecked(score, {
         partIndex: 0,
         measureIndex: 99,
-        voice: 1,
+        voice: '1',
         position: 0,
         note: {
           pitch: { step: 'C', octave: 4 },
@@ -2617,7 +2617,7 @@ describe('Beam Operations', () => {
       const result = autoBeam(score, {
         partIndex: 0,
         measureIndex: 0,
-        voice: 1,
+        voice: '1',
       });
 
       expect(result.success).toBe(true);
@@ -2643,7 +2643,7 @@ describe('Copy/Paste Operations', () => {
         measureIndex: 0,
         startPosition: 0,
         endPosition: divisions * 2, // Copy 2 beats worth
-        voice: 1,
+        voice: '1',
       });
 
       expect(result.success).toBe(true);
@@ -2665,7 +2665,7 @@ describe('Copy/Paste Operations', () => {
         measureIndex: 0,
         startPosition: 0,
         endPosition: divisions * 4, // Full measure (4 beats)
-        voice: 1,
+        voice: '1',
       });
 
       expect(result.success).toBe(true);
@@ -2683,7 +2683,7 @@ describe('Copy/Paste Operations', () => {
         measureIndex: 99,
         startPosition: 0,
         endPosition: 4,
-        voice: 1,
+        voice: '1',
       });
 
       expect(result.success).toBe(false);
@@ -2703,7 +2703,7 @@ describe('Copy/Paste Operations', () => {
         measureIndex: 0,
         startPosition: 0,
         endPosition: divisions * 2,
-        voice: 1,
+        voice: '1',
       });
       expect(copyResult.success).toBe(true);
       if (!copyResult.success) return;
@@ -2734,7 +2734,7 @@ describe('Copy/Paste Operations', () => {
         measureIndex: 0,
         startPosition: 0,
         endPosition: divisions * 4,
-        voice: 1,
+        voice: '1',
       });
       expect(copyResult.success).toBe(true);
       if (!copyResult.success) return;
@@ -2765,7 +2765,7 @@ describe('Copy/Paste Operations', () => {
         measureIndex: 0,
         startPosition: 0,
         endPosition: divisions * 2,
-        voice: 1,
+        voice: '1',
       });
 
       expect(result.success).toBe(true);
@@ -2791,7 +2791,7 @@ describe('Copy/Paste Operations', () => {
         measureIndex: 0,
         startPosition: 0,
         endPosition: divisions * 2,
-        voice: 1,
+        voice: '1',
       });
       expect(cutResult.success).toBe(true);
       if (!cutResult.success) return;
@@ -2817,7 +2817,7 @@ describe('Copy/Paste Operations', () => {
         partIndex: 0,
         startMeasureIndex: 0,
         endMeasureIndex: 1,
-        voice: 1,
+        voice: '1',
       });
 
       expect(result.success).toBe(true);
@@ -2834,7 +2834,7 @@ describe('Copy/Paste Operations', () => {
         partIndex: 0,
         startMeasureIndex: 1,
         endMeasureIndex: 0, // Invalid: end before start
-        voice: 1,
+        voice: '1',
       });
 
       expect(result.success).toBe(false);
@@ -2851,7 +2851,7 @@ describe('Copy/Paste Operations', () => {
         partIndex: 0,
         startMeasureIndex: 0,
         endMeasureIndex: 1,
-        voice: 1,
+        voice: '1',
       });
       expect(copyResult.success).toBe(true);
       if (!copyResult.success) return;
