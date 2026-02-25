@@ -752,17 +752,17 @@ function parseMeasure(elements: OrderedElement[], attrs: Record<string, string>)
   if (attrs['implicit'] === 'yes') measure.implicit = true;
 
   const barlines: Barline[] = [];
-  let isFirstAttributes = true;
+  let hasSeenNote = false;
 
   // Process elements in order - this is the key to maintaining order!
   for (const el of elements) {
     if (el['attributes']) {
       const parsedAttrs = parseAttributes(el['attributes'] as OrderedElement[]);
-      if (isFirstAttributes) {
+      if (!hasSeenNote && !measure.attributes) {
+        // Only store in measure.attributes if no notes have appeared yet
         measure.attributes = parsedAttrs;
-        isFirstAttributes = false;
       } else {
-        // Mid-measure attributes go into entries
+        // Mid-measure attributes (after notes) go into entries
         const attrEntry: AttributesEntry = {
           _id: generateId(),
           type: 'attributes',
@@ -771,6 +771,7 @@ function parseMeasure(elements: OrderedElement[], attrs: Record<string, string>)
         measure.entries.push(attrEntry);
       }
     } else if (el['note']) {
+      hasSeenNote = true;
       measure.entries.push(parseNote(el['note'] as OrderedElement[], getAttributes(el)));
     } else if (el['backup']) {
       measure.entries.push(parseBackup(el['backup'] as OrderedElement[]));
