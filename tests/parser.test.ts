@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { parse } from '../src';
+import { parse, getClefChanges } from '../src';
 
 const fixturesPath = join(__dirname, 'fixtures');
 
@@ -144,6 +144,92 @@ describe('Parser', () => {
         expect(notes[1].staff).toBe(2);
         expect(notes[1].pitch?.octave).toBe(3);
       }
+    });
+  });
+
+  describe('mid-measure attributes parsing', () => {
+    const lilypondPath = join(fixturesPath, 'lilypond/xmlFiles');
+
+    it('should put attributes after notes into entries, not measure.attributes (46c)', () => {
+      // 46c-Midmeasure-Clef.xml measure 3: notes → <attributes> → notes
+      // The <attributes> appears after notes, so it should be an AttributesEntry
+      const xml = readFileSync(join(lilypondPath, '46c-Midmeasure-Clef.xml'), 'utf-8');
+      const score = parse(xml);
+
+      // Measure 3 (index 2, but it's the 4th measure counting implicit X1)
+      // Find measure number "3"
+      const measure3 = score.parts[0].measures.find(m => m.number === '3');
+      expect(measure3).toBeDefined();
+
+      // measure.attributes should be undefined since the only <attributes> is mid-measure
+      expect(measure3!.attributes).toBeUndefined();
+
+      // The attributes should be in entries as an AttributesEntry
+      const attrEntries = measure3!.entries.filter(e => e.type === 'attributes');
+      expect(attrEntries).toHaveLength(1);
+
+      if (attrEntries[0].type === 'attributes') {
+        expect(attrEntries[0].attributes.clef).toHaveLength(1);
+        expect(attrEntries[0].attributes.clef![0].sign).toBe('G');
+        expect(attrEntries[0].attributes.clef![0].line).toBe(2);
+      }
+
+      // Verify the entry order: note, note, attributes, note, note
+      const entryTypes = measure3!.entries.map(e => e.type);
+      expect(entryTypes).toEqual(['note', 'note', 'attributes', 'note', 'note']);
+    });
+
+    it('should keep attributes before notes in measure.attributes (42b measure 84)', () => {
+      // 42b measure 84: <attributes> at start → notes → <attributes> mid-measure
+      const xml = readFileSync(join(lilypondPath, '42b-MultiVoice-MidMeasureClefChange.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const measure84 = score.parts[0].measures.find(m => m.number === '84');
+      expect(measure84).toBeDefined();
+
+      // First attributes (at start) should be in measure.attributes
+      expect(measure84!.attributes).toBeDefined();
+      expect(measure84!.attributes!.divisions).toBe(336);
+      expect(measure84!.attributes!.clef).toHaveLength(2);
+
+      // Second attributes (mid-measure, after notes) should be in entries
+      const attrEntries = measure84!.entries.filter(e => e.type === 'attributes');
+      expect(attrEntries).toHaveLength(1);
+
+      if (attrEntries[0].type === 'attributes') {
+        expect(attrEntries[0].attributes.clef).toHaveLength(1);
+        expect(attrEntries[0].attributes.clef![0].sign).toBe('F');
+      }
+    });
+
+    it('should report correct position for mid-measure clef changes (46c)', () => {
+      const xml = readFileSync(join(lilypondPath, '46c-Midmeasure-Clef.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const clefChanges = getClefChanges(score);
+
+      // Find the G→C clef change (measure X1, at start) and C→G change (measure 3, mid-measure)
+      const midMeasureClef = clefChanges.find(
+        c => c.measureNumber === '3' && c.clef.sign === 'G'
+      );
+      expect(midMeasureClef).toBeDefined();
+      // Position should be 2 (after two quarter notes with divisions=1)
+      expect(midMeasureClef!.position).toBe(2);
+    });
+
+    it('should report correct position for mid-measure clef changes (42b)', () => {
+      const xml = readFileSync(join(lilypondPath, '42b-MultiVoice-MidMeasureClefChange.xml'), 'utf-8');
+      const score = parse(xml);
+
+      const clefChanges = getClefChanges(score);
+
+      // In measure 84, the mid-measure clef change (F clef on staff 1) appears after 3 eighth notes
+      // divisions=336, each eighth note = 168 duration, so position should be 3*168 = 504
+      const midMeasureClef = clefChanges.find(
+        c => c.measureNumber === '84' && c.clef.sign === 'F' && c.staff === 1
+      );
+      expect(midMeasureClef).toBeDefined();
+      expect(midMeasureClef!.position).toBe(504);
     });
   });
 });
