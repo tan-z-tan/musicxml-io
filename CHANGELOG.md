@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.6] - 2025-02-25
+
+### Fixed
+- First `<attributes>` in a measure was always stored in `measure.attributes`, even when preceded by `<note>` elements
+  - Now correctly placed as `AttributesEntry` in `entries` array when notes appear before it
+  - `getClefChanges()` and similar queries now report correct `position` for mid-measure attribute changes
+
 ## [0.3.3] - 2025-02-17
 
 ### Added
