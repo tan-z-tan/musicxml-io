@@ -830,7 +830,7 @@ export interface OtherNotation extends BaseNotation {
 export type DirectionType =
   | { kind: 'dynamics'; value?: DynamicsValue; otherDynamics?: string; defaultX?: number; defaultY?: number; relativeX?: number; halign?: string }
   | { kind: 'wedge'; type: 'crescendo' | 'diminuendo' | 'stop'; spread?: number; defaultY?: number; relativeX?: number }
-  | { kind: 'metronome'; beatUnit: NoteType; perMinute?: number | string; beatUnitDot?: boolean; beatUnit2?: NoteType; beatUnitDot2?: boolean; parentheses?: boolean; defaultY?: number; fontFamily?: string; fontSize?: string }
+  | { kind: 'metronome'; beatUnit: NoteType; perMinute?: number | string; beatUnitDot?: boolean; beatUnit2?: NoteType; beatUnitDot2?: boolean; parentheses?: boolean; printObject?: boolean; defaultY?: number; fontFamily?: string; fontSize?: string }
   | { kind: 'words'; text: string; defaultX?: number; defaultY?: number; relativeX?: number; relativeY?: number; fontFamily?: string; fontSize?: string; fontStyle?: string; fontWeight?: string; xmlLang?: string; justify?: string; color?: string; xmlSpace?: string; halign?: string }
   | { kind: 'rehearsal'; text: string; enclosure?: string; defaultX?: number; defaultY?: number; fontSize?: string; fontWeight?: string }
   | { kind: 'segno' }

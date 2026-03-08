@@ -2015,6 +2015,7 @@ function parseDirectionTypes(elements: OrderedElement[]): DirectionType[] {
           if (beatUnitDots[1]) result.beatUnitDot2 = true;
         }
         if (metAttrs['parentheses'] === 'yes') result.parentheses = true;
+        if (metAttrs['print-object'] === 'no') result.printObject = false;
         if (metAttrs['default-y']) result.defaultY = parseFloat(metAttrs['default-y']);
         if (metAttrs['font-family']) result.fontFamily = metAttrs['font-family'];
         if (metAttrs['font-size']) result.fontSize = metAttrs['font-size'];
