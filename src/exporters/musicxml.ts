@@ -1702,6 +1702,7 @@ function serializeDirectionType(dirType: DirectionType, indent: string): string[
 
     case 'metronome': {
       let metAttrs = '';
+      if (dirType.printObject === false) metAttrs += ' print-object="no"';
       if (dirType.parentheses) metAttrs += ' parentheses="yes"';
       if (dirType.defaultY !== undefined) metAttrs += ` default-y="${dirType.defaultY}"`;
       if (dirType.fontFamily) metAttrs += ` font-family="${escapeXml(dirType.fontFamily)}"`;
