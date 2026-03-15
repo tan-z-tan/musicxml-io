@@ -74,7 +74,7 @@ const xmlParser = new XMLParser({
   textNodeName: '#text',
   parseAttributeValue: false,
   parseTagValue: false,
-  trimValues: true,
+  trimValues: false,
   preserveOrder: true,
 });
 
@@ -120,9 +120,12 @@ function getElementContent(elements: OrderedElement[], tagName: string): Ordered
 }
 
 /** Extract text content from an element array */
-function extractText(elements: OrderedElement[]): string {
+function extractText(elements: OrderedElement[], preserveWhitespace = false): string {
   for (const item of elements) {
-    if (item['#text'] !== undefined) return String(item['#text']);
+    if (item['#text'] !== undefined) {
+      const text = String(item['#text']);
+      return preserveWhitespace ? text : text.trim();
+    }
   }
   return '';
 }
@@ -521,7 +524,7 @@ function parseCredits(elements: OrderedElement[]): Credit[] | undefined {
     if (attrs['page']) credit.page = parseInt(attrs['page'], 10);
     const types = collectElements(content, 'credit-type', (c) => extractText(c));
     const words = collectElements(content, 'credit-words', (c, a) => {
-      const cw: CreditWords = { text: extractText(c) };
+      const cw: CreditWords = { text: extractText(c, true) };
       if (a['default-x']) cw.defaultX = parseFloat(a['default-x']);
       if (a['default-y']) cw.defaultY = parseFloat(a['default-y']);
       if (a['font-family']) cw.fontFamily = a['font-family'];
@@ -1670,7 +1673,7 @@ function parseNotations(elements: OrderedElement[], notationsIndex: number = 0):
       let text: string | undefined;
       for (const item of glissContent) {
         if (item['#text'] !== undefined) {
-          text = String(item['#text']);
+          text = String(item['#text']).trim();
           break;
         }
       }
@@ -1712,7 +1715,7 @@ function parseLyric(elements: OrderedElement[], attrs: Record<string, string>): 
       const content = el['syllabic'] as OrderedElement[];
       for (const item of content) {
         if (item['#text'] !== undefined) {
-          const syl = String(item['#text']);
+          const syl = String(item['#text']).trim();
           if (syl === 'single' || syl === 'begin' || syl === 'middle' || syl === 'end') {
             currentSyllabic = syl;
           }
@@ -1991,7 +1994,7 @@ function parseDirectionTypes(elements: OrderedElement[]): DirectionType[] {
           const buContent = met['beat-unit'] as OrderedElement[];
           for (const item of buContent) {
             if (item['#text'] !== undefined) {
-              beatUnits.push(String(item['#text']));
+              beatUnits.push(String(item['#text']).trim());
               dotForPrev = true;
               break;
             }
@@ -2027,7 +2030,7 @@ function parseDirectionTypes(elements: OrderedElement[]): DirectionType[] {
     // Words - collect all words elements in this direction-type
     if (el['words']) {
       const a = getAttributes(el);
-      const text = extractText(el['words'] as OrderedElement[]);
+      const text = extractText(el['words'] as OrderedElement[], true);
       // Include words even if text is empty - preserve styling info
       const result: DirectionType = { kind: 'words', text: text || '' };
       if (a['default-x']) result.defaultX = parseFloat(a['default-x']);
@@ -2128,7 +2131,7 @@ function parseDirectionTypes(elements: OrderedElement[]): DirectionType[] {
       const otherContent = el['other-direction'] as OrderedElement[];
       for (const o of otherContent) {
         if (o['#text'] !== undefined) {
-          const result: DirectionType = { kind: 'other-direction', text: String(o['#text']) };
+          const result: DirectionType = { kind: 'other-direction', text: String(o['#text']).trim() };
           if (otherAttrs['default-x']) result.defaultX = parseFloat(otherAttrs['default-x']);
           if (otherAttrs['default-y']) result.defaultY = parseFloat(otherAttrs['default-y']);
           if (otherAttrs['halign']) result.halign = otherAttrs['halign'];
@@ -2283,8 +2286,8 @@ function parseDirectionTypes(elements: OrderedElement[]): DirectionType[] {
         } else if (sw['swing-type']) {
           const stContent = sw['swing-type'] as OrderedElement[];
           for (const item of stContent) {
-            if (item['#text'] !== undefined && isValidNoteType(String(item['#text']))) {
-              result.swingType = String(item['#text']) as any;
+            if (item['#text'] !== undefined && isValidNoteType(String(item['#text']).trim())) {
+              result.swingType = String(item['#text']).trim() as any;
               break;
             }
           }
@@ -2523,7 +2526,7 @@ function parseHarmony(elements: OrderedElement[], attrs: Record<string, string>)
       const kindContent = el['kind'] as OrderedElement[];
       for (const item of kindContent) {
         if (item['#text'] !== undefined) {
-          harmony.kind = String(item['#text']);
+          harmony.kind = String(item['#text']).trim();
           break;
         }
       }
@@ -2669,7 +2672,7 @@ function parseFiguredBass(elements: OrderedElement[], attrs: Record<string, stri
           const prefixContent = figEl['prefix'] as OrderedElement[];
           for (const item of prefixContent) {
             if (item['#text'] !== undefined) {
-              figure.prefix = String(item['#text']);
+              figure.prefix = String(item['#text']).trim();
               break;
             }
           }
@@ -2677,7 +2680,7 @@ function parseFiguredBass(elements: OrderedElement[], attrs: Record<string, stri
           const suffixContent = figEl['suffix'] as OrderedElement[];
           for (const item of suffixContent) {
             if (item['#text'] !== undefined) {
-              figure.suffix = String(item['#text']);
+              figure.suffix = String(item['#text']).trim();
               break;
             }
           }
@@ -2746,7 +2749,7 @@ function parseSound(elements: OrderedElement[], attrs: Record<string, string>): 
           const typeContent = swingEl['swing-type'] as OrderedElement[];
           for (const item of typeContent) {
             if (item['#text'] !== undefined) {
-              swing.swingType = String(item['#text']);
+              swing.swingType = String(item['#text']).trim();
               break;
             }
           }
