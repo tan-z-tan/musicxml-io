@@ -1337,6 +1337,7 @@ export function addPart(
 
     if (i === 0) {
       measure.attributes = {
+        _id: generateId(),
         divisions: options.divisions ?? 4,
         time: options.time ?? { beats: '4', beatType: 4 },
         key: options.key ?? { fifths: 0 },
@@ -1458,7 +1459,7 @@ export function setStaves(
   }
 
   if (!measure.attributes) {
-    measure.attributes = {};
+    measure.attributes = { _id: generateId() };
   }
   measure.attributes.staves = options.staves;
 
@@ -1542,7 +1543,7 @@ export function changeKey(score: Score, key: KeySignature, options: { fromMeasur
   for (const part of result.parts) {
     for (const measure of part.measures) {
       if (measure.number === targetMeasure) {
-        if (!measure.attributes) measure.attributes = {};
+        if (!measure.attributes) measure.attributes = { _id: generateId() };
         measure.attributes.key = key;
       }
     }
@@ -1558,7 +1559,7 @@ export function changeTime(score: Score, time: TimeSignature, options: { fromMea
   for (const part of result.parts) {
     for (const measure of part.measures) {
       if (measure.number === targetMeasure) {
-        if (!measure.attributes) measure.attributes = {};
+        if (!measure.attributes) measure.attributes = { _id: generateId() };
         measure.attributes.time = time;
       }
     }
@@ -1581,7 +1582,7 @@ export function insertMeasure(score: Score, options: { afterMeasure: string | nu
     const newMeasure: Measure = { _id: generateId(), number: newMeasureNumber, entries: [] };
 
     if (options.copyAttributes && part.measures[insertIndex].attributes) {
-      newMeasure.attributes = { ...part.measures[insertIndex].attributes };
+      newMeasure.attributes = { ...part.measures[insertIndex].attributes, _id: generateId() };
     }
 
     part.measures.splice(insertIndex + 1, 0, newMeasure);
@@ -2254,7 +2255,7 @@ export function insertClefChange(
   if (options.position === 0) {
     // Insert at measure start - update or create measure attributes
     if (!measure.attributes) {
-      measure.attributes = {};
+      measure.attributes = { _id: generateId() };
     }
 
     const staff = options.clef.staff ?? 1;
