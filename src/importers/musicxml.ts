@@ -861,7 +861,7 @@ function parsePrint(elements: OrderedElement[], attrs: Record<string, string>): 
 }
 
 function parseAttributes(elements: OrderedElement[]): MeasureAttributes {
-  const attrs: MeasureAttributes = {};
+  const attrs: MeasureAttributes = { _id: generateId() };
 
   const divisions = getElementTextAsInt(elements, 'divisions');
   if (divisions !== undefined) attrs.divisions = divisions;

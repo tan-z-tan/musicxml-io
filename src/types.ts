@@ -247,6 +247,7 @@ export interface MeasureNumbering {
 }
 
 export interface MeasureAttributes {
+  _id?: string;
   divisions?: number;
   time?: TimeSignature;
   times?: TimeSignature[]; // For multi-staff time signatures

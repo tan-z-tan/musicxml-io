@@ -1462,6 +1462,7 @@ function buildMeasures(
     // Add attributes to first measure
     if (isFirstMeasure) {
       measure.attributes = {
+        _id: generateId(),
         divisions: DIVISIONS,
         time: timeSignature,
         key: keySignature,
@@ -1473,7 +1474,7 @@ function buildMeasures(
     // Apply pending key change to this measure
     if (pendingKeyChange) {
       if (!measure.attributes) {
-        measure.attributes = {};
+        measure.attributes = { _id: generateId() };
       }
       const kValue = pendingKeyChange.replace(/^K:\s*/, '');
       measure.attributes.key = parseKeySignature(kValue);
