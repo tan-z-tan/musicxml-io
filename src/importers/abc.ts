@@ -1524,6 +1524,10 @@ function buildMeasures(
             // Second note is lengthened
             entry.duration = Math.round(entry.duration * (2 * divisor - 1) / divisor);
           }
+          // Recalculate noteType and dots after duration change
+          const { noteType: brokenType, dots: brokenDots } = durationToNoteType(entry.duration);
+          entry.noteType = brokenType;
+          entry.dots = brokenDots > 0 ? brokenDots : undefined;
           pendingBrokenRhythm = null;
         }
 
@@ -1831,6 +1835,10 @@ function buildMeasures(
               // First note is shortened
               e.duration = Math.round(e.duration / brokenDivisor);
             }
+            // Recalculate noteType and dots after duration change
+            const { noteType: newType, dots: newDots } = durationToNoteType(e.duration);
+            e.noteType = newType;
+            e.dots = newDots > 0 ? newDots : undefined;
             break;
           }
         }
