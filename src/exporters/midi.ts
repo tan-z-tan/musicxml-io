@@ -115,7 +115,6 @@ function createConductorTrack(
   }
 
   // Scan for tempo changes in directions (with repeat expansion)
-  let currentTick = 0;
   if (score.parts.length > 0) {
     const part = score.parts[0];
     let divisions = 1;
@@ -147,7 +146,7 @@ function createConductorTrack(
                 (usPerQuarter >> 8) & 0xff,
                 usPerQuarter & 0xff
               );
-              currentTick += tickDelta;
+              // currentTick tracked in main track loop
             }
           }
         } else if (entry.type === 'note' && !entry.chord) {

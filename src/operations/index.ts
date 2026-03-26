@@ -3320,7 +3320,7 @@ export function pasteNotes(
   return success(result, errors.filter(e => e.level !== 'error'));
 }
 
-export interface CutNotesOptions extends CopyNotesOptions {}
+export type CutNotesOptions = CopyNotesOptions;
 
 /**
  * Cut notes from a range (copy and delete).

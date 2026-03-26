@@ -192,7 +192,7 @@ export function getChords(measure: Measure, filter?: VoiceFilter): Chord[] {
     chords.push({
       position,
       duration,
-      notes: notes.map(({ absolutePosition, ...note }) => note),
+      notes: notes.map(({ absolutePosition: _, ...note }) => note),
     });
   }
 

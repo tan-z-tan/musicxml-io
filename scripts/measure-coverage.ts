@@ -11,7 +11,8 @@
 
 import { readFileSync, readdirSync, statSync, existsSync, writeFileSync } from 'fs';
 import { join, relative } from 'path';
-import { XMLParser } from 'fast-xml-parser';
+import { parse as txmlParse } from 'txml';
+import type { tNode } from 'txml';
 import { parse } from '../src/importers/musicxml';
 import { serialize } from '../src/exporters/musicxml';
 import { decodeBuffer } from '../src/file';
@@ -70,18 +71,8 @@ interface CoverageReport {
 // XML Parsing
 // ============================================================
 
-const xmlParser = new XMLParser({
-  ignoreAttributes: false,
-  attributeNamePrefix: '@_',
-  textNodeName: '#text',
-  preserveOrder: true,
-  trimValues: false,  // Preserve whitespace for accurate comparison
-  parseTagValue: false,
-  parseAttributeValue: false,
-});
-
-function parseXml(xml: string): unknown[] {
-  return xmlParser.parse(xml);
+function parseXml(xml: string): (tNode | string)[] {
+  return txmlParse(xml);
 }
 
 // ============================================================
@@ -233,7 +224,7 @@ function compareNodes(
 }
 
 // Elements to ignore in comparison (not meaningful for roundtrip)
-const IGNORED_ELEMENTS = new Set(['?xml', '!DOCTYPE', '#text']);
+const IGNORED_ELEMENTS = new Set(['?xml', '!DOCTYPE']);
 
 // Attributes to ignore (serializer always outputs these with fixed values)
 const IGNORED_ATTRIBUTES = new Set(['version']);
@@ -242,29 +233,28 @@ function buildElementMap(nodes: unknown[]): Map<string, unknown[]> {
   const map = new Map<string, unknown[]>();
 
   for (const node of nodes) {
+    if (typeof node === 'string') continue; // Skip text nodes
     if (typeof node !== 'object' || node === null) continue;
 
-    for (const key of Object.keys(node as object)) {
-      if (key === ':@') continue; // Skip attributes object
+    const tnode = node as tNode;
+    const tagName = tnode.tagName;
 
-      // Skip ignored elements (XML declaration, DOCTYPE, whitespace text nodes)
-      if (IGNORED_ELEMENTS.has(key)) continue;
+    // Skip ignored elements
+    if (IGNORED_ELEMENTS.has(tagName)) continue;
 
-      let existing = map.get(key) || [];
-      existing.push(node);
-      map.set(key, existing);
-    }
+    let existing = map.get(tagName) || [];
+    existing.push(node);
+    map.set(tagName, existing);
   }
 
   return map;
 }
 
-function getChildren(node: unknown, tagName: string): unknown[] {
+function getChildren(node: unknown, _tagName: string): unknown[] {
+  if (typeof node === 'string') return [];
   if (typeof node !== 'object' || node === null) return [];
-  const obj = node as Record<string, unknown>;
-  const children = obj[tagName];
-  if (Array.isArray(children)) return children;
-  return [];
+  const tnode = node as tNode;
+  return tnode.children || [];
 }
 
 function compareAttributes(
@@ -328,33 +318,20 @@ function compareAttributes(
 }
 
 function getAttributes(node: unknown): Record<string, string> {
+  if (typeof node === 'string') return {};
   if (typeof node !== 'object' || node === null) return {};
-  const obj = node as Record<string, unknown>;
-  const attrs = obj[':@'];
-  if (typeof attrs !== 'object' || attrs === null) return {};
-
-  const result: Record<string, string> = {};
-  for (const [key, value] of Object.entries(attrs as object)) {
-    if (key.startsWith('@_')) {
-      result[key.slice(2)] = String(value);
-    }
-  }
-  return result;
+  const tnode = node as tNode;
+  return (tnode.attributes || {}) as Record<string, string>;
 }
 
 function getTextContent(node: unknown): string | null {
+  if (typeof node === 'string') return node;
   if (typeof node !== 'object' || node === null) return null;
 
-  // Look for #text in the node's children
-  for (const key of Object.keys(node as object)) {
-    if (key === ':@') continue;
-    const children = (node as Record<string, unknown>)[key];
-    if (Array.isArray(children)) {
-      for (const child of children) {
-        if (typeof child === 'object' && child !== null && '#text' in child) {
-          return String((child as Record<string, unknown>)['#text']);
-        }
-      }
+  const tnode = node as tNode;
+  for (const child of tnode.children || []) {
+    if (typeof child === 'string') {
+      return child;
     }
   }
   return null;
@@ -392,48 +369,37 @@ function valuesAreEqual(a: string, b: string): boolean {
 }
 
 function countNestedNodes(node: unknown, stats: CompareStats): void {
+  if (typeof node === 'string') {
+    if (node.trim() !== '') stats.totalTextValues++;
+    return;
+  }
   if (typeof node !== 'object' || node === null) return;
 
-  for (const key of Object.keys(node as object)) {
-    if (key === ':@') {
-      // Count attributes
-      const attrs = (node as Record<string, unknown>)[':@'];
-      if (typeof attrs === 'object' && attrs !== null) {
-        stats.totalAttributes += Object.keys(attrs as object).length;
-      }
-      continue;
-    }
+  const tnode = node as tNode;
 
-    // Skip ignored elements
-    if (IGNORED_ELEMENTS.has(key)) continue;
+  // Count attributes
+  if (tnode.attributes) {
+    stats.totalAttributes += Object.keys(tnode.attributes).length;
+  }
 
-    const children = (node as Record<string, unknown>)[key];
-    if (Array.isArray(children)) {
-      for (const child of children) {
-        if (typeof child === 'object' && child !== null) {
-          // Skip text nodes (handled separately with non-empty check)
-          if ('#text' in child) {
-            const textValue = String((child as Record<string, unknown>)['#text']);
-            if (textValue.trim() !== '') {
-              stats.totalTextValues++;
-            }
-          } else {
-            stats.totalNodes++;
-            countNestedNodes(child, stats);
-          }
-        }
+  for (const child of tnode.children || []) {
+    if (typeof child === 'string') {
+      if (child.trim() !== '') stats.totalTextValues++;
+    } else {
+      if (!IGNORED_ELEMENTS.has(child.tagName)) {
+        stats.totalNodes++;
+        countNestedNodes(child, stats);
       }
     }
   }
 }
 
 function summarizeElement(node: unknown): string {
+  if (typeof node === 'string') return `"${node}"`;
   if (typeof node !== 'object' || node === null) return String(node);
 
-  const keys = Object.keys(node as object).filter(k => k !== ':@');
-  if (keys.length === 0) return '(empty)';
-
-  const tagName = keys[0];
+  const tnode = node as tNode;
+  const tagName = tnode.tagName || '(unknown)';
   const attrs = getAttributes(node);
   const attrStr = Object.entries(attrs).map(([k, v]) => `${k}="${v}"`).join(' ');
 
