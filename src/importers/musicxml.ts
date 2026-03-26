@@ -72,17 +72,14 @@ import type {
 type XmlNode = tNode;
 type XmlChild = XmlNode | string;
 
-/** Decode XML entities that txml does not decode */
+/** Decode XML entities that txml does not decode (single-pass) */
+const _entityMap: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
+const _entityRegex = /&(?:(amp|lt|gt|quot|apos)|#(\d+)|#x([0-9a-fA-F]+));/g;
 function decodeXmlEntities(s: string): string {
   if (s.indexOf('&') === -1) return s;
-  return s
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/&#(\d+);/g, (_, num) => String.fromCharCode(parseInt(num, 10)))
-    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+  return s.replace(_entityRegex, (_, named, dec, hex) =>
+    named ? _entityMap[named] : dec ? String.fromCharCode(parseInt(dec, 10)) : String.fromCharCode(parseInt(hex!, 16))
+  );
 }
 
 /** Recursively decode XML entities in all text nodes and attribute values */
@@ -1109,16 +1106,10 @@ function parseNote(elements: XmlChild[], attrs: Record<string, string>): NoteEnt
   const note: NoteEntry = {
     _id: generateId(),
     type: 'note',
-    duration: getElementTextAsInt(elements, 'duration', 0)!,
+    duration: 0,
   };
 
-  // Voice - only set if present in the XML (MusicXML spec: xs:string)
-  const voiceValue = getElementText(elements, 'voice');
-  if (voiceValue !== undefined && voiceValue !== '') {
-    note.voice = voiceValue;
-  }
-
-  // Layout attributes
+  // Layout attributes (from attrs, not children - no loop needed)
   if (attrs['default-x']) note.defaultX = parseFloat(attrs['default-x']);
   if (attrs['default-y']) note.defaultY = parseFloat(attrs['default-y']);
   if (attrs['relative-x']) note.relativeX = parseFloat(attrs['relative-x']);
@@ -1130,192 +1121,184 @@ function parseNote(elements: XmlChild[], attrs: Record<string, string>): NoteEnt
   if (attrs['print-spacing'] === 'yes') note.printSpacing = true;
   if (attrs['print-spacing'] === 'no') note.printSpacing = false;
 
-  // Cue note
-  if (hasElement(elements, 'cue')) {
-    note.cue = true;
-  }
+  // Single pass over all child elements
+  let dotCount = 0;
+  let notationsIndex = 0;
+  let tieElements: { type: 'start' | 'stop' | 'continue' }[] | undefined;
+  let beams: BeamInfo[] | undefined;
+  let allNotations: Notation[] | undefined;
+  let lyrics: Lyric[] | undefined;
+  let hasGrace = false;
 
-  // Instrument reference
-  const instData = parseFirstElement(elements, 'instrument', (_, attrs) => attrs['id']);
-  if (instData) note.instrument = instData;
-
-  // Pitch or rest
-  const pitch = getElementContent(elements, 'pitch');
-  if (pitch) {
-    note.pitch = parsePitch(pitch);
-  }
-
-  // Rest
-  for (const el of elements) {
+  for (let i = 0; i < elements.length; i++) {
+    const el = elements[i];
     if (typeof el === 'string') continue;
-    if (el.tagName === 'rest') {
-      const restContent = el.children;
-      const restInfo: RestInfo = {};
+    const tag = el.tagName;
+    const elAttrs = el.attributes as Record<string, string>;
+    const c = el.children;
 
-      const restAttrs = el.attributes as Record<string, string>;
-      if (restAttrs['measure'] === 'yes') restInfo.measure = true;
-
-      const displayStep = getElementText(restContent, 'display-step');
-      if (displayStep) restInfo.displayStep = displayStep;
-
-      const displayOctave = getElementText(restContent, 'display-octave');
-      if (displayOctave) restInfo.displayOctave = parseInt(displayOctave, 10);
-
-      note.rest = restInfo;
-      break;
+    switch (tag) {
+      case 'duration': {
+        const text = extractText(c);
+        if (text) note.duration = parseInt(text, 10) || 0;
+        break;
+      }
+      case 'voice': {
+        const text = extractText(c);
+        if (text) note.voice = text;
+        break;
+      }
+      case 'cue':
+        note.cue = true;
+        break;
+      case 'chord':
+        note.chord = true;
+        break;
+      case 'dot':
+        dotCount++;
+        break;
+      case 'instrument':
+        if (elAttrs['id']) note.instrument = elAttrs['id'];
+        break;
+      case 'pitch':
+        note.pitch = parsePitch(c);
+        break;
+      case 'rest': {
+        const restInfo: RestInfo = {};
+        if (elAttrs['measure'] === 'yes') restInfo.measure = true;
+        const displayStep = getElementText(c, 'display-step');
+        if (displayStep) restInfo.displayStep = displayStep;
+        const displayOctave = getElementText(c, 'display-octave');
+        if (displayOctave) restInfo.displayOctave = parseInt(displayOctave, 10);
+        note.rest = restInfo;
+        break;
+      }
+      case 'unpitched': {
+        note.unpitched = {};
+        const displayStep = getElementText(c, 'display-step');
+        if (displayStep) note.unpitched.displayStep = displayStep;
+        const displayOctave = getElementText(c, 'display-octave');
+        if (displayOctave) note.unpitched.displayOctave = parseInt(displayOctave, 10);
+        break;
+      }
+      case 'staff': {
+        const text = extractText(c);
+        if (text) { const v = parseInt(text, 10); if (!isNaN(v)) note.staff = v; }
+        break;
+      }
+      case 'type': {
+        const noteType = extractText(c);
+        if (isValidNoteType(noteType)) note.noteType = noteType;
+        if (elAttrs['size']) note.noteTypeSize = elAttrs['size'];
+        break;
+      }
+      case 'accidental': {
+        const accValue = extractText(c);
+        if (isValidAccidental(accValue)) {
+          const accInfo: AccidentalInfo = { value: accValue };
+          if (elAttrs['cautionary'] === 'yes') accInfo.cautionary = true;
+          if (elAttrs['editorial'] === 'yes') accInfo.editorial = true;
+          if (elAttrs['parentheses'] === 'yes') accInfo.parentheses = true;
+          if (elAttrs['bracket'] === 'yes') accInfo.bracket = true;
+          if (elAttrs['relative-x']) accInfo.relativeX = parseFloat(elAttrs['relative-x']);
+          if (elAttrs['relative-y']) accInfo.relativeY = parseFloat(elAttrs['relative-y']);
+          if (elAttrs['color']) accInfo.color = elAttrs['color'];
+          if (elAttrs['size']) accInfo.size = elAttrs['size'];
+          if (elAttrs['font-size']) accInfo.fontSize = elAttrs['font-size'];
+          note.accidental = accInfo;
+        }
+        break;
+      }
+      case 'stem': {
+        const stemValue = extractText(c);
+        if (stemValue === 'up' || stemValue === 'down' || stemValue === 'none' || stemValue === 'double') {
+          note.stem = { value: stemValue };
+          if (elAttrs['default-x']) note.stem.defaultX = parseFloat(elAttrs['default-x']);
+          if (elAttrs['default-y']) note.stem.defaultY = parseFloat(elAttrs['default-y']);
+        }
+        break;
+      }
+      case 'notehead': {
+        const nhValue = extractText(c);
+        if (isValidNotehead(nhValue)) {
+          const nhInfo: NoteheadInfo = { value: nhValue };
+          if (elAttrs['filled'] === 'yes') nhInfo.filled = true;
+          else if (elAttrs['filled'] === 'no') nhInfo.filled = false;
+          if (elAttrs['parentheses'] === 'yes') nhInfo.parentheses = true;
+          note.notehead = nhInfo;
+        }
+        break;
+      }
+      case 'tie': {
+        const t = elAttrs['type'];
+        if (t === 'start' || t === 'stop' || t === 'continue') {
+          if (!tieElements) tieElements = [];
+          tieElements.push({ type: t });
+        }
+        break;
+      }
+      case 'beam': {
+        if (!beams) beams = [];
+        beams.push(parseBeam(c, elAttrs));
+        break;
+      }
+      case 'notations': {
+        const parsedNotations = parseNotations(c, notationsIndex);
+        if (parsedNotations.length > 0) {
+          if (!allNotations) allNotations = [];
+          for (let j = 0; j < parsedNotations.length; j++) allNotations.push(parsedNotations[j]);
+        }
+        notationsIndex++;
+        break;
+      }
+      case 'lyric': {
+        if (!lyrics) lyrics = [];
+        lyrics.push(parseLyric(c, elAttrs));
+        break;
+      }
+      case 'grace': {
+        hasGrace = true;
+        note.grace = {};
+        if (elAttrs['slash'] === 'yes') note.grace.slash = true;
+        else if (elAttrs['slash'] === 'no') note.grace.slash = false;
+        if (elAttrs['steal-time-previous']) {
+          note.grace.stealTimePrevious = parseFloat(elAttrs['steal-time-previous']);
+        }
+        if (elAttrs['steal-time-following']) {
+          note.grace.stealTimeFollowing = parseFloat(elAttrs['steal-time-following']);
+        }
+        break;
+      }
+      case 'time-modification': {
+        const actualNotes = getElementText(c, 'actual-notes');
+        const normalNotes = getElementText(c, 'normal-notes');
+        const normalType = getElementText(c, 'normal-type');
+        note.timeModification = {
+          actualNotes: parseInt(actualNotes || '3', 10),
+          normalNotes: parseInt(normalNotes || '2', 10),
+        };
+        if (normalType && isValidNoteType(normalType)) {
+          note.timeModification.normalType = normalType;
+        }
+        let ndCount = 0;
+        for (const tm of c) {
+          if (typeof tm !== 'string' && tm.tagName === 'normal-dot') ndCount++;
+        }
+        if (ndCount > 0) note.timeModification.normalDots = ndCount;
+        break;
+      }
     }
   }
 
-  // Unpitched (percussion)
-  parseFirstElement(elements, 'unpitched', (c) => {
-    note.unpitched = {};
-    const displayStep = getElementText(c, 'display-step');
-    if (displayStep) note.unpitched.displayStep = displayStep;
-    const displayOctave = getElementText(c, 'display-octave');
-    if (displayOctave) note.unpitched.displayOctave = parseInt(displayOctave, 10);
-  });
-
-  // Staff
-  const staff = getElementTextAsInt(elements, 'staff');
-  if (staff !== undefined) note.staff = staff;
-
-  // Chord - check if chord element exists
-  if (hasElement(elements, 'chord')) {
-    note.chord = true;
-  }
-
-  // Note type
-  parseFirstElement(elements, 'type', (c, a) => {
-    const noteType = extractText(c);
-    if (isValidNoteType(noteType)) note.noteType = noteType;
-    if (a['size']) note.noteTypeSize = a['size'];
-  });
-
-  // Dots
-  const dotCount = elements.filter(el => typeof el !== 'string' && el.tagName === 'dot').length;
   if (dotCount > 0) note.dots = dotCount;
-
-  // Accidental
-  parseFirstElement(elements, 'accidental', (c, a) => {
-    const accValue = extractText(c);
-    if (isValidAccidental(accValue)) {
-      const accInfo: AccidentalInfo = { value: accValue };
-      if (a['cautionary'] === 'yes') accInfo.cautionary = true;
-      if (a['editorial'] === 'yes') accInfo.editorial = true;
-      if (a['parentheses'] === 'yes') accInfo.parentheses = true;
-      if (a['bracket'] === 'yes') accInfo.bracket = true;
-      if (a['relative-x']) accInfo.relativeX = parseFloat(a['relative-x']);
-      if (a['relative-y']) accInfo.relativeY = parseFloat(a['relative-y']);
-      if (a['color']) accInfo.color = a['color'];
-      if (a['size']) accInfo.size = a['size'];
-      if (a['font-size']) accInfo.fontSize = a['font-size'];
-      note.accidental = accInfo;
-    }
-  });
-
-  // Stem
-  parseFirstElement(elements, 'stem', (c, a) => {
-    const stemValue = extractText(c);
-    if (stemValue === 'up' || stemValue === 'down' || stemValue === 'none' || stemValue === 'double') {
-      note.stem = { value: stemValue };
-      if (a['default-x']) note.stem.defaultX = parseFloat(a['default-x']);
-      if (a['default-y']) note.stem.defaultY = parseFloat(a['default-y']);
-    }
-  });
-
-  // Notehead
-  parseFirstElement(elements, 'notehead', (c, a) => {
-    const nhValue = extractText(c);
-    if (isValidNotehead(nhValue)) {
-      const nhInfo: NoteheadInfo = { value: nhValue };
-      if (a['filled'] === 'yes') nhInfo.filled = true;
-      else if (a['filled'] === 'no') nhInfo.filled = false;
-      if (a['parentheses'] === 'yes') nhInfo.parentheses = true;
-      note.notehead = nhInfo;
-    }
-  });
-
-  // Tie (collect all tie elements)
-  const tieElements = collectElements(elements, 'tie', (_, a) => {
-    const t = a['type'];
-    return (t === 'start' || t === 'stop' || t === 'continue') ? { type: t } : null;
-  }).filter((t): t is { type: 'start' | 'stop' | 'continue' } => t !== null);
-  if (tieElements.length > 0) {
+  if (tieElements) {
     note.tie = tieElements[0];
     if (tieElements.length > 1) note.ties = tieElements;
   }
-
-  // Beam
-  const beams = collectElements(elements, 'beam', (c, a) => parseBeam(c, a));
-  if (beams.length > 0) note.beam = beams;
-
-  // Notations - collect ALL notations elements, not just the first
-  const allNotations: Notation[] = [];
-  let notationsIndex = 0;
-  for (const el of elements) {
-    if (typeof el === 'string') continue;
-    if (el.tagName === 'notations') {
-      const parsedNotations = parseNotations(el.children, notationsIndex);
-      allNotations.push(...parsedNotations);
-      notationsIndex++;
-    }
-  }
-  if (allNotations.length > 0) {
-    note.notations = allNotations;
-  }
-
-  // Lyrics
-  const lyrics: Lyric[] = [];
-  for (const el of elements) {
-    if (typeof el === 'string') continue;
-    if (el.tagName === 'lyric') {
-      lyrics.push(parseLyric(el.children, el.attributes as Record<string, string>));
-    }
-  }
-  if (lyrics.length > 0) note.lyrics = lyrics;
-
-  // Grace note
-  for (const el of elements) {
-    if (typeof el === 'string') continue;
-    if (el.tagName === 'grace') {
-      const graceAttrs = el.attributes as Record<string, string>;
-      note.grace = {};
-      if (graceAttrs['slash'] === 'yes') note.grace.slash = true;
-      else if (graceAttrs['slash'] === 'no') note.grace.slash = false;
-      if (graceAttrs['steal-time-previous']) {
-        note.grace.stealTimePrevious = parseFloat(graceAttrs['steal-time-previous']);
-      }
-      if (graceAttrs['steal-time-following']) {
-        note.grace.stealTimeFollowing = parseFloat(graceAttrs['steal-time-following']);
-      }
-      note.duration = 0;
-      break;
-    }
-  }
-
-  // Time modification (tuplet)
-  const timeMod = getElementContent(elements, 'time-modification');
-  if (timeMod) {
-    const actualNotes = getElementText(timeMod, 'actual-notes');
-    const normalNotes = getElementText(timeMod, 'normal-notes');
-    const normalType = getElementText(timeMod, 'normal-type');
-
-    note.timeModification = {
-      actualNotes: parseInt(actualNotes || '3', 10),
-      normalNotes: parseInt(normalNotes || '2', 10),
-    };
-
-    if (normalType && isValidNoteType(normalType)) {
-      note.timeModification.normalType = normalType;
-    }
-
-    // Count normal-dot elements
-    let dotCount = 0;
-    for (const tm of timeMod) {
-      if (typeof tm !== 'string' && tm.tagName === 'normal-dot') dotCount++;
-    }
-    if (dotCount > 0) note.timeModification.normalDots = dotCount;
-  }
+  if (beams) note.beam = beams;
+  if (allNotations) note.notations = allNotations;
+  if (lyrics) note.lyrics = lyrics;
+  if (hasGrace) note.duration = 0;
 
   return note;
 }
