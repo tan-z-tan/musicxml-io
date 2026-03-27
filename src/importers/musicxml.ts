@@ -109,7 +109,10 @@ function decodeTree(nodes: XmlChild[]): void {
 const TXML_OPTIONS = { noChildNodes: [] as string[] };
 
 export function parse(xmlString: string): Score {
-  const parsed = txmlParse(xmlString, TXML_OPTIONS);
+  // Strip Processing Instructions (<?...?>) except the XML declaration (<?xml ...?>).
+  // Some exporters (e.g. Guitar Pro 7) embed PIs like <?GP7 ...?> that txml cannot handle.
+  const cleanedXml = xmlString.replace(/<\?(?!xml\s)[^?]*\?>/g, '');
+  const parsed = txmlParse(cleanedXml, TXML_OPTIONS);
   decodeTree(parsed);
 
   // Find score-partwise in the ordered result

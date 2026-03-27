@@ -94,6 +94,21 @@ describe('Parser', () => {
         expect(notes[2].chord).toBe(true);
       }
     });
+
+    it('should parse XML with processing instructions (e.g. Guitar Pro <?GP7 ...?>)', () => {
+      const xml = readFileSync(join(fixturesPath, 'basic/processing-instruction.xml'), 'utf-8');
+      const score = parse(xml);
+
+      expect(score.parts).toHaveLength(1);
+      expect(score.parts[0].measures).toHaveLength(1);
+      const measure = score.parts[0].measures[0];
+      const note = measure.entries[0];
+      expect(note.type).toBe('note');
+      if (note.type === 'note') {
+        expect(note.pitch?.step).toBe('C');
+        expect(note.pitch?.octave).toBe(4);
+      }
+    });
   });
 
   describe('voice and staff parsing', () => {
