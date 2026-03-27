@@ -105,8 +105,11 @@ function decodeTree(nodes: XmlChild[]): void {
   }
 }
 
+// Reusable txml options: empty noChildNodes skips the default HTML void-element check.
+const TXML_OPTIONS = { noChildNodes: [] as string[] };
+
 export function parse(xmlString: string): Score {
-  const parsed = txmlParse(xmlString);
+  const parsed = txmlParse(xmlString, TXML_OPTIONS);
   decodeTree(parsed);
 
   // Find score-partwise in the ordered result
@@ -131,7 +134,8 @@ export function parse(xmlString: string): Score {
 }
 
 function findElement(elements: XmlChild[], tagName: string): XmlChild[] | undefined {
-  for (const el of elements) {
+  for (let i = 0; i < elements.length; i++) {
+    const el = elements[i];
     if (typeof el !== 'string' && el.tagName === tagName) {
       return el.children;
     }
@@ -145,9 +149,13 @@ function getElementContent(elements: XmlChild[], tagName: string): XmlChild[] | 
 
 /** Extract text content from an element array */
 function extractText(elements: XmlChild[], preserveWhitespace = false): string {
-  for (const item of elements) {
+  for (let i = 0; i < elements.length; i++) {
+    const item = elements[i];
     if (typeof item === 'string') {
-      return preserveWhitespace ? item : item.trim();
+      if (preserveWhitespace) return item;
+      const trimmed = item.trim();
+      if (trimmed.length > 0) return trimmed;
+      // Skip whitespace-only text nodes (from keepWhitespace txml mode)
     }
   }
   return '';
@@ -180,7 +188,8 @@ function collectElements<T>(
   parser: (content: XmlChild[], attrs: Record<string, string>) => T
 ): T[] {
   const results: T[] = [];
-  for (const el of elements) {
+  for (let i = 0; i < elements.length; i++) {
+    const el = elements[i];
     if (typeof el !== 'string' && el.tagName === tagName) {
       results.push(parser(el.children, el.attributes as Record<string, string>));
     }
@@ -196,7 +205,8 @@ function parseFirstElement<T>(
   tagName: string,
   parser: (content: XmlChild[], attrs: Record<string, string>) => T
 ): T | undefined {
-  for (const el of elements) {
+  for (let i = 0; i < elements.length; i++) {
+    const el = elements[i];
     if (typeof el !== 'string' && el.tagName === tagName) {
       return parser(el.children, el.attributes as Record<string, string>);
     }
