@@ -67,6 +67,25 @@ export function isCompressed(data: Uint8Array): boolean {
 }
 
 /**
+ * Detect encoding from BOM and decode Uint8Array to string
+ * Supports UTF-8, UTF-16BE, UTF-16LE
+ */
+function decodeXmlBytes(data: Uint8Array): string {
+  // UTF-16 BE BOM: FE FF
+  if (data.length >= 2 && data[0] === 0xFE && data[1] === 0xFF) {
+    return new TextDecoder('utf-16be').decode(data);
+  }
+
+  // UTF-16 LE BOM: FF FE
+  if (data.length >= 2 && data[0] === 0xFF && data[1] === 0xFE) {
+    return new TextDecoder('utf-16le').decode(data);
+  }
+
+  // Default to UTF-8 (TextDecoder handles UTF-8 BOM automatically)
+  return new TextDecoder('utf-8').decode(data);
+}
+
+/**
  * Parse either compressed (.mxl) or uncompressed (.xml/.musicxml) MusicXML
  * Automatically detects the format
  * @param data - The file data as Uint8Array or string
@@ -81,7 +100,7 @@ export function parseAuto(data: Uint8Array | string): Score {
     return parseCompressed(data);
   }
 
-  // Assume it's uncompressed XML
-  const xmlString = strFromU8(data);
+  // Decode with encoding detection (handles UTF-16 and UTF-8)
+  const xmlString = decodeXmlBytes(data);
   return parse(xmlString);
 }

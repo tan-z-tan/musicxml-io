@@ -2,8 +2,8 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { readFileSync, unlinkSync, existsSync } from 'fs';
 import { join } from 'path';
 import { parse } from '../src';
-import { parseFile, serializeToFile } from '../src/file';
-import { isCompressed } from '../src';
+import { parseFile, serializeToFile, decodeBuffer } from '../src/file';
+import { isCompressed, parseAuto } from '../src';
 
 const fixturesPath = join(__dirname, 'fixtures');
 const lilypondPath = join(fixturesPath, 'lilypond', 'xmlFiles');
@@ -42,6 +42,66 @@ describe('File Operations', () => {
       const score = await parseFile(filePath);
 
       expect(score.parts.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe('decodeBuffer / UTF-16 encoding', () => {
+    const minimalXml = '<?xml version="1.0" encoding="UTF-8"?>\n<score-partwise version="4.0"><part-list><score-part id="P1"><part-name>Piano</part-name></score-part></part-list><part id="P1"><measure number="1"><note><pitch><step>C</step><octave>4</octave></pitch><duration>1</duration><voice>1</voice><type>whole</type></note></measure></part></score-partwise>';
+
+    it('should decode UTF-16 LE buffer (with BOM)', () => {
+      // Build UTF-16 LE buffer: BOM (FF FE) + UTF-16 LE encoded string
+      const utf16leBuf = Buffer.from('\uFEFF' + minimalXml, 'utf16le');
+      const decoded = decodeBuffer(utf16leBuf);
+      expect(decoded).not.toContain('\uFEFF');
+      expect(decoded).toContain('score-partwise');
+      expect(decoded).toContain('<step>C</step>');
+    });
+
+    it('should decode UTF-16 BE buffer (with BOM)', () => {
+      // Build UTF-16 BE buffer: BOM (FE FF) + big-endian encoded chars
+      const chars = '\uFEFF' + minimalXml;
+      const utf16beBuf = Buffer.alloc(chars.length * 2);
+      for (let i = 0; i < chars.length; i++) {
+        utf16beBuf.writeUInt16BE(chars.charCodeAt(i), i * 2);
+      }
+      const decoded = decodeBuffer(utf16beBuf);
+      expect(decoded).not.toContain('\uFEFF');
+      expect(decoded).toContain('score-partwise');
+      expect(decoded).toContain('<step>C</step>');
+    });
+
+    it('should parse a UTF-16 LE XML file via parseFile', async () => {
+      const sourcePath = join(fixturesPath, 'basic/single-note.xml');
+      const utf8Content = readFileSync(sourcePath, 'utf-8');
+      const utf16leBuf = Buffer.from('\uFEFF' + utf8Content, 'utf16le');
+
+      const tmpPath = join(__dirname, 'temp', 'single-note-utf16le.xml');
+      const { writeFileSync } = await import('fs');
+      writeFileSync(tmpPath, utf16leBuf);
+      cleanupFiles.push(tmpPath);
+
+      const score = await parseFile(tmpPath);
+      expect(score.metadata.workTitle).toBe('Single Note');
+      expect(score.parts[0].measures[0].entries[0].type).toBe('note');
+    });
+
+    it('should parse a UTF-16 LE Uint8Array via parseAuto', () => {
+      const utf16leBytes = new Uint8Array(Buffer.from('\uFEFF' + minimalXml, 'utf16le'));
+      const score = parseAuto(utf16leBytes);
+      expect(score.parts).toHaveLength(1);
+      expect(score.parts[0].measures).toHaveLength(1);
+    });
+
+    it('should parse a UTF-16 BE Uint8Array via parseAuto', () => {
+      const chars = '\uFEFF' + minimalXml;
+      const utf16beBytes = new Uint8Array(chars.length * 2);
+      for (let i = 0; i < chars.length; i++) {
+        utf16beBytes[i * 2] = chars.charCodeAt(i) >> 8;
+        utf16beBytes[i * 2 + 1] = chars.charCodeAt(i) & 0xFF;
+      }
+      const score = parseAuto(utf16beBytes);
+      expect(score.parts).toHaveLength(1);
+      expect(score.parts[0].measures).toHaveLength(1);
     });
   });
 
