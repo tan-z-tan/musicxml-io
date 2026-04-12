@@ -37,14 +37,12 @@ export async function parseFile(filePath: string): Promise<Score> {
 export function decodeBuffer(buffer: Buffer): string {
   // UTF-16 BE BOM: FE FF
   if (buffer.length >= 2 && buffer[0] === 0xFE && buffer[1] === 0xFF) {
-    return buffer.swap16().toString('utf-16le'); // Node.js usually handles LE well, or just use ucs2
-    // Actually Node's utf16le is standard. efficient way to read BE is swap and read LE or use TextDecoder.
-    // simpler: TextDecoder
+    return new TextDecoder('utf-16be').decode(buffer);
   }
 
   // UTF-16 LE BOM: FF FE
   if (buffer.length >= 2 && buffer[0] === 0xFF && buffer[1] === 0xFE) {
-    return buffer.toString('utf16le');
+    return new TextDecoder('utf-16le').decode(buffer);
   }
 
   // UTF-8 BOM: EF BB BF
