@@ -108,7 +108,36 @@ function decodeTree(nodes: XmlChild[]): void {
 // Reusable txml options: empty noChildNodes skips the default HTML void-element check.
 const TXML_OPTIONS = { noChildNodes: [] as string[] };
 
-export function parse(xmlString: string): Score {
+/**
+ * Decode a Uint8Array / Buffer to a UTF-8 string, handling UTF-16 BE/LE BOMs.
+ */
+function decodeXmlBytes(data: Uint8Array): string {
+  // UTF-16 BE BOM: FE FF
+  if (data.length >= 2 && data[0] === 0xFE && data[1] === 0xFF) {
+    return new TextDecoder('utf-16be').decode(data);
+  }
+  // UTF-16 LE BOM: FF FE
+  if (data.length >= 2 && data[0] === 0xFF && data[1] === 0xFE) {
+    return new TextDecoder('utf-16le').decode(data);
+  }
+  // Default to UTF-8 (handles UTF-8 BOM automatically)
+  return new TextDecoder('utf-8').decode(data);
+}
+
+export function parse(input: string | Uint8Array): Score {
+  let xmlString: string;
+
+  if (typeof input !== 'string') {
+    // Buffer / Uint8Array: decode with BOM-based encoding detection
+    xmlString = decodeXmlBytes(input);
+  } else if (input.includes('\x00')) {
+    // String contains NUL bytes — UTF-16 data was read as UTF-8 by the caller.
+    // Strip NUL bytes to recover the ASCII content (works for standard MusicXML).
+    xmlString = input.replace(/\x00/g, '');
+  } else {
+    xmlString = input;
+  }
+
   // Strip Processing Instructions (<?...?>) except the XML declaration (<?xml ...?>).
   // Some exporters (e.g. Guitar Pro 7) embed PIs like <?GP7 ...?> that txml cannot handle.
   const cleanedXml = xmlString.replace(/<\?(?!xml\s)[^?]*\?>/g, '');
