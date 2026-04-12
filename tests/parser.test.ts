@@ -247,4 +247,72 @@ describe('Parser', () => {
       expect(midMeasureClef!.position).toBe(504);
     });
   });
+
+  describe('control character sanitization', () => {
+    // Minimal MusicXML template with a single note that has a lyric
+    function makeLyricXml(lyricText: string): string {
+      return `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="4.0">
+  <part-list><score-part id="P1"><part-name>Test</part-name></score-part></part-list>
+  <part id="P1">
+    <measure number="1">
+      <note>
+        <pitch><step>C</step><octave>4</octave></pitch>
+        <duration>4</duration><voice>1</voice><type>whole</type>
+        <lyric number="1"><syllabic>single</syllabic><text>${lyricText}</text></lyric>
+      </note>
+    </measure>
+  </part>
+</score-partwise>`;
+    }
+
+    it('should strip raw C0 control characters (e.g. U+0019) from lyric text', () => {
+      // 0x19 is a control character forbidden by XML 1.0
+      const xml = makeLyricXml('Lieb\x19mir');
+      const score = parse(xml);
+      const note = score.parts[0].measures[0].entries[0];
+      expect(note.type).toBe('note');
+      if (note.type === 'note') {
+        // For a single <text> element, parseLyric stores the text in lyric.text directly
+        expect(note.lyrics?.[0].text).toBe('Liebmir');
+      }
+    });
+
+    it('should strip control characters encoded as numeric XML entities (e.g. &#25;)', () => {
+      // &#25; is decimal 25 = 0x19, also forbidden in XML 1.0
+      const xml = makeLyricXml('Lieb&#25;mir');
+      const score = parse(xml);
+      const note = score.parts[0].measures[0].entries[0];
+      expect(note.type).toBe('note');
+      if (note.type === 'note') {
+        expect(note.lyrics?.[0].text).toBe('Liebmir');
+      }
+    });
+
+    it('should preserve valid whitespace characters (tab) in lyric text', () => {
+      // Tab (0x09) is legal in XML 1.0
+      const xml = makeLyricXml('A\tB');
+      const score = parse(xml);
+      const note = score.parts[0].measures[0].entries[0];
+      expect(note.type).toBe('note');
+      if (note.type === 'note') {
+        expect(note.lyrics?.[0].text).toBe('A\tB');
+      }
+    });
+
+    it('should strip all C0 control chars except TAB/LF/CR', () => {
+      // Build a string with chars 0x01-0x1F (skip 0x00: NUL triggers the UTF-16 misread error)
+      // Only TAB (0x09), LF (0x0A), CR (0x0D) should survive stripping.
+      const c0NoBOM = Array.from({ length: 31 }, (_, i) => String.fromCharCode(i + 1)).join('');
+      const xml = makeLyricXml(`A${c0NoBOM}B`);
+      const score = parse(xml);
+      const note = score.parts[0].measures[0].entries[0];
+      expect(note.type).toBe('note');
+      if (note.type === 'note') {
+        const text = note.lyrics?.[0].text ?? '';
+        // After stripping forbidden chars, only A, TAB (0x09), LF (0x0A), CR (0x0D), B remain
+        expect(text).toBe('A\x09\x0A\x0DB');
+      }
+    });
+  });
 });

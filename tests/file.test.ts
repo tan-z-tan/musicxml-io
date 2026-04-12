@@ -123,19 +123,17 @@ describe('File Operations', () => {
       expect(score.parts[0].measures[0].entries[0].type).toBe('note');
     });
 
-    it('should recover when UTF-16 BE file is misread as UTF-8 string (NUL bytes in string)', () => {
-      // Simulate: readFileSync('utf16be.xml', 'utf-8') — produces NUL-byte-laden string
+    it('should throw a helpful error when UTF-16 file is passed as a NUL-byte string', () => {
+      // Simulate: readFileSync('utf16be.xml', 'binary') — produces NUL-byte-laden string
       const chars = '\uFEFF' + minimalXml;
       const utf16beBuf = Buffer.alloc(chars.length * 2);
       for (let i = 0; i < chars.length; i++) {
         utf16beBuf.writeUInt16BE(chars.charCodeAt(i), i * 2);
       }
-      // This is what readFileSync('file', 'utf-8') returns for a UTF-16 BE file
-      const garbledString = utf16beBuf.toString('utf-8');
+      const garbledString = utf16beBuf.toString('binary');
       expect(garbledString).toContain('\x00'); // confirm NUL bytes present
-      const score = parse(garbledString);
-      expect(score.parts).toHaveLength(1);
-      expect(score.parts[0].measures[0].entries[0].type).toBe('note');
+      // parse() should throw rather than silently corrupt non-ASCII characters
+      expect(() => parse(garbledString)).toThrow(/Buffer or Uint8Array/);
     });
 
     it('should parse MozaChloSample.musicxml (real UTF-16 BE file) via parse() with Buffer', async () => {

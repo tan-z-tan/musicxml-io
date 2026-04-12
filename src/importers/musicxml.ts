@@ -82,14 +82,26 @@ function decodeXmlEntities(s: string): string {
   );
 }
 
+/**
+ * Characters forbidden in XML 1.0 text content:
+ *   C0 controls except TAB (#x9), LF (#xA), CR (#xD)
+ *   plus the non-characters U+FFFE and U+FFFF
+ * Reference: https://www.w3.org/TR/xml/#charsets
+ */
+const INVALID_XML_CHARS_RE = /[\x00-\x08\x0B\x0C\x0E-\x1F\uFFFE\uFFFF]/g;
+
 /** Recursively decode XML entities in all text nodes and attribute values */
 function decodeTree(nodes: XmlChild[]): void {
   for (let i = 0; i < nodes.length; i++) {
     const node = nodes[i];
     if (typeof node === 'string') {
-      if (node.indexOf('&') !== -1) {
-        nodes[i] = decodeXmlEntities(node);
+      let s = node;
+      if (s.indexOf('&') !== -1) {
+        s = decodeXmlEntities(s);
       }
+      // Strip characters forbidden by XML 1.0 (e.g. control char U+0019 from malformed sources
+      // or from numeric entity references like &#25; that decode to invalid characters)
+      nodes[i] = s.replace(INVALID_XML_CHARS_RE, '');
     } else {
       // Decode attribute values
       const attrs = node.attributes as Record<string, string>;
@@ -131,9 +143,18 @@ export function parse(input: string | Uint8Array): Score {
     // Buffer / Uint8Array: decode with BOM-based encoding detection
     xmlString = decodeXmlBytes(input);
   } else if (input.includes('\x00')) {
-    // String contains NUL bytes — UTF-16 data was read as UTF-8 by the caller.
-    // Strip NUL bytes to recover the ASCII content (works for standard MusicXML).
-    xmlString = input.replace(/\x00/g, '');
+    // NUL bytes in a string mean the caller read a UTF-16 file without encoding detection
+    // (e.g. fs.readFileSync(path, 'binary')). Silently stripping NULs only works for
+    // ASCII content and corrupts non-ASCII characters (e.g. U+2019 → U+0019).
+    // The correct fix is to pass a Buffer or Uint8Array so the library can detect the
+    // BOM and decode properly.
+    throw new Error(
+      'parse() received a string containing NUL bytes, which indicates a UTF-16 encoded ' +
+      'MusicXML file was read without proper encoding detection. ' +
+      'Pass a Buffer or Uint8Array instead so the encoding is handled automatically:\n' +
+      '  parse(fs.readFileSync(path))          // Node.js\n' +
+      '  parse(new Uint8Array(arrayBuffer))    // Browser'
+    );
   } else {
     xmlString = input;
   }
