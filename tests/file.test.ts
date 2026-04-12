@@ -103,6 +103,48 @@ describe('File Operations', () => {
       expect(score.parts).toHaveLength(1);
       expect(score.parts[0].measures).toHaveLength(1);
     });
+
+    it('should parse a UTF-16 LE Uint8Array directly via parse()', () => {
+      // parse() now accepts Uint8Array/Buffer directly
+      const utf16leBytes = new Uint8Array(Buffer.from('\uFEFF' + minimalXml, 'utf16le'));
+      const score = parse(utf16leBytes);
+      expect(score.parts).toHaveLength(1);
+      expect(score.parts[0].measures[0].entries[0].type).toBe('note');
+    });
+
+    it('should parse a UTF-16 BE Buffer directly via parse()', () => {
+      const chars = '\uFEFF' + minimalXml;
+      const utf16beBuf = Buffer.alloc(chars.length * 2);
+      for (let i = 0; i < chars.length; i++) {
+        utf16beBuf.writeUInt16BE(chars.charCodeAt(i), i * 2);
+      }
+      const score = parse(utf16beBuf);
+      expect(score.parts).toHaveLength(1);
+      expect(score.parts[0].measures[0].entries[0].type).toBe('note');
+    });
+
+    it('should recover when UTF-16 BE file is misread as UTF-8 string (NUL bytes in string)', () => {
+      // Simulate: readFileSync('utf16be.xml', 'utf-8') — produces NUL-byte-laden string
+      const chars = '\uFEFF' + minimalXml;
+      const utf16beBuf = Buffer.alloc(chars.length * 2);
+      for (let i = 0; i < chars.length; i++) {
+        utf16beBuf.writeUInt16BE(chars.charCodeAt(i), i * 2);
+      }
+      // This is what readFileSync('file', 'utf-8') returns for a UTF-16 BE file
+      const garbledString = utf16beBuf.toString('utf-8');
+      expect(garbledString).toContain('\x00'); // confirm NUL bytes present
+      const score = parse(garbledString);
+      expect(score.parts).toHaveLength(1);
+      expect(score.parts[0].measures[0].entries[0].type).toBe('note');
+    });
+
+    it('should parse MozaChloSample.musicxml (real UTF-16 BE file) via parse() with Buffer', async () => {
+      const { readFileSync } = await import('fs');
+      const buf = readFileSync(join(fixturesPath, 'musicxml_samples/MozaChloSample.musicxml'));
+      const score = parse(new Uint8Array(buf));
+      expect(score.metadata?.workTitle).toBe('An Chloe (Page 1)');
+      expect(score.parts.length).toBe(2);
+    });
   });
 
   describe('serializeToFile', () => {
