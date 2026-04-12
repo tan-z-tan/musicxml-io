@@ -82,14 +82,26 @@ function decodeXmlEntities(s: string): string {
   );
 }
 
+/**
+ * Characters forbidden in XML 1.0 text content:
+ *   C0 controls except TAB (#x9), LF (#xA), CR (#xD)
+ *   plus the non-characters U+FFFE and U+FFFF
+ * Reference: https://www.w3.org/TR/xml/#charsets
+ */
+const INVALID_XML_CHARS_RE = /[\x00-\x08\x0B\x0C\x0E-\x1F\uFFFE\uFFFF]/g;
+
 /** Recursively decode XML entities in all text nodes and attribute values */
 function decodeTree(nodes: XmlChild[]): void {
   for (let i = 0; i < nodes.length; i++) {
     const node = nodes[i];
     if (typeof node === 'string') {
-      if (node.indexOf('&') !== -1) {
-        nodes[i] = decodeXmlEntities(node);
+      let s = node;
+      if (s.indexOf('&') !== -1) {
+        s = decodeXmlEntities(s);
       }
+      // Strip characters forbidden by XML 1.0 (e.g. control char U+0019 from malformed sources
+      // or from numeric entity references like &#25; that decode to invalid characters)
+      nodes[i] = s.replace(INVALID_XML_CHARS_RE, '');
     } else {
       // Decode attribute values
       const attrs = node.attributes as Record<string, string>;
