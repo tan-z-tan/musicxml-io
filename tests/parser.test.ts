@@ -301,9 +301,10 @@ describe('Parser', () => {
     });
 
     it('should strip all C0 control chars except TAB/LF/CR', () => {
-      // Build a string with chars 0x00-0x1F; only TAB (0x09), LF (0x0A), CR (0x0D) should survive
-      const allC0 = Array.from({ length: 32 }, (_, i) => String.fromCharCode(i)).join('');
-      const xml = makeLyricXml(`A${allC0}B`);
+      // Build a string with chars 0x01-0x1F (skip 0x00: NUL triggers the UTF-16 misread error)
+      // Only TAB (0x09), LF (0x0A), CR (0x0D) should survive stripping.
+      const c0NoBOM = Array.from({ length: 31 }, (_, i) => String.fromCharCode(i + 1)).join('');
+      const xml = makeLyricXml(`A${c0NoBOM}B`);
       const score = parse(xml);
       const note = score.parts[0].measures[0].entries[0];
       expect(note.type).toBe('note');

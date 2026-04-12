@@ -143,9 +143,18 @@ export function parse(input: string | Uint8Array): Score {
     // Buffer / Uint8Array: decode with BOM-based encoding detection
     xmlString = decodeXmlBytes(input);
   } else if (input.includes('\x00')) {
-    // String contains NUL bytes — UTF-16 data was read as UTF-8 by the caller.
-    // Strip NUL bytes to recover the ASCII content (works for standard MusicXML).
-    xmlString = input.replace(/\x00/g, '');
+    // NUL bytes in a string mean the caller read a UTF-16 file without encoding detection
+    // (e.g. fs.readFileSync(path, 'binary')). Silently stripping NULs only works for
+    // ASCII content and corrupts non-ASCII characters (e.g. U+2019 → U+0019).
+    // The correct fix is to pass a Buffer or Uint8Array so the library can detect the
+    // BOM and decode properly.
+    throw new Error(
+      'parse() received a string containing NUL bytes, which indicates a UTF-16 encoded ' +
+      'MusicXML file was read without proper encoding detection. ' +
+      'Pass a Buffer or Uint8Array instead so the encoding is handled automatically:\n' +
+      '  parse(fs.readFileSync(path))          // Node.js\n' +
+      '  parse(new Uint8Array(arrayBuffer))    // Browser'
+    );
   } else {
     xmlString = input;
   }
