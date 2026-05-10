@@ -82,7 +82,7 @@
   "dependencies": {
     "fflate": "^0.8.2",
     "nanoid": "^5.1.6",
-    "txml": "^5.2.1"
+    "txml": "^6.0.0"
   },
   "files": [
     "dist"
