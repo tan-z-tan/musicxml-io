@@ -198,7 +198,9 @@ function measureMaxPosition(measure: Measure): number {
   let max = 0;
   for (const entry of measure.entries) {
     if (entry.type === 'note') {
-      if (!entry.chord) {
+      // Grace notes carry no time and must not advance the position
+      // (mirrors the part-track loop, which skips them entirely).
+      if (!entry.chord && !entry.grace) {
         position += entry.duration;
         if (position > max) max = position;
       }
@@ -646,34 +648,33 @@ function writeUint16BE(value: number): number[] {
  * Build the complete MIDI file
  */
 function buildMidiFile(tracks: Uint8Array[], ticksPerQuarterNote: number): Uint8Array {
-  const chunks: number[] = [];
+  // Header chunk: "MThd" + length(6) + format(1) + numTracks + division.
+  const header = Uint8Array.from([
+    0x4d, 0x54, 0x68, 0x64,
+    ...writeUint32BE(6),
+    ...writeUint16BE(1),
+    ...writeUint16BE(tracks.length),
+    ...writeUint16BE(ticksPerQuarterNote),
+  ]);
 
-  // Header chunk
-  const headerChunkType = [0x4d, 0x54, 0x68, 0x64]; // "MThd"
-  const headerLength = writeUint32BE(6);
-  const format = writeUint16BE(1); // Type 1 MIDI file
-  const numTracks = writeUint16BE(tracks.length);
-  const division = writeUint16BE(ticksPerQuarterNote);
+  // Total size up front so we can write into one buffer (no large spreads,
+  // which would risk a stack overflow on big repeat-expanded tracks).
+  let total = header.length;
+  for (const track of tracks) total += 8 + track.length;
 
-  chunks.push(
-    ...headerChunkType,
-    ...headerLength,
-    ...format,
-    ...numTracks,
-    ...division
-  );
+  const out = new Uint8Array(total);
+  let offset = 0;
+  out.set(header, offset);
+  offset += header.length;
 
-  // Track chunks
   for (const track of tracks) {
-    const trackChunkType = [0x4d, 0x54, 0x72, 0x6b]; // "MTrk"
-    const trackLength = writeUint32BE(track.length);
-
-    chunks.push(
-      ...trackChunkType,
-      ...trackLength,
-      ...Array.from(track)
-    );
+    out.set([0x4d, 0x54, 0x72, 0x6b], offset); // "MTrk"
+    offset += 4;
+    out.set(writeUint32BE(track.length), offset);
+    offset += 4;
+    out.set(track, offset);
+    offset += track.length;
   }
 
-  return new Uint8Array(chunks);
+  return out;
 }
