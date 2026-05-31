@@ -52,6 +52,14 @@ import { getAbsolutePositionForNote, createPositionState, updatePositionForEntry
 /**
  * Filter options for voice/staff selection
  */
+// Playback sequence (repeat / volta / jump expansion)
+export {
+  generatePlaybackSequence,
+  extractPlaybackControls,
+  hasPlaybackControls,
+} from './playback-sequence';
+export type { PlaybackMeasure, PlaybackControls } from './playback-sequence';
+
 export interface VoiceFilter {
   voice?: string;
   staff?: number;

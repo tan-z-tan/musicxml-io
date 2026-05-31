@@ -1,5 +1,6 @@
-import type { Score, NoteEntry, Pitch, Part, Measure } from '../types';
+import type { Score, NoteEntry, Pitch, Part, Measure, DynamicsValue } from '../types';
 import { hasTieStart, hasTieStop } from '../entry-accessors';
+import { generatePlaybackSequence } from '../query/playback-sequence';
 
 /**
  * MIDI export options
@@ -9,8 +10,113 @@ export interface MidiExportOptions {
   ticksPerQuarterNote?: number;
   /** Default tempo in BPM (default: 120) */
   defaultTempo?: number;
-  /** Default velocity for notes (default: 80) */
+  /** Default velocity for notes when no dynamics are present (default: 80) */
   defaultVelocity?: number;
+}
+
+/**
+ * Absolute dynamic markings mapped to MIDI velocity.
+ * Mirrors the validated mapping used by the Octava playback engine.
+ */
+const DYNAMICS_VELOCITY: Partial<Record<DynamicsValue, number>> = {
+  pppppp: 12, ppppp: 20, pppp: 25, ppp: 30, pp: 40, p: 50,
+  mp: 60, mf: 75,
+  f: 90, ff: 105, fff: 115, ffff: 120, fffff: 125, ffffff: 127,
+  fp: 90, // forte-piano: forte attack
+  n: 25, // niente
+  pf: 70,
+};
+
+/**
+ * Sforzando-family markings are relative accents applied to the current
+ * baseline velocity rather than absolute levels.
+ */
+const SF_ACCENT_MULTIPLIER: Partial<Record<DynamicsValue, number>> = {
+  sf: 1.3, sfz: 1.35, sffz: 1.45, fz: 1.3, rf: 1.2, rfz: 1.3, sfp: 1.3, sfpp: 1.3,
+};
+
+/**
+ * Articulation velocity multipliers (accents). Duration-affecting
+ * articulations (staccato etc.) are intentionally not handled here.
+ */
+const ARTICULATION_VELOCITY: Record<string, number> = {
+  'accent': 1.25,
+  'strong-accent': 1.35,
+  'marcato': 1.35,
+  'tenuto': 1.05,
+  'stress': 1.15,
+  'unstress': 0.85,
+  'soft-accent': 0.8,
+};
+
+/** Velocity scaling for grace notes (slightly softer than their principal). */
+const GRACE_VELOCITY_MULTIPLIER = 0.85;
+
+function clampVelocity(v: number): number {
+  return Math.round(Math.min(127, Math.max(1, v)));
+}
+
+/**
+ * Combined articulation velocity multiplier for a note's notations.
+ */
+function articulationVelocityMultiplier(note: NoteEntry): number {
+  if (!note.notations) return 1;
+  let mult = 1;
+  for (const n of note.notations) {
+    if (n.type === 'articulation') {
+      const m = ARTICULATION_VELOCITY[n.articulation];
+      if (m) mult *= m;
+    }
+  }
+  return mult;
+}
+
+interface MidiNoteEvent {
+  tick: number;
+  type: 'on' | 'off';
+  note: number;
+  velocity: number;
+}
+
+/**
+ * Schedule grace notes immediately before the beat of their principal note,
+ * matching the validated Octava behaviour (grace notes precede the onset and
+ * borrow time from before it rather than delaying the principal note).
+ *
+ * Chord grace notes (chord=true) share their predecessor's time slot.
+ */
+function scheduleGraceNotes(
+  graceNotes: NoteEntry[],
+  targetTick: number,
+  baseVelocity: number,
+  chromaticTranspose: number,
+  ticksPerQuarterNote: number,
+  noteEvents: MidiNoteEvent[]
+): void {
+  if (graceNotes.length === 0) return;
+
+  const graceUnit = Math.max(1, Math.round(ticksPerQuarterNote / 8)); // ~32nd note
+
+  // Assign a time slot to each grace note; chord notes reuse the prior slot.
+  const slots: number[] = [];
+  let slot = -1;
+  for (const g of graceNotes) {
+    if (!g.chord || slot < 0) slot++;
+    slots.push(slot);
+  }
+  const numSlots = slot + 1;
+  const velocity = clampVelocity(baseVelocity * GRACE_VELOCITY_MULTIPLIER);
+
+  for (let i = 0; i < graceNotes.length; i++) {
+    const g = graceNotes[i];
+    if (!g.pitch) continue;
+    const s = slots[i];
+    const onset = Math.max(0, targetTick - (numSlots - s) * graceUnit);
+    const off = Math.max(onset + 1, targetTick - (numSlots - s - 1) * graceUnit);
+    const midiNote = pitchToMidiNote(g.pitch, chromaticTranspose);
+    noteEvents.push({ tick: onset, type: 'on', note: midiNote, velocity });
+    noteEvents.push({ tick: off, type: 'off', note: midiNote, velocity: 0 });
+  }
 }
 
 /**
@@ -26,8 +132,13 @@ export function exportMidi(score: Score, options: MidiExportOptions = {}): Uint8
 
   const tracks: Uint8Array[] = [];
 
+  // Expand repeats, voltas, and jump instructions (D.C./D.S./Coda/Fine) into
+  // the actual order measures should be played. Structure is read from the
+  // first part and applied to every part so all tracks stay in sync.
+  const measureOrder = generatePlaybackSequence(score).map((m) => m.measureIndex);
+
   // Track 0: Tempo and time signature
-  const conductorTrack = createConductorTrack(score, defaultTempo, ticksPerQuarterNote);
+  const conductorTrack = createConductorTrack(score, defaultTempo, ticksPerQuarterNote, measureOrder);
   tracks.push(conductorTrack);
 
   // Create a track for each part
@@ -52,7 +163,8 @@ export function exportMidi(score: Score, options: MidiExportOptions = {}): Uint8
       channel,
       program,
       ticksPerQuarterNote,
-      defaultVelocity
+      defaultVelocity,
+      measureOrder
     );
     tracks.push(trackData);
   }
@@ -77,87 +189,183 @@ function pitchToMidiNote(pitch: Pitch, chromaticTranspose: number = 0): number {
 }
 
 /**
- * Create conductor track (tempo, time signature, key signature)
+ * Maximum position (in divisions) reached within a measure, accounting for
+ * multi-voice writing via backup/forward. Grace notes carry no duration and
+ * therefore do not advance the position.
+ */
+function measureMaxPosition(measure: Measure): number {
+  let position = 0;
+  let max = 0;
+  for (const entry of measure.entries) {
+    if (entry.type === 'note') {
+      if (!entry.chord) {
+        position += entry.duration;
+        if (position > max) max = position;
+      }
+    } else if (entry.type === 'backup') {
+      position -= entry.duration;
+    } else if (entry.type === 'forward') {
+      position += entry.duration;
+      if (position > max) max = position;
+    }
+  }
+  return max;
+}
+
+/**
+ * Absolute tick at the end of a measure, given where it started.
+ * Implicit (pickup) measures use their actual content length; regular
+ * measures use the time signature but never exceed their actual content.
+ */
+function measureEndTick(
+  measure: Measure,
+  part: Part,
+  divisions: number,
+  measureStartTick: number,
+  maxPosition: number,
+  ticksPerQuarterNote: number
+): number {
+  const actualTicks = Math.round((maxPosition * ticksPerQuarterNote) / divisions);
+
+  if (measure.implicit) {
+    return measureStartTick + actualTicks;
+  }
+
+  const timeAttrs = findTimeSignature(part, measure.number);
+  if (timeAttrs) {
+    const measureDuration = (timeAttrs.beats / timeAttrs.beatType) * 4 * divisions;
+    const calculatedTicks = Math.round((measureDuration * ticksPerQuarterNote) / divisions);
+    // Use the smaller of calculated and actual for incomplete measures
+    // (e.g., last measure before a repeat that combines with a pickup).
+    const ticksToAdd = Math.min(calculatedTicks, actualTicks > 0 ? actualTicks : calculatedTicks);
+    return measureStartTick + ticksToAdd;
+  }
+
+  return measureStartTick + actualTicks;
+}
+
+/** Parse a metronome per-minute value to a numeric BPM, or null. */
+function metronomeBpm(perMinute: number | string | undefined): number | null {
+  if (perMinute === undefined) return null;
+  const bpm = typeof perMinute === 'number' ? perMinute : parseFloat(perMinute);
+  return isNaN(bpm) ? null : bpm;
+}
+
+/**
+ * Create conductor track (initial time signature + all tempo changes).
+ *
+ * Tempo is read from three sources, in document order at each position:
+ * metronome direction-types, the <sound tempo> inside a direction, and
+ * standalone <sound tempo> entries. Events are placed at absolute ticks so
+ * that tempo changes inside repeated sections land correctly.
  */
 function createConductorTrack(
   score: Score,
   defaultTempo: number,
-  ticksPerQuarterNote: number
+  ticksPerQuarterNote: number,
+  measureOrder: number[]
 ): Uint8Array {
   const events: number[] = [];
 
-  // Set tempo at the beginning (microseconds per quarter note)
-  const microsecondsPerQuarterNote = Math.round(60000000 / defaultTempo);
-  events.push(
-    ...writeVariableLength(0), // Delta time
-    0xff, 0x51, 0x03, // Tempo meta event
-    (microsecondsPerQuarterNote >> 16) & 0xff,
-    (microsecondsPerQuarterNote >> 8) & 0xff,
-    microsecondsPerQuarterNote & 0xff
-  );
+  // Collect tempo changes as absolute-tick events.
+  const tempoEvents: { tick: number; bpm: number }[] = [];
 
-  // Get initial time signature from first measure
-  if (score.parts.length > 0 && score.parts[0].measures.length > 0) {
-    const firstMeasure = score.parts[0].measures[0];
-    const time = firstMeasure.attributes?.time;
-    if (time) {
-      const numerator = parseInt(time.beats, 10) || 4;
-      const denominator = Math.log2(time.beatType);
-      events.push(
-        ...writeVariableLength(0), // Delta time
-        0xff, 0x58, 0x04, // Time signature meta event
-        numerator,
-        denominator,
-        24, // MIDI clocks per metronome click
-        8   // 32nd notes per 24 MIDI clocks
-      );
-    }
-  }
-
-  // Scan for tempo changes in directions (with repeat expansion)
   if (score.parts.length > 0) {
     const part = score.parts[0];
     let divisions = 1;
-
-    // Expand repeats for conductor track as well
-    const measureOrder = expandRepeats(part.measures);
+    let currentTick = 0;
 
     for (const measureIndex of measureOrder) {
       const measure = part.measures[measureIndex];
+      if (!measure) continue;
       if (measure.attributes?.divisions) {
         divisions = measure.attributes.divisions;
       }
 
-      let measurePosition = 0;
+      const measureStartTick = currentTick;
+      let position = 0;
+      const tickAt = (pos: number) =>
+        measureStartTick + Math.round((pos * ticksPerQuarterNote) / divisions);
 
       for (const entry of measure.entries) {
         if (entry.type === 'direction') {
           for (const dirType of entry.directionTypes) {
             if (dirType.kind === 'metronome') {
-              const bpm = typeof dirType.perMinute === 'number' ? dirType.perMinute : parseInt(String(dirType.perMinute), 10);
-              if (isNaN(bpm)) continue;
-              const usPerQuarter = Math.round(60000000 / bpm);
-              const tickDelta = (measurePosition * ticksPerQuarterNote) / divisions;
-
-              events.push(
-                ...writeVariableLength(Math.round(tickDelta)),
-                0xff, 0x51, 0x03,
-                (usPerQuarter >> 16) & 0xff,
-                (usPerQuarter >> 8) & 0xff,
-                usPerQuarter & 0xff
-              );
-              // currentTick tracked in main track loop
+              const bpm = metronomeBpm(dirType.perMinute);
+              if (bpm !== null) tempoEvents.push({ tick: tickAt(position), bpm });
             }
           }
+          if (entry.sound?.tempo) {
+            tempoEvents.push({ tick: tickAt(position), bpm: entry.sound.tempo });
+          }
+        } else if (entry.type === 'sound') {
+          if (entry.tempo) tempoEvents.push({ tick: tickAt(position), bpm: entry.tempo });
         } else if (entry.type === 'note' && !entry.chord) {
-          measurePosition += entry.duration;
+          position += entry.duration;
         } else if (entry.type === 'backup') {
-          measurePosition -= entry.duration;
+          position -= entry.duration;
         } else if (entry.type === 'forward') {
-          measurePosition += entry.duration;
+          position += entry.duration;
         }
       }
+
+      currentTick = measureEndTick(
+        measure,
+        part,
+        divisions,
+        measureStartTick,
+        measureMaxPosition(measure),
+        ticksPerQuarterNote
+      );
     }
+  }
+
+  // Resolve the starting tempo: an explicit tempo at tick 0 wins, else default.
+  tempoEvents.sort((a, b) => a.tick - b.tick);
+  const startBpm = tempoEvents.length > 0 && tempoEvents[0].tick === 0
+    ? tempoEvents[0].bpm
+    : defaultTempo;
+
+  const pushTempo = (deltaTick: number, bpm: number) => {
+    const usPerQuarter = Math.round(60000000 / bpm);
+    events.push(
+      ...writeVariableLength(deltaTick),
+      0xff, 0x51, 0x03,
+      (usPerQuarter >> 16) & 0xff,
+      (usPerQuarter >> 8) & 0xff,
+      usPerQuarter & 0xff
+    );
+  };
+
+  // Initial tempo at tick 0.
+  pushTempo(0, startBpm);
+
+  // Initial time signature from the first measure.
+  if (score.parts.length > 0 && score.parts[0].measures.length > 0) {
+    const time = score.parts[0].measures[0].attributes?.time;
+    if (time) {
+      const numerator = parseInt(time.beats, 10) || 4;
+      const denominator = Math.log2(time.beatType);
+      events.push(
+        ...writeVariableLength(0),
+        0xff, 0x58, 0x04,
+        numerator,
+        denominator,
+        24,
+        8
+      );
+    }
+  }
+
+  // Remaining tempo changes, as deltas from the previous event.
+  let lastTick = 0;
+  let lastBpm = startBpm;
+  for (const ev of tempoEvents) {
+    if (ev.tick === 0) continue; // already emitted as the initial tempo
+    if (ev.bpm === lastBpm) continue; // no audible change
+    pushTempo(ev.tick - lastTick, ev.bpm);
+    lastTick = ev.tick;
+    lastBpm = ev.bpm;
   }
 
   // End of track
@@ -175,7 +383,8 @@ function createPartTrack(
   channel: number,
   program: number,
   ticksPerQuarterNote: number,
-  defaultVelocity: number
+  defaultVelocity: number,
+  measureOrder: number[]
 ): Uint8Array {
   const events: number[] = [];
 
@@ -187,17 +396,22 @@ function createPartTrack(
   );
 
   // Track note events
-  const noteEvents: { tick: number; type: 'on' | 'off'; note: number; velocity: number }[] = [];
+  const noteEvents: MidiNoteEvent[] = [];
 
   let currentTick = 0;
   let divisions = 1;
   let chromaticTranspose = 0; // Track transposition for transposing instruments
 
-  // Expand repeats to get playback order
-  const measureOrder = expandRepeats(part.measures);
+  // Expressive state carried across measures.
+  let currentVelocity = defaultVelocity; // baseline from dynamics markings
+  let pendingAccent = 1; // sforzando-family accent for the next onset
+  let accentBound = false; // whether pendingAccent is already tied to an onset
+  let pendingGrace: NoteEntry[] = []; // grace notes awaiting their principal
 
   for (const measureIndex of measureOrder) {
     const measure = part.measures[measureIndex];
+    // Parts may differ in length; the order is derived from the first part.
+    if (!measure) continue;
 
     // Update divisions from the original measure (need to track last seen divisions)
     if (measure.attributes?.divisions) {
@@ -217,34 +431,47 @@ function createPartTrack(
       if (entry.type === 'note') {
         const note = entry as NoteEntry;
 
-        if (note.pitch && !note.grace) {
+        // Grace notes carry no duration; defer them until their principal note.
+        if (note.grace) {
+          if (note.pitch) pendingGrace.push(note);
+          continue;
+        }
+
+        // New onset: retire a spent accent and bind a fresh one.
+        if (!note.chord) {
+          if (accentBound) {
+            pendingAccent = 1;
+            accentBound = false;
+          }
+          if (pendingAccent !== 1) accentBound = true;
+        }
+
+        if (note.pitch) {
           const midiNote = pitchToMidiNote(note.pitch, chromaticTranspose);
           // Chord notes use the same position as the previous non-chord note
           const notePosition = note.chord ? chordBasePosition : position;
           const startTick = measureStartTick + Math.round((notePosition * ticksPerQuarterNote) / divisions);
           const durationTicks = Math.round((note.duration * ticksPerQuarterNote) / divisions);
 
+          // Flush any pending grace notes onto this onset (head note only).
+          if (!note.chord && pendingGrace.length > 0) {
+            scheduleGraceNotes(pendingGrace, startTick, currentVelocity, chromaticTranspose, ticksPerQuarterNote, noteEvents);
+            pendingGrace = [];
+          }
+
+          const velocity = clampVelocity(currentVelocity * pendingAccent * articulationVelocityMultiplier(note));
+
           const isTieStop = hasTieStop(note);
           const isTieStart = hasTieStart(note);
 
           // Don't generate note-on for tie continuations (the note is already sounding)
           if (!isTieStop) {
-            noteEvents.push({
-              tick: startTick,
-              type: 'on',
-              note: midiNote,
-              velocity: defaultVelocity,
-            });
+            noteEvents.push({ tick: startTick, type: 'on', note: midiNote, velocity });
           }
 
           // Don't generate note-off for tie starts (the note continues into the next tied note)
           if (!isTieStart) {
-            noteEvents.push({
-              tick: startTick + durationTicks,
-              type: 'off',
-              note: midiNote,
-              velocity: 0,
-            });
+            noteEvents.push({ tick: startTick + durationTicks, type: 'off', note: midiNote, velocity: 0 });
           }
         }
 
@@ -254,6 +481,22 @@ function createPartTrack(
           position += note.duration;
           if (position > maxPosition) {
             maxPosition = position;
+          }
+        }
+      } else if (entry.type === 'direction') {
+        // Dynamics markings update the baseline velocity / accent.
+        for (const dt of entry.directionTypes) {
+          if (dt.kind === 'dynamics' && dt.value) {
+            const abs = DYNAMICS_VELOCITY[dt.value];
+            if (abs !== undefined) {
+              currentVelocity = abs;
+            } else {
+              const accent = SF_ACCENT_MULTIPLIER[dt.value];
+              if (accent !== undefined) {
+                pendingAccent = accent;
+                accentBound = false;
+              }
+            }
           }
         }
       } else if (entry.type === 'backup') {
@@ -266,26 +509,21 @@ function createPartTrack(
       }
     }
 
-    // Move to the end of the measure
-    // For implicit (pickup) measures, use actual content duration
-    // For regular measures, use time signature-based duration
-    if (measure.implicit) {
-      // Implicit measures (pickup/anacrusis) should use actual content length
-      currentTick = measureStartTick + Math.round((maxPosition * ticksPerQuarterNote) / divisions);
-    } else {
-      const timeAttrs = findTimeSignature(part, measure.number);
-      if (timeAttrs) {
-        const measureDuration = (timeAttrs.beats / timeAttrs.beatType) * 4 * divisions;
-        const calculatedTicks = Math.round((measureDuration * ticksPerQuarterNote) / divisions);
-        const actualTicks = Math.round((maxPosition * ticksPerQuarterNote) / divisions);
-        // Use the smaller of calculated and actual for incomplete measures
-        // (e.g., last measure before repeat that combines with pickup)
-        const ticksToAdd = Math.min(calculatedTicks, actualTicks > 0 ? actualTicks : calculatedTicks);
-        currentTick = measureStartTick + ticksToAdd;
-      } else {
-        currentTick = measureStartTick + Math.round((maxPosition * ticksPerQuarterNote) / divisions);
-      }
-    }
+    currentTick = measureEndTick(
+      measure,
+      part,
+      divisions,
+      measureStartTick,
+      maxPosition,
+      ticksPerQuarterNote
+    );
+  }
+
+  // Any grace notes left unattached (e.g. trailing the final note) play just
+  // before the end of the part.
+  if (pendingGrace.length > 0) {
+    scheduleGraceNotes(pendingGrace, currentTick, currentVelocity, chromaticTranspose, ticksPerQuarterNote, noteEvents);
+    pendingGrace = [];
   }
 
   // Safety: ensure every note-on has a matching note-off.
@@ -362,84 +600,6 @@ function findTimeSignature(
   }
 
   return time;
-}
-
-/**
- * Check if a measure has a forward repeat at the start
- */
-function hasForwardRepeat(measure: Measure): boolean {
-  if (!measure.barlines) return false;
-  return measure.barlines.some(
-    (b) => b.location === 'left' && b.repeat?.direction === 'forward'
-  );
-}
-
-/**
- * Check if a measure has a backward repeat at the end
- */
-function hasBackwardRepeat(measure: Measure): { found: boolean; times: number } {
-  if (!measure.barlines) return { found: false, times: 2 };
-  const barline = measure.barlines.find(
-    (b) => b.location === 'right' && b.repeat?.direction === 'backward'
-  );
-  if (barline?.repeat) {
-    return { found: true, times: barline.repeat.times ?? 2 };
-  }
-  return { found: false, times: 2 };
-}
-
-/**
- * Expand repeats and return an array of measure indices in playback order
- */
-function expandRepeats(measures: Measure[]): number[] {
-  const result: number[] = [];
-  let i = 0;
-
-  while (i < measures.length) {
-    // Find if there's a backward repeat ahead
-    let backwardRepeatIndex = -1;
-    let repeatTimes = 2;
-
-    for (let j = i; j < measures.length; j++) {
-      const backwardInfo = hasBackwardRepeat(measures[j]);
-      if (backwardInfo.found) {
-        backwardRepeatIndex = j;
-        repeatTimes = backwardInfo.times;
-        break;
-      }
-      // Stop searching if we hit another forward repeat (nested repeats)
-      if (j > i && hasForwardRepeat(measures[j])) {
-        break;
-      }
-    }
-
-    if (backwardRepeatIndex >= 0) {
-      // Find the matching forward repeat (or start of piece)
-      let forwardRepeatIndex = 0;
-      for (let j = i; j <= backwardRepeatIndex; j++) {
-        if (hasForwardRepeat(measures[j])) {
-          forwardRepeatIndex = j;
-          break;
-        }
-      }
-
-      // Play through the repeat section 'times' times
-      for (let rep = 0; rep < repeatTimes; rep++) {
-        for (let j = forwardRepeatIndex; j <= backwardRepeatIndex; j++) {
-          result.push(j);
-        }
-      }
-
-      // Continue after the repeat
-      i = backwardRepeatIndex + 1;
-    } else {
-      // No repeat, just add this measure
-      result.push(i);
-      i++;
-    }
-  }
-
-  return result;
 }
 
 /**

@@ -145,6 +145,10 @@ export {
   getRepeatStructure,
   findBarlines,
   getEndings,
+  // Playback sequence (repeat / volta / jump expansion)
+  generatePlaybackSequence,
+  extractPlaybackControls,
+  hasPlaybackControls,
   getKeyChanges,
   getTimeChanges,
   getClefChanges,
@@ -169,7 +173,7 @@ export {
   countNotes,
   scoresEqual,
 } from './query';
-export type { VoiceFilter, NormalizedPositionOptions, PitchRange, FindNotesFilter, RoundtripMetrics } from './query';
+export type { VoiceFilter, NormalizedPositionOptions, PitchRange, FindNotesFilter, RoundtripMetrics, PlaybackMeasure, PlaybackControls } from './query';
 
 // Operations (re-export for convenience)
 export {
