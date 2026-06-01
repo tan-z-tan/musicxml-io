@@ -1,6 +1,12 @@
-import type { Score, NoteEntry, Pitch, Part, Measure, DynamicsValue } from '../types';
+import type { Score, NoteEntry, Pitch, Part, DynamicsValue } from '../types';
 import { hasTieStart, hasTieStop } from '../entry-accessors';
 import { generatePlaybackSequence } from '../query/playback-sequence';
+import {
+  buildGridTimeline,
+  buildTimingSidecar,
+  measureEndTick,
+} from '../query/playback-timeline';
+import type { GridTimeline, TimingSidecar } from '../query/playback-timeline';
 
 /**
  * MIDI export options
@@ -12,6 +18,23 @@ export interface MidiExportOptions {
   defaultTempo?: number;
   /** Default velocity for notes when no dynamics are present (default: 80) */
   defaultVelocity?: number;
+}
+
+/**
+ * A single point on the timing sidecar: a correspondence between a time in the
+ * generated MIDI and a conceptual musical position (measure + beat).
+ *
+ * Breakpoints are emitted at every played-measure start and every tempo change
+ * (plus a terminal point). Between two consecutive breakpoints the relationship
+ * `midiSec ↔ quarterPos` is linear (tempo is piecewise-constant), so a consumer
+ * can interpolate any intermediate time exactly.
+ */
+/** Result of {@link exportMidiWithTimingMap}. */
+export interface MidiWithTimingMap {
+  /** The Standard MIDI File data. */
+  midi: Uint8Array;
+  /** The MIDI-time ↔ musical-position sidecar. */
+  sidecar: TimingSidecar;
 }
 
 /**
@@ -126,6 +149,41 @@ function scheduleGraceNotes(
  * @returns The MIDI file data as Uint8Array
  */
 export function exportMidi(score: Score, options: MidiExportOptions = {}): Uint8Array {
+  const { tracks, ticksPerQuarterNote } = buildMidiTracks(score, options);
+  return buildMidiFile(tracks, ticksPerQuarterNote);
+}
+
+/**
+ * Export a Score to MIDI together with a timing sidecar that maps the generated
+ * MIDI timeline to conceptual musical positions (measure + beat).
+ *
+ * The MIDI bytes are byte-for-byte identical to {@link exportMidi}; the sidecar
+ * is derived from the same internal time computation so the two can never drift.
+ *
+ * @param score - The Score to export
+ * @param options - Export options (must match those used for any aligned audio)
+ * @returns The MIDI data and its timing sidecar
+ */
+export function exportMidiWithTimingMap(
+  score: Score,
+  options: MidiExportOptions = {}
+): MidiWithTimingMap {
+  const { tracks, ticksPerQuarterNote, defaultTempo, grid } = buildMidiTracks(score, options);
+  return {
+    midi: buildMidiFile(tracks, ticksPerQuarterNote),
+    sidecar: buildTimingSidecar(grid, defaultTempo, ticksPerQuarterNote),
+  };
+}
+
+/**
+ * Build the per-track MIDI byte arrays and the shared playback grid. Both
+ * {@link exportMidi} and {@link exportMidiWithTimingMap} go through here so the
+ * MIDI and the sidecar are always computed from the same timeline.
+ */
+function buildMidiTracks(
+  score: Score,
+  options: MidiExportOptions
+): { tracks: Uint8Array[]; ticksPerQuarterNote: number; defaultTempo: number; grid: GridTimeline } {
   const ticksPerQuarterNote = options.ticksPerQuarterNote ?? 480;
   const defaultTempo = options.defaultTempo ?? 120;
   const defaultVelocity = options.defaultVelocity ?? 80;
@@ -135,11 +193,14 @@ export function exportMidi(score: Score, options: MidiExportOptions = {}): Uint8
   // Expand repeats, voltas, and jump instructions (D.C./D.S./Coda/Fine) into
   // the actual order measures should be played. Structure is read from the
   // first part and applied to every part so all tracks stay in sync.
-  const measureOrder = generatePlaybackSequence(score).map((m) => m.measureIndex);
+  const sequence = generatePlaybackSequence(score);
+  const measureOrder = sequence.map((m) => m.measureIndex);
+
+  // Shared time computation: measure spans (ticks) + tempo changes.
+  const grid = buildGridTimeline(score, ticksPerQuarterNote, sequence);
 
   // Track 0: Tempo and time signature
-  const conductorTrack = createConductorTrack(score, defaultTempo, ticksPerQuarterNote, measureOrder);
-  tracks.push(conductorTrack);
+  tracks.push(createConductorTrack(score, defaultTempo, grid));
 
   // Create a track for each part
   // Filter partList to only include score-parts (exclude part-groups)
@@ -169,8 +230,7 @@ export function exportMidi(score: Score, options: MidiExportOptions = {}): Uint8
     tracks.push(trackData);
   }
 
-  // Build the complete MIDI file
-  return buildMidiFile(tracks, ticksPerQuarterNote);
+  return { tracks, ticksPerQuarterNote, defaultTempo, grid };
 }
 
 /**
@@ -189,71 +249,6 @@ function pitchToMidiNote(pitch: Pitch, chromaticTranspose: number = 0): number {
 }
 
 /**
- * Maximum position (in divisions) reached within a measure, accounting for
- * multi-voice writing via backup/forward. Grace notes carry no duration and
- * therefore do not advance the position.
- */
-function measureMaxPosition(measure: Measure): number {
-  let position = 0;
-  let max = 0;
-  for (const entry of measure.entries) {
-    if (entry.type === 'note') {
-      // Grace notes carry no time and must not advance the position
-      // (mirrors the part-track loop, which skips them entirely).
-      if (!entry.chord && !entry.grace) {
-        position += entry.duration;
-        if (position > max) max = position;
-      }
-    } else if (entry.type === 'backup') {
-      position -= entry.duration;
-    } else if (entry.type === 'forward') {
-      position += entry.duration;
-      if (position > max) max = position;
-    }
-  }
-  return max;
-}
-
-/**
- * Absolute tick at the end of a measure, given where it started.
- * Implicit (pickup) measures use their actual content length; regular
- * measures use the time signature but never exceed their actual content.
- */
-function measureEndTick(
-  measure: Measure,
-  part: Part,
-  divisions: number,
-  measureStartTick: number,
-  maxPosition: number,
-  ticksPerQuarterNote: number
-): number {
-  const actualTicks = Math.round((maxPosition * ticksPerQuarterNote) / divisions);
-
-  if (measure.implicit) {
-    return measureStartTick + actualTicks;
-  }
-
-  const timeAttrs = findTimeSignature(part, measure.number);
-  if (timeAttrs) {
-    const measureDuration = (timeAttrs.beats / timeAttrs.beatType) * 4 * divisions;
-    const calculatedTicks = Math.round((measureDuration * ticksPerQuarterNote) / divisions);
-    // Use the smaller of calculated and actual for incomplete measures
-    // (e.g., last measure before a repeat that combines with a pickup).
-    const ticksToAdd = Math.min(calculatedTicks, actualTicks > 0 ? actualTicks : calculatedTicks);
-    return measureStartTick + ticksToAdd;
-  }
-
-  return measureStartTick + actualTicks;
-}
-
-/** Parse a metronome per-minute value to a numeric BPM, or null. */
-function metronomeBpm(perMinute: number | string | undefined): number | null {
-  if (perMinute === undefined) return null;
-  const bpm = typeof perMinute === 'number' ? perMinute : parseFloat(perMinute);
-  return isNaN(bpm) ? null : bpm;
-}
-
-/**
  * Create conductor track (initial time signature + all tempo changes).
  *
  * Tempo is read from three sources, in document order at each position:
@@ -264,63 +259,12 @@ function metronomeBpm(perMinute: number | string | undefined): number | null {
 function createConductorTrack(
   score: Score,
   defaultTempo: number,
-  ticksPerQuarterNote: number,
-  measureOrder: number[]
+  grid: GridTimeline
 ): Uint8Array {
   const events: number[] = [];
 
-  // Collect tempo changes as absolute-tick events.
-  const tempoEvents: { tick: number; bpm: number }[] = [];
-
-  if (score.parts.length > 0) {
-    const part = score.parts[0];
-    let divisions = 1;
-    let currentTick = 0;
-
-    for (const measureIndex of measureOrder) {
-      const measure = part.measures[measureIndex];
-      if (!measure) continue;
-      if (measure.attributes?.divisions) {
-        divisions = measure.attributes.divisions;
-      }
-
-      const measureStartTick = currentTick;
-      let position = 0;
-      const tickAt = (pos: number) =>
-        measureStartTick + Math.round((pos * ticksPerQuarterNote) / divisions);
-
-      for (const entry of measure.entries) {
-        if (entry.type === 'direction') {
-          for (const dirType of entry.directionTypes) {
-            if (dirType.kind === 'metronome') {
-              const bpm = metronomeBpm(dirType.perMinute);
-              if (bpm !== null) tempoEvents.push({ tick: tickAt(position), bpm });
-            }
-          }
-          if (entry.sound?.tempo) {
-            tempoEvents.push({ tick: tickAt(position), bpm: entry.sound.tempo });
-          }
-        } else if (entry.type === 'sound') {
-          if (entry.tempo) tempoEvents.push({ tick: tickAt(position), bpm: entry.tempo });
-        } else if (entry.type === 'note' && !entry.chord) {
-          position += entry.duration;
-        } else if (entry.type === 'backup') {
-          position -= entry.duration;
-        } else if (entry.type === 'forward') {
-          position += entry.duration;
-        }
-      }
-
-      currentTick = measureEndTick(
-        measure,
-        part,
-        divisions,
-        measureStartTick,
-        measureMaxPosition(measure),
-        ticksPerQuarterNote
-      );
-    }
-  }
+  // Tempo changes (absolute-tick) come from the shared grid computation.
+  const tempoEvents = [...grid.tempoEvents];
 
   // Resolve the starting tempo: an explicit tempo at tick 0 wins, else default.
   tempoEvents.sort((a, b) => a.tick - b.tick);
@@ -578,30 +522,6 @@ function createPartTrack(
   events.push(...writeVariableLength(0), 0xff, 0x2f, 0x00);
 
   return new Uint8Array(events);
-}
-
-/**
- * Find time signature at a measure
- */
-function findTimeSignature(
-  part: Part,
-  measureNumber: string | number
-): { beats: number; beatType: number } | undefined {
-  const targetMeasure = parseInt(String(measureNumber), 10);
-  let time: { beats: number; beatType: number } | undefined;
-
-  for (const measure of part.measures) {
-    const mNum = parseInt(measure.number, 10);
-    if (!isNaN(targetMeasure) && !isNaN(mNum) && mNum > targetMeasure) break;
-    if (measure.attributes?.time) {
-      time = {
-        beats: parseInt(measure.attributes.time.beats, 10) || 4,
-        beatType: measure.attributes.time.beatType
-      };
-    }
-  }
-
-  return time;
 }
 
 /**
