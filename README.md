@@ -179,6 +179,43 @@ import { exportMidi } from 'musicxml-io';
 const midi = exportMidi(score, { tempo: 120 });
 ```
 
+#### Playback timeline (for audio alignment)
+
+`generatePlaybackTimeline` returns a **timing sidecar** mapping playback time
+(seconds) to conceptual musical positions (`measure` + `beat`), with
+repeats/voltas/jumps expanded. It is a read-only analysis (under `query`) — the
+sibling of `generatePlaybackSequence`, which gives the play *order*; this gives
+the same expansion *with absolute times*.
+
+```typescript
+import { generatePlaybackTimeline } from 'musicxml-io';
+
+const sidecar = generatePlaybackTimeline(score);
+// sidecar.breakpoints: [{ midiSec, quarterPos, measureNumber, beatInMeasure, repeatIteration }]
+```
+
+The timeline is the one thing that cannot be recomputed from the MusicXML alone,
+because the seconds depend on the tempo and repeat expansion. Its seconds equal
+the playback time of `exportMidi`'s output (they share the same computation).
+Pair it with an audio aligner that returns `audioSec ↔ midiSec` to follow a
+recording on the score:
+
+```
+audioSec ─[aligner]→ midiSec ─[timeline: interpolate quarterPos]→ (measure, beat)
+```
+
+Breakpoints are emitted at every played-measure start and every tempo change,
+sorted and monotone by `midiSec`. Between two consecutive breakpoints
+`midiSec ↔ quarterPos` is linear (tempo is piecewise-constant), so any
+intermediate time interpolates exactly. A repeated measure appears multiple
+times with a rising `repeatIteration`. The conceptual position is
+renderer-independent — resolving `(measure, beat)` to a rendered element is the
+caller's responsibility.
+
+When you need both the MIDI and its timeline, `exportMidiWithTimingMap(score)`
+returns `{ midi, sidecar }` in one call (just `exportMidi` +
+`generatePlaybackTimeline`, guaranteed consistent).
+
 ### Validation
 
 ```typescript
@@ -203,6 +240,7 @@ const { valid, errors } = validate(score);
 | `serializeCompressed(score)` | To .mxl |
 | `serializeAbc(score, options?)` | To ABC notation string |
 | `exportMidi(score)` | To MIDI |
+| `exportMidiWithTimingMap(score)` | To MIDI + a MIDI↔(measure, beat) timing sidecar for audio alignment |
 
 ### Operations
 
@@ -260,6 +298,8 @@ See [OPERATIONS.md](OPERATIONS.md) for the complete list.
 | `getHarmonies(score)` | All chord symbols |
 | `getDynamics(score)` | All dynamics markings |
 | `getTempoMarkings(score)` | All tempo markings |
+| `generatePlaybackSequence(score)` | Play order of measures (repeats/voltas/jumps expanded) |
+| `generatePlaybackTimeline(score)` | Playback time (sec) ↔ (measure, beat) map for audio alignment |
 
 ### Accessors
 

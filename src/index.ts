@@ -76,8 +76,13 @@ export type {
 export { parse, parseCompressed, isCompressed, parseAuto, parseAbc } from './importers';
 
 // Exporters
-export { serialize, serializeCompressed, exportMidi, serializeAbc } from './exporters';
-export type { SerializeOptions, MidiExportOptions, AbcSerializeOptions } from './exporters';
+export { serialize, serializeCompressed, exportMidi, exportMidiWithTimingMap, serializeAbc } from './exporters';
+export type {
+  SerializeOptions,
+  MidiExportOptions,
+  AbcSerializeOptions,
+  MidiWithTimingMap,
+} from './exporters';
 
 // Query (all read operations)
 export {
@@ -147,6 +152,7 @@ export {
   getEndings,
   // Playback sequence (repeat / volta / jump expansion)
   generatePlaybackSequence,
+  generatePlaybackTimeline,
   extractPlaybackControls,
   hasPlaybackControls,
   getKeyChanges,
@@ -173,7 +179,7 @@ export {
   countNotes,
   scoresEqual,
 } from './query';
-export type { VoiceFilter, NormalizedPositionOptions, PitchRange, FindNotesFilter, RoundtripMetrics, PlaybackMeasure, PlaybackControls } from './query';
+export type { VoiceFilter, NormalizedPositionOptions, PitchRange, FindNotesFilter, RoundtripMetrics, PlaybackMeasure, PlaybackControls, TimingMapOptions, TimingSidecar, TimingBreakpoint } from './query';
 
 // Operations (re-export for convenience)
 export {
