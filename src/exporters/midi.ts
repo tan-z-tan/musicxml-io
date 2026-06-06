@@ -5,13 +5,21 @@ import {
   buildGridTimeline,
   buildTimingSidecar,
   measureEndTick,
+  bpmToUsPerQuarter,
 } from '../query/playback-timeline';
-import type { GridTimeline, TimingSidecar } from '../query/playback-timeline';
+import type {
+  GridTimeline,
+  TimingSidecar,
+  ExpressionOptions,
+} from '../query/playback-timeline';
 
 /**
  * MIDI export options
+ *
+ * Extends {@link ExpressionOptions} so fermata holds and rit./accel. ramps land
+ * in the exported tempo map (and the timing sidecar) identically.
  */
-export interface MidiExportOptions {
+export interface MidiExportOptions extends ExpressionOptions {
   /** Ticks per quarter note (default: 480) */
   ticksPerQuarterNote?: number;
   /** Default tempo in BPM (default: 120) */
@@ -196,8 +204,15 @@ function buildMidiTracks(
   const sequence = generatePlaybackSequence(score);
   const measureOrder = sequence.map((m) => m.measureIndex);
 
-  // Shared time computation: measure spans (ticks) + tempo changes.
-  const grid = buildGridTimeline(score, ticksPerQuarterNote, sequence);
+  // Shared time computation: measure spans (ticks) + tempo changes (including
+  // fermata holds and rit./accel. ramps).
+  const grid = buildGridTimeline(score, ticksPerQuarterNote, sequence, {
+    defaultTempo,
+    fermataHoldMultiplier: options.fermataHoldMultiplier,
+    caesuraSeconds: options.caesuraSeconds,
+    breathSeconds: options.breathSeconds,
+    tempoRampSteps: options.tempoRampSteps,
+  });
 
   // Track 0: Tempo and time signature
   tracks.push(createConductorTrack(score, defaultTempo, grid));
@@ -249,69 +264,77 @@ function pitchToMidiNote(pitch: Pitch, chromaticTranspose: number = 0): number {
 }
 
 /**
- * Create conductor track (initial time signature + all tempo changes).
+ * Create conductor track: all tempo changes and all time-signature changes,
+ * merged in absolute-tick order.
  *
  * Tempo is read from three sources, in document order at each position:
  * metronome direction-types, the <sound tempo> inside a direction, and
- * standalone <sound tempo> entries. Events are placed at absolute ticks so
- * that tempo changes inside repeated sections land correctly.
+ * standalone <sound tempo> entries — plus fermata holds and rit./accel. ramps
+ * folded in by {@link buildGridTimeline}. Time signatures are emitted for every
+ * change across the playback (repeat-expanded) order, not just the first
+ * measure. Events are placed at absolute ticks so changes inside repeated
+ * sections land correctly.
  */
 function createConductorTrack(
   score: Score,
   defaultTempo: number,
   grid: GridTimeline
 ): Uint8Array {
-  const events: number[] = [];
+  // Collect all meta events as (tick, order, bytes); `order` breaks ties so that
+  // at a shared tick the tempo is written before the time signature (matching
+  // the historical tick-0 layout).
+  interface MetaEvent {
+    tick: number;
+    order: number;
+    bytes: number[];
+  }
+  const metaEvents: MetaEvent[] = [];
 
-  // Tempo changes (absolute-tick) come from the shared grid computation.
-  const tempoEvents = [...grid.tempoEvents];
-
-  // Resolve the starting tempo: an explicit tempo at tick 0 wins, else default.
-  tempoEvents.sort((a, b) => a.tick - b.tick);
-  const startBpm = tempoEvents.length > 0 && tempoEvents[0].tick === 0
-    ? tempoEvents[0].bpm
-    : defaultTempo;
-
-  const pushTempo = (deltaTick: number, bpm: number) => {
-    const usPerQuarter = Math.round(60000000 / bpm);
-    events.push(
-      ...writeVariableLength(deltaTick),
-      0xff, 0x51, 0x03,
-      (usPerQuarter >> 16) & 0xff,
-      (usPerQuarter >> 8) & 0xff,
-      usPerQuarter & 0xff
-    );
+  const tempoBytes = (bpm: number): number[] => {
+    const us = bpmToUsPerQuarter(bpm);
+    return [0xff, 0x51, 0x03, (us >> 16) & 0xff, (us >> 8) & 0xff, us & 0xff];
   };
 
-  // Initial tempo at tick 0.
-  pushTempo(0, startBpm);
-
-  // Initial time signature from the first measure.
-  if (score.parts.length > 0 && score.parts[0].measures.length > 0) {
-    const time = score.parts[0].measures[0].attributes?.time;
-    if (time) {
-      const numerator = parseInt(time.beats, 10) || 4;
-      const denominator = Math.log2(time.beatType);
-      events.push(
-        ...writeVariableLength(0),
-        0xff, 0x58, 0x04,
-        numerator,
-        denominator,
-        24,
-        8
-      );
-    }
-  }
-
-  // Remaining tempo changes, as deltas from the previous event.
-  let lastTick = 0;
+  // --- Tempo changes (deduped, mirroring makeTickToSec). ---
+  const tempoEvents = [...grid.tempoEvents].sort((a, b) => a.tick - b.tick);
+  const startBpm =
+    tempoEvents.length > 0 && tempoEvents[0].tick === 0 ? tempoEvents[0].bpm : defaultTempo;
+  metaEvents.push({ tick: 0, order: 0, bytes: tempoBytes(startBpm) });
   let lastBpm = startBpm;
   for (const ev of tempoEvents) {
     if (ev.tick === 0) continue; // already emitted as the initial tempo
     if (ev.bpm === lastBpm) continue; // no audible change
-    pushTempo(ev.tick - lastTick, ev.bpm);
-    lastTick = ev.tick;
+    metaEvents.push({ tick: ev.tick, order: 0, bytes: tempoBytes(ev.bpm) });
     lastBpm = ev.bpm;
+  }
+
+  // --- Time-signature changes across the played measures. ---
+  const part = score.parts.length > 0 ? score.parts[0] : undefined;
+  if (part) {
+    let lastSig: string | null = null;
+    for (const m of grid.measures) {
+      const time = part.measures[m.measureIndex]?.attributes?.time;
+      if (!time) continue; // unchanged from the prevailing signature
+      const numerator = parseInt(time.beats, 10) || 4;
+      const denominator = Math.log2(time.beatType);
+      const sig = `${numerator}/${denominator}`;
+      if (sig === lastSig) continue;
+      lastSig = sig;
+      metaEvents.push({
+        tick: m.startTick,
+        order: 1,
+        bytes: [0xff, 0x58, 0x04, numerator, denominator, 24, 8],
+      });
+    }
+  }
+
+  // --- Emit as delta-timed meta events. ---
+  metaEvents.sort((a, b) => a.tick - b.tick || a.order - b.order);
+  const events: number[] = [];
+  let lastTick = 0;
+  for (const ev of metaEvents) {
+    events.push(...writeVariableLength(ev.tick - lastTick), ...ev.bytes);
+    lastTick = ev.tick;
   }
 
   // End of track
