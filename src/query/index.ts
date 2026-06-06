@@ -62,7 +62,14 @@ export type { PlaybackMeasure, PlaybackControls } from './playback-sequence';
 
 // Playback timeline (seconds ↔ musical position, repeat-expanded)
 export { generatePlaybackTimeline } from './playback-timeline';
-export type { TimingMapOptions, TimingSidecar, TimingBreakpoint } from './playback-timeline';
+export type {
+  TimingMapOptions,
+  TimingSidecar,
+  TimingBreakpoint,
+  ExpressionOptions,
+  ExpressionHint,
+  ExpressionKind,
+} from './playback-timeline';
 
 export interface VoiceFilter {
   voice?: string;

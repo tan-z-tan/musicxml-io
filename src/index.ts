@@ -179,7 +179,7 @@ export {
   countNotes,
   scoresEqual,
 } from './query';
-export type { VoiceFilter, NormalizedPositionOptions, PitchRange, FindNotesFilter, RoundtripMetrics, PlaybackMeasure, PlaybackControls, TimingMapOptions, TimingSidecar, TimingBreakpoint } from './query';
+export type { VoiceFilter, NormalizedPositionOptions, PitchRange, FindNotesFilter, RoundtripMetrics, PlaybackMeasure, PlaybackControls, TimingMapOptions, TimingSidecar, TimingBreakpoint, ExpressionOptions, ExpressionHint, ExpressionKind } from './query';
 
 // Operations (re-export for convenience)
 export {
