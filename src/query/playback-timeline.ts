@@ -228,8 +228,18 @@ function findTimeSignature(
 
 /**
  * Absolute tick at the end of a measure, given where it started.
- * Implicit (pickup) measures use their actual content length; regular
- * measures use the time signature but never exceed their actual content.
+ *
+ * The measure spans its ACTUAL notated content whenever it has any: implicit
+ * (pickup) and incomplete measures come out shorter than the meter, and
+ * over-full measures come out longer. The latter is the irregular case that
+ * matters for alignment — e.g. a written-out arpeggiated roll (cue notes with
+ * real durations, tied into the chord that follows) pushes a 4/4 bar past four
+ * beats. Clamping such a bar back to the time signature would drop the overflow
+ * onto the next measure's downbeat (two onsets colliding at one tick); honoring
+ * the content instead lets the next measure begin cleanly after it.
+ *
+ * The time signature is only a fallback for measures with no timed content at
+ * all (e.g. a bar carrying only directions), so an empty bar still advances.
  */
 export function measureEndTick(
   measure: Measure,
@@ -241,21 +251,22 @@ export function measureEndTick(
 ): number {
   const actualTicks = Math.round((maxPosition * ticksPerQuarterNote) / divisions);
 
-  if (measure.implicit) {
+  if (actualTicks > 0) {
     return measureStartTick + actualTicks;
   }
 
-  const timeAttrs = findTimeSignature(part, measure.number);
-  if (timeAttrs) {
-    const measureDuration = (timeAttrs.beats / timeAttrs.beatType) * 4 * divisions;
-    const calculatedTicks = Math.round((measureDuration * ticksPerQuarterNote) / divisions);
-    // Use the smaller of calculated and actual for incomplete measures
-    // (e.g., last measure before a repeat that combines with a pickup).
-    const ticksToAdd = Math.min(calculatedTicks, actualTicks > 0 ? actualTicks : calculatedTicks);
-    return measureStartTick + ticksToAdd;
+  // No timed content: fall back to the time-signature length so the bar still
+  // occupies its meter (implicit pickups with no content simply add nothing).
+  if (!measure.implicit) {
+    const timeAttrs = findTimeSignature(part, measure.number);
+    if (timeAttrs) {
+      const measureDuration = (timeAttrs.beats / timeAttrs.beatType) * 4 * divisions;
+      const calculatedTicks = Math.round((measureDuration * ticksPerQuarterNote) / divisions);
+      return measureStartTick + calculatedTicks;
+    }
   }
 
-  return measureStartTick + actualTicks;
+  return measureStartTick;
 }
 
 /** Does this note/rest carry a fermata notation? */
