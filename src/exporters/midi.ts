@@ -337,8 +337,16 @@ function createConductorTrack(
     lastTick = ev.tick;
   }
 
-  // End of track
-  events.push(...writeVariableLength(0), 0xff, 0x2f, 0x00);
+  // End of track extended to the timeline end (grid.totalTicks), so the MIDI
+  // file's total length equals tickToSec(totalTicks) == sidecar.durationSec
+  // even when the final measure ends in a rest (or a fermata note that releases
+  // before the barline). The trailing span is silence — no note is added; this
+  // keeps the conductor track (the timeline master) as long as the grid and
+  // therefore at least as long as every part track.
+  events.push(
+    ...writeVariableLength(Math.max(0, grid.totalTicks - lastTick)),
+    0xff, 0x2f, 0x00
+  );
 
   return new Uint8Array(events);
 }

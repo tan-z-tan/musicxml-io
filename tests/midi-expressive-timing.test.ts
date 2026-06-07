@@ -85,6 +85,8 @@ function scoreOf(measures: Measure[]): Score {
 interface ConductorEvents {
   tempos: { tick: number; usPerQuarter: number }[];
   timeSigs: { tick: number; numerator: number; denominator: number }[];
+  /** Tick of the conductor track's end_of_track meta event. */
+  endTick: number;
 }
 
 function parseConductor(data: Uint8Array): ConductorEvents {
@@ -97,7 +99,7 @@ function parseConductor(data: Uint8Array): ConductorEvents {
   const bodyStart = pos + 8;
   const bodyEnd = bodyStart + len;
 
-  const ev: ConductorEvents = { tempos: [], timeSigs: [] };
+  const ev: ConductorEvents = { tempos: [], timeSigs: [], endTick: 0 };
   let i = bodyStart;
   let tick = 0;
   const readVarLen = () => {
@@ -123,6 +125,8 @@ function parseConductor(data: Uint8Array): ConductorEvents {
         });
       } else if (metaType === 0x58 && metaLen === 4) {
         ev.timeSigs.push({ tick, numerator: data[i], denominator: data[i + 1] });
+      } else if (metaType === 0x2f) {
+        ev.endTick = tick;
       }
       i += metaLen;
     } else {
@@ -131,6 +135,56 @@ function parseConductor(data: Uint8Array): ConductorEvents {
     }
   }
   return ev;
+}
+
+/** Maximum end-tick across all tracks (= the MIDI file's total length in ticks). */
+function maxTrackEndTick(data: Uint8Array): number {
+  let pos = 14;
+  const u32 = (p: number) =>
+    (data[p] << 24) | (data[p + 1] << 16) | (data[p + 2] << 8) | data[p + 3];
+  let maxTick = 0;
+  while (pos < data.length) {
+    const len = u32(pos + 4);
+    let i = pos + 8;
+    const end = i + len;
+    let tick = 0;
+    let running = 0;
+    const readVarLen = () => {
+      let value = 0;
+      for (;;) {
+        const byte = data[i++];
+        value = (value << 7) | (byte & 0x7f);
+        if (!(byte & 0x80)) break;
+      }
+      return value;
+    };
+    while (i < end) {
+      tick += readVarLen();
+      let status = data[i];
+      if (status & 0x80) {
+        i++;
+        running = status;
+      } else {
+        status = running;
+      }
+      if (status === 0xff) {
+        i++; // meta type
+        const metaLen = readVarLen();
+        i += metaLen;
+      } else if ((status & 0xf0) === 0xc0 || (status & 0xf0) === 0xd0) {
+        i += 1;
+      } else {
+        i += 2;
+      }
+    }
+    if (tick > maxTick) maxTick = tick;
+    pos = end;
+  }
+  return maxTick;
+}
+
+function rest(duration = 4): NoteEntry {
+  return { _id: id(), type: 'note', rest: {}, duration, voice: '1' };
 }
 
 /** Tick → seconds using the parsed (piecewise-constant) MIDI tempo map. */
@@ -327,5 +381,45 @@ describe('sidecar seconds match real MIDI playback seconds', () => {
     }
     // durationSec is the time at the final (terminal) breakpoint.
     expect(sidecar.durationSec).toBeCloseTo(sidecar.breakpoints.at(-1)!.midiSec, 9);
+  });
+});
+
+describe('MIDI total length matches sidecar.durationSec', () => {
+  it("extends end_of_track to the grid end when the final measure ends in a rest", () => {
+    // m2 = half note + half rest: notes stop at tick 2880, but the measure (and
+    // the grid) runs to tick 3840. Without padding, the file would end early.
+    const score = scoreOf([
+      measure(1, [note()]),
+      measure(2, [note({ duration: 2 }), rest(2)]),
+    ]);
+    const { midi, sidecar } = exportMidiWithTimingMap(score);
+    const { tempos, endTick } = parseConductor(midi);
+
+    // Conductor end_of_track sits at the grid end (3840 ticks), not the last note.
+    expect(endTick).toBe(3840);
+    // File length (max track end) converted to seconds equals durationSec.
+    const fileSec = midiTickToSec(tempos, maxTrackEndTick(midi));
+    expect(fileSec).toBeCloseTo(sidecar.durationSec, 3); // within 1 ms
+  });
+
+  it('matches even when a fermata note releases before the barline', () => {
+    // m2: fermata half note then half rest. The fermata stretches the first
+    // half (tempo dip); the trailing rest still has to be reached at the grid end.
+    const score = scoreOf([
+      measure(1, [note()]),
+      measure(2, [note({ duration: 2, fermata: true }), rest(2)]),
+    ]);
+    const { midi, sidecar } = exportMidiWithTimingMap(score, { fermataHoldMultiplier: 2 });
+    const { tempos } = parseConductor(midi);
+    const fileSec = midiTickToSec(tempos, maxTrackEndTick(midi));
+    expect(fileSec).toBeCloseTo(sidecar.durationSec, 3);
+  });
+
+  it('still matches for a plain score with no trailing rest', () => {
+    const score = scoreOf([measure(1, [note()]), measure(2, [note()])]);
+    const { midi, sidecar } = exportMidiWithTimingMap(score);
+    const { tempos } = parseConductor(midi);
+    const fileSec = midiTickToSec(tempos, maxTrackEndTick(midi));
+    expect(fileSec).toBeCloseTo(sidecar.durationSec, 3);
   });
 });
