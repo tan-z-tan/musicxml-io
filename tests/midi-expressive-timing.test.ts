@@ -347,10 +347,11 @@ describe('tempo map completeness', () => {
 
 describe('time-signature changes in the conductor track', () => {
   it('emits every mid-piece time-signature change, not just the first', () => {
+    // divisions=1 → duration 1 is one quarter; fill each bar to its meter.
     const score = scoreOf([
-      measure(1, [note(), note(), note(), note()], ts(4, 4)),
-      measure(2, [note(), note(), note()], ts(3, 4)),
-      measure(3, [note(), note(), note(), note()], ts(4, 4)),
+      measure(1, [note({ duration: 1 }), note({ duration: 1 }), note({ duration: 1 }), note({ duration: 1 })], ts(4, 4)),
+      measure(2, [note({ duration: 1 }), note({ duration: 1 }), note({ duration: 1 })], ts(3, 4)),
+      measure(3, [note({ duration: 1 }), note({ duration: 1 }), note({ duration: 1 }), note({ duration: 1 })], ts(4, 4)),
     ]);
     const { timeSigs } = parseConductor(exportMidi(score));
     expect(timeSigs.map((t) => t.numerator)).toEqual([4, 3, 4]);
@@ -358,6 +359,79 @@ describe('time-signature changes in the conductor track', () => {
     expect(timeSigs.map((t) => t.tick)).toEqual([0, 1920, 1920 + 1440]);
     // denominator is log2(beatType) = 2 for /4.
     expect(timeSigs.every((t) => t.denominator === 2)).toBe(true);
+  });
+});
+
+/** All note-on ticks across every part track (track 0 is the conductor). */
+function noteOnTicks(data: Uint8Array): number[] {
+  let pos = 14;
+  const u32 = (p: number) =>
+    (data[p] << 24) | (data[p + 1] << 16) | (data[p + 2] << 8) | data[p + 3];
+  const ticks: number[] = [];
+  while (pos < data.length) {
+    const len = u32(pos + 4);
+    let i = pos + 8;
+    const end = i + len;
+    let tick = 0;
+    let running = 0;
+    const readVarLen = () => {
+      let value = 0;
+      for (;;) {
+        const byte = data[i++];
+        value = (value << 7) | (byte & 0x7f);
+        if (!(byte & 0x80)) break;
+      }
+      return value;
+    };
+    while (i < end) {
+      tick += readVarLen();
+      let status = data[i];
+      if (status & 0x80) {
+        i++;
+        running = status;
+      } else {
+        status = running;
+      }
+      if (status === 0xff) {
+        i++;
+        const metaLen = readVarLen();
+        i += metaLen;
+      } else if ((status & 0xf0) === 0x90) {
+        i++; // note
+        const vel = data[i++];
+        if (vel > 0) ticks.push(tick);
+      } else if ((status & 0xf0) === 0x80) {
+        i += 2;
+      } else if ((status & 0xf0) === 0xc0 || (status & 0xf0) === 0xd0) {
+        i += 1;
+      } else {
+        i += 2;
+      }
+    }
+    pos = end;
+  }
+  return ticks;
+}
+
+describe('over-full measure honors its content (no collision into the next bar)', () => {
+  // Mirrors the Ravel Pavane m71: a 4/4 bar whose notated content is 5 quarters
+  // (a written-out arpeggiated roll pushes the bar past the meter). The bar must
+  // span 5 quarters so the final note does not land on the next downbeat.
+  const score = scoreOf([
+    measure(1, [note({ duration: 1 }), note({ duration: 1, step: 'D' }), note({ duration: 1, step: 'E' }), note({ duration: 1, step: 'F' }), note({ duration: 1, step: 'G' })], ts(4, 4)),
+    measure(2, [note({ duration: 1, step: 'A' })], ts(4, 4)),
+  ]);
+
+  it('places the next measure after the full content, not clamped to the meter', () => {
+    const sidecar = generatePlaybackTimeline(score);
+    const m2 = sidecar.breakpoints.find((b) => b.measureNumber === '2' && b.beatInMeasure === 0)!;
+    expect(m2.quarterPos).toBe(5); // 5 quarters of content, not clamped to 4
+  });
+
+  it("does not collide the bar's last onset with the next bar's downbeat", () => {
+    const ticks = noteOnTicks(exportMidi(score)).sort((a, b) => a - b);
+    // 6 distinct onsets at 0,480,960,1440,1920 (m1) and 2400 (m2) — all unique.
+    expect(ticks).toEqual([0, 480, 960, 1440, 1920, 2400]);
   });
 });
 
