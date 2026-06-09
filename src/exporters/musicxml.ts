@@ -1085,7 +1085,8 @@ function serializePitch(pitch: Pitch, indent: string, out: string[]): void {
 }
 
 function serializeBeam(beam: BeamInfo, indent: string, out: string[]): void {
-  out.push(`${indent}<beam number="${beam.number}">${beam.type}</beam>`);
+  const fanAttr = beam.fan ? ` fan="${beam.fan}"` : '';
+  out.push(`${indent}<beam number="${beam.number}"${fanAttr}>${beam.type}</beam>`);
 }
 
 function serializeNotations(notations: Notation[], indent: string, out: string[]): void {

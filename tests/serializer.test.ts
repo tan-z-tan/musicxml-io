@@ -66,6 +66,43 @@ describe('Serializer', () => {
     expect(xml).toContain('</score-partwise>');
   });
 
+  it('should serialize and round-trip beam fan attribute (feathered beam)', () => {
+    const score: Score = {
+      metadata: {},
+      partList: [{ type: 'score-part', id: 'P1', name: 'Piano' }],
+      parts: [
+        {
+          id: 'P1',
+          measures: [
+            {
+              number: 1,
+              attributes: { divisions: 1 },
+              entries: [
+                {
+                  type: 'note',
+                  pitch: { step: 'C', octave: 4 },
+                  duration: 1,
+                  voice: '1',
+                  noteType: 'eighth',
+                  beam: [{ number: 1, type: 'begin', fan: 'accel' }],
+                } as NoteEntry,
+              ],
+            },
+          ],
+        },
+      ],
+    };
+
+    const xml = serialize(score);
+    expect(xml).toContain('<beam number="1" fan="accel">begin</beam>');
+
+    const reparsed = parse(xml);
+    const note = reparsed.parts[0].measures[0].entries.find(
+      (e) => e.type === 'note'
+    ) as NoteEntry;
+    expect(note.beam?.[0].fan).toBe('accel');
+  });
+
   it('should serialize a chord', () => {
     const score: Score = {
       metadata: {},
