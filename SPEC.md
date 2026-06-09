@@ -285,6 +285,7 @@ interface TieInfo {
 interface BeamInfo {
   number: number;                // 1, 2, ... (連桁レベル)
   type: 'begin' | 'continue' | 'end' | 'forward hook' | 'backward hook';
+  fan?: 'accel' | 'rit' | 'none'; // <beam> fan 属性（羽根状連桁）
 }
 
 // ============================================================

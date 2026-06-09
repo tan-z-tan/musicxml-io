@@ -627,6 +627,8 @@ export interface TieInfo {
 export interface BeamInfo {
   number: number;
   type: 'begin' | 'continue' | 'end' | 'forward hook' | 'backward hook';
+  /** MusicXML <beam> fan attribute, used for feathered beams (羽根状連桁). */
+  fan?: 'accel' | 'rit' | 'none';
 }
 
 // ============================================================

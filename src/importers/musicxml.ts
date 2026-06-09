@@ -1386,10 +1386,15 @@ function parsePitch(elements: XmlChild[]): Pitch {
 function parseBeam(elements: XmlChild[], attrs: Record<string, string>): BeamInfo {
   const text = extractText(elements);
   const validTypes = ['begin', 'continue', 'end', 'forward hook', 'backward hook'];
-  return {
+  const validFans = ['accel', 'rit', 'none'];
+  const beam: BeamInfo = {
     number: parseInt(attrs['number'] || '1', 10),
     type: validTypes.includes(text) ? text as BeamInfo['type'] : 'begin',
   };
+  if (attrs['fan'] && validFans.includes(attrs['fan'])) {
+    beam.fan = attrs['fan'] as BeamInfo['fan'];
+  }
+  return beam;
 }
 
 function parseNotations(elements: XmlChild[], notationsIndex: number = 0): Notation[] {
