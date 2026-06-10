@@ -601,7 +601,7 @@ function parseSystemLayout(elements: XmlChild[]): SystemLayout {
 
 function parseCredits(elements: XmlChild[]): Credit[] | undefined {
   const credits = collectElements(elements, 'credit', (content, attrs) => {
-    const credit: Credit = { _id: generateId() };
+    const credit: Credit = { _id: attrs['id'] || generateId() };
     if (attrs['page']) credit.page = parseInt(attrs['page'], 10);
     const types = collectElements(content, 'credit-type', (c) => extractText(c));
     const words = collectElements(content, 'credit-words', (c, a) => {
@@ -766,7 +766,7 @@ function parsePartList(elements: XmlChild[]): PartListEntry[] {
       const content = el.children;
 
       const group: PartGroup = {
-        _id: generateId(),
+        _id: attrs['id'] || generateId(),
         type: 'part-group',
         groupType: attrs['type'] === 'stop' ? 'stop' : 'start',
       };
@@ -836,7 +836,7 @@ function parseParts(elements: XmlChild[]): Part[] {
 
 function parseMeasure(elements: XmlChild[], attrs: Record<string, string>): Measure {
   const measure: Measure = {
-    _id: generateId(),
+    _id: attrs['id'] || generateId(),
     number: attrs['number'] || '0', // Keep as string per MusicXML spec (token type)
     entries: [],
   };
@@ -851,14 +851,14 @@ function parseMeasure(elements: XmlChild[], attrs: Record<string, string>): Meas
   for (const el of elements) {
     if (typeof el === 'string') continue;
     if (el.tagName === 'attributes') {
-      const parsedAttrs = parseAttributes(el.children);
+      const parsedAttrs = parseAttributes(el.children, el.attributes as Record<string, string>);
       if (!hasSeenNote && !measure.attributes) {
         // Only store in measure.attributes if no notes have appeared yet
         measure.attributes = parsedAttrs;
       } else {
         // Mid-measure attributes (after notes) go into entries
         const attrEntry: AttributesEntry = {
-          _id: generateId(),
+          _id: (el.attributes as Record<string, string>)['id'] || generateId(),
           type: 'attributes',
           attributes: parsedAttrs,
         };
@@ -870,7 +870,7 @@ function parseMeasure(elements: XmlChild[], attrs: Record<string, string>): Meas
     } else if (el.tagName === 'backup') {
       measure.entries.push(parseBackup(el.children));
     } else if (el.tagName === 'forward') {
-      measure.entries.push(parseForward(el.children));
+      measure.entries.push(parseForward(el.children, el.attributes as Record<string, string>));
     } else if (el.tagName === 'direction') {
       measure.entries.push(parseDirection(el.children, el.attributes as Record<string, string>));
     } else if (el.tagName === 'barline') {
@@ -952,8 +952,11 @@ function parsePrint(elements: XmlChild[], attrs: Record<string, string>): Print 
   return print;
 }
 
-function parseAttributes(elements: XmlChild[]): MeasureAttributes {
-  const attrs: MeasureAttributes = { _id: generateId() };
+function parseAttributes(
+  elements: XmlChild[],
+  xmlAttrs: Record<string, string> = {}
+): MeasureAttributes {
+  const attrs: MeasureAttributes = { _id: xmlAttrs['id'] || generateId() };
 
   const divisions = getElementTextAsInt(elements, 'divisions');
   if (divisions !== undefined) attrs.divisions = divisions;
@@ -1167,7 +1170,7 @@ function parseTranspose(elements: XmlChild[]): Transpose {
 
 function parseNote(elements: XmlChild[], attrs: Record<string, string>): NoteEntry {
   const note: NoteEntry = {
-    _id: generateId(),
+    _id: attrs['id'] || generateId(),
     type: 'note',
     duration: 0,
   };
@@ -1916,9 +1919,9 @@ function parseBackup(elements: XmlChild[]): BackupEntry {
   };
 }
 
-function parseForward(elements: XmlChild[]): ForwardEntry {
+function parseForward(elements: XmlChild[], attrs: Record<string, string> = {}): ForwardEntry {
   const forward: ForwardEntry = {
-    _id: generateId(),
+    _id: attrs['id'] || generateId(),
     type: 'forward',
     duration: parseInt(getElementText(elements, 'duration') || '0', 10),
   };
@@ -1934,7 +1937,7 @@ function parseForward(elements: XmlChild[]): ForwardEntry {
 
 function parseDirection(elements: XmlChild[], attrs: Record<string, string>): DirectionEntry {
   const direction: DirectionEntry = {
-    _id: generateId(),
+    _id: attrs['id'] || generateId(),
     type: 'direction',
     directionTypes: [],
   };
@@ -2412,7 +2415,7 @@ function parseDirectionTypes(elements: XmlChild[]): DirectionType[] {
 function parseBarline(elements: XmlChild[], attrs: Record<string, string>): Barline {
   const location = (attrs['location'] || 'right') as Barline['location'];
 
-  const barline: Barline = { _id: generateId(), location };
+  const barline: Barline = { _id: attrs['id'] || generateId(), location };
 
   const barStyle = getElementText(elements, 'bar-style');
   if (barStyle && isValidBarStyle(barStyle)) {
@@ -2602,7 +2605,7 @@ function parseMeasureStyle(elements: XmlChild[], attrs: Record<string, string>):
 
 function parseHarmony(elements: XmlChild[], attrs: Record<string, string>): HarmonyEntry {
   const harmony: HarmonyEntry = {
-    _id: generateId(),
+    _id: attrs['id'] || generateId(),
     type: 'harmony',
     root: { rootStep: 'C' },
     kind: 'major',
@@ -2766,7 +2769,7 @@ function parseHarmony(elements: XmlChild[], attrs: Record<string, string>): Harm
 
 function parseFiguredBass(elements: XmlChild[], attrs: Record<string, string>): FiguredBassEntry {
   const fb: FiguredBassEntry = {
-    _id: generateId(),
+    _id: attrs['id'] || generateId(),
     type: 'figured-bass',
     figures: [],
   };
@@ -2823,7 +2826,7 @@ function parseFiguredBass(elements: XmlChild[], attrs: Record<string, string>): 
 
 function parseSound(elements: XmlChild[], attrs: Record<string, string>): SoundEntry {
   const sound: SoundEntry = {
-    _id: generateId(),
+    _id: attrs['id'] || generateId(),
     type: 'sound',
   };
 

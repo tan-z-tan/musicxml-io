@@ -611,7 +611,7 @@ function serializeMeasure(measure: Measure, indent: string, out: string[]): void
 
   // Attributes
   if (measure.attributes) {
-    serializeAttributes(measure.attributes, indent + '  ', out);
+    serializeAttributes(measure.attributes, indent + '  ', out, measure.attributes._id);
   }
 
   // Entries
