@@ -851,7 +851,7 @@ function parseMeasure(elements: XmlChild[], attrs: Record<string, string>): Meas
   for (const el of elements) {
     if (typeof el === 'string') continue;
     if (el.tagName === 'attributes') {
-      const parsedAttrs = parseAttributes(el.children);
+      const parsedAttrs = parseAttributes(el.children, el.attributes as Record<string, string>);
       if (!hasSeenNote && !measure.attributes) {
         // Only store in measure.attributes if no notes have appeared yet
         measure.attributes = parsedAttrs;
@@ -952,8 +952,11 @@ function parsePrint(elements: XmlChild[], attrs: Record<string, string>): Print 
   return print;
 }
 
-function parseAttributes(elements: XmlChild[]): MeasureAttributes {
-  const attrs: MeasureAttributes = { _id: generateId() };
+function parseAttributes(
+  elements: XmlChild[],
+  xmlAttrs: Record<string, string> = {}
+): MeasureAttributes {
+  const attrs: MeasureAttributes = { _id: xmlAttrs['id'] || generateId() };
 
   const divisions = getElementTextAsInt(elements, 'divisions');
   if (divisions !== undefined) attrs.divisions = divisions;
