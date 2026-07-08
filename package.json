@@ -18,11 +18,22 @@
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
+  "sideEffects": false,
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
+      "browser": {
+        "types": "./dist/browser.d.ts",
+        "import": "./dist/browser.mjs",
+        "require": "./dist/browser.js"
+      },
       "import": "./dist/index.mjs",
       "require": "./dist/index.js"
+    },
+    "./browser": {
+      "types": "./dist/browser.d.ts",
+      "import": "./dist/browser.mjs",
+      "require": "./dist/browser.js"
     },
     "./accessors": {
       "types": "./dist/accessors/index.d.ts",
@@ -81,7 +92,6 @@
   },
   "dependencies": {
     "fflate": "^0.8.2",
-    "nanoid": "^5.1.6",
     "txml": "^6.0.0"
   },
   "files": [

@@ -360,7 +360,23 @@ Entry-level helpers for individual notes, directions, and parts.
 ```typescript
 import { transpose } from 'musicxml-io/operations';
 import { findNotes } from 'musicxml-io/query';
-import { isRest, getPartName } from 'musicxml-io/entry-accessors';
+import { isRest, getPartName } from 'musicxml-io/accessors';
+```
+
+The package declares `"sideEffects": false`, so bundlers can drop everything
+you don't import — pulling in only `parse` costs roughly 50 KB minified
+(~14 KB gzip).
+
+### Browser usage
+
+The main entry exports the Node-only file helpers (`parseFile`,
+`serializeToFile`), which depend on `fs`. Bundlers that honor the `browser`
+condition (webpack, Vite, esbuild with `--platform=browser`, etc.)
+automatically get a browser-safe build without any `fs`/`node:*` imports.
+You can also import it explicitly:
+
+```typescript
+import { parse, serialize } from 'musicxml-io/browser';
 ```
 
 ## Unique Element IDs
@@ -369,9 +385,9 @@ All elements in the Score structure have a unique `_id` property that is automat
 - MusicXML is parsed/imported
 - New elements are created via operations
 
-The ID format is `"i" + nanoid(10)` (11 characters total), where:
+The ID format is `"i"` + 10 random characters (11 characters total), where:
 - `"i"` prefix ensures XML ID compatibility (IDs must start with a letter or underscore)
-- `nanoid(10)` generates a URL-safe unique identifier
+- the suffix is drawn from a 64-character URL-safe alphabet backed by `crypto.getRandomValues` (same format as nanoid)
 
 ```typescript
 import { parse, generateId } from 'musicxml-io';

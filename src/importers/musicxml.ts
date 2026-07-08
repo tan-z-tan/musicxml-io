@@ -1,5 +1,5 @@
-import { parse as txmlParse } from 'txml';
-import type { tNode } from 'txml';
+import { parse as txmlParse } from 'txml/txml';
+import type { tNode } from 'txml/txml';
 import { generateId } from '../id';
 import type {
   Score,
