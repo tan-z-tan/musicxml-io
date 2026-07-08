@@ -1,4 +1,4 @@
-declare module 'txml' {
+declare module 'txml/txml' {
   export interface tNode {
     tagName: string;
     attributes: Record<string, string>;
