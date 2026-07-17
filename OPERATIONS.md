@@ -26,6 +26,21 @@ This ensures:
 - On failure, detailed validation errors are provided
 - No invalid scores are ever returned
 
+### Immutability and Structural Sharing
+
+Operations never mutate the input score — they return a new `Score`. For
+performance, the returned score is built with **copy-on-write structural
+sharing**: only the measures an operation actually modifies are deep-cloned;
+all untouched parts, measures, and metadata are shared by reference with the
+input. This makes single-measure edits O(measure) instead of O(score), and
+plays well with reference-equality-based rendering (e.g. React memoization):
+unchanged measures keep their object identity across edits.
+
+Because of this sharing, treat `Score` objects as immutable data: don't
+mutate a score in place after passing it to (or receiving it from) an
+operation. If you need a fully independent copy, use
+`structuredClone(score)` or `JSON.parse(JSON.stringify(score))`.
+
 ---
 
 ## Note Operations

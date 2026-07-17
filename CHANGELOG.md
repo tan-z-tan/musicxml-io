@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased]
+
+### Performance
+- Operations are dramatically faster on large scores:
+  - Single-measure operations (`insertNote`, `setNotePitch`, `addLyric`, `addArticulation`, etc.) now use copy-on-write structural sharing — only the modified measure is deep-cloned, everything else is shared by reference with the input score. On a 1.2 MB orchestral score, `insertNote` went from ~12.5 ms to ~0.02 ms per call.
+  - Whole-score operations (`transpose`, `changeKey`, part operations, etc.) replace `JSON.parse(JSON.stringify(...))` with a hand-rolled deep clone (~3.7x faster).
+- Unchanged measures keep their object identity across operations, which enables reference-equality-based rendering optimizations (e.g. `React.memo` per measure).
+- As before, operations never mutate the input score, but scores should be treated as immutable data — see "Immutability and Structural Sharing" in OPERATIONS.md.
+
 ## [0.3.6] - 2025-02-25
 
 ### Fixed
