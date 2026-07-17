@@ -8,6 +8,7 @@
 
 ### Fixed
 - Whitespace-significant text is no longer lost when parsing: whitespace-only `<words>`/`<credit-words>` content (including `xml:space="preserve"`), and whitespace-only lyric `<text>` such as the ideographic space `　` used in Japanese lyrics, are now preserved. The previous XML parser silently trimmed or dropped them.
+- Astral-plane numeric character references (e.g. `&#x1D11E;` MUSICAL SYMBOL G CLEF, used by SMuFL text) now decode correctly. The previous entity decoder used `String.fromCharCode`, which corrupted code points above U+FFFF.
 
 ### Operations performance
 - Operations are dramatically faster on large scores:

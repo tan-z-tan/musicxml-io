@@ -413,6 +413,26 @@ describe('Parser', () => {
       }
     });
 
+    it('decodes astral-plane numeric character references (SMuFL symbols)', () => {
+      // MUSICAL SYMBOL G CLEF (U+1D11E) as hex and decimal references
+      const score = parse(wrap(
+        `<direction><direction-type><words>&#x1D11E; and &#119070;</words></direction-type></direction>
+         <note><pitch><step>C</step><octave>4</octave></pitch><duration>1</duration></note>`
+      ));
+      const dir = score.parts[0].measures[0].entries.find(e => e.type === 'direction');
+      if (dir?.type === 'direction') {
+        expect(dir.directionTypes[0]).toMatchObject({ kind: 'words', text: '𝄞 and 𝄞' });
+      }
+    });
+
+    it('leaves invalid numeric character references untouched', () => {
+      const score = parse(lyricNote('&#x110000; &#xD800;'));
+      const note = score.parts[0].measures[0].entries.find(e => e.type === 'note');
+      if (note?.type === 'note') {
+        expect(note.lyrics?.[0].text).toBe('&#x110000; &#xD800;');
+      }
+    });
+
     it('decodes entities in attribute values', () => {
       const score = parse(wrap(
         `<direction><direction-type><words font-family="A &amp; B">x</words></direction-type></direction>

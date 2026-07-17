@@ -88,14 +88,25 @@ const INVALID_XML_CHARS_RE = /[\x00-\x08\x0B\x0C\x0E-\x1F\uFFFE\uFFFF]/g;
 const INVALID_XML_CHARS_TEST = /[\x00-\x08\x0B\x0C\x0E-\x1F\uFFFE\uFFFF]/;
 
 /**
+ * Convert a numeric character reference to a string. Uses fromCodePoint so
+ * astral-plane references (e.g. &#x1D11E; MUSICAL SYMBOL G CLEF, used by
+ * SMuFL text) decode correctly. Out-of-range or lone-surrogate code points
+ * leave the reference as-is.
+ */
+function decodeCharRef(match: string, codePoint: number): string {
+  if (codePoint > 0x10FFFF || (codePoint >= 0xD800 && codePoint <= 0xDFFF)) return match;
+  return String.fromCodePoint(codePoint);
+}
+
+/**
  * Decode XML entities in a text-node or attribute value. Numeric entity
  * references (e.g. &#25;) can decode to characters forbidden by XML 1.0,
  * so the decoded result is cleaned again.
  */
 function decodeXmlEntities(s: string): string {
   if (s.indexOf('&') === -1) return s;
-  const decoded = s.replace(_entityRegex, (_, named, dec, hex) =>
-    named ? _entityMap[named] : dec ? String.fromCharCode(parseInt(dec, 10)) : String.fromCharCode(parseInt(hex!, 16))
+  const decoded = s.replace(_entityRegex, (match, named, dec, hex) =>
+    named ? _entityMap[named] : decodeCharRef(match, parseInt(dec ?? hex, dec ? 10 : 16))
   );
   return INVALID_XML_CHARS_TEST.test(decoded) ? decoded.replace(INVALID_XML_CHARS_RE, '') : decoded;
 }
