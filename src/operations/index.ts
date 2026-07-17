@@ -138,15 +138,56 @@ function operationError(
 // Internal Utilities
 // ============================================================
 
+/**
+ * Fast deep clone for plain JSON-safe values (Score and its sub-objects).
+ * Behaves like JSON.parse(JSON.stringify(value)) — properties whose value is
+ * `undefined` are dropped — but is several times faster.
+ */
+function deepClone<T>(value: T): T {
+  if (value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) {
+    const len = value.length;
+    const out = new Array(len);
+    for (let i = 0; i < len; i++) out[i] = deepClone(value[i]);
+    return out as unknown as T;
+  }
+  const out: Record<string, unknown> = {};
+  const record = value as Record<string, unknown>;
+  for (const key in record) {
+    const v = record[key];
+    if (v !== undefined) out[key] = deepClone(v);
+  }
+  return out as T;
+}
+
 function cloneScore(score: Score): Score {
-  return JSON.parse(JSON.stringify(score));
+  return deepClone(score);
+}
+
+/**
+ * Copy-on-write clone: returns a new Score where only the given measures of
+ * the given part are deep-cloned; every other part/measure and the score
+ * metadata are shared structurally with the input.
+ *
+ * Callers must confine mutations to the cloned measures. Reads may touch the
+ * whole score.
+ */
+function cloneScoreAt(score: Score, partIndex: number, ...measureIndices: number[]): Score {
+  const parts = score.parts.slice();
+  const part = { ...parts[partIndex] };
+  part.measures = part.measures.slice();
+  for (const measureIndex of new Set(measureIndices)) {
+    part.measures[measureIndex] = deepClone(score.parts[partIndex].measures[measureIndex]);
+  }
+  parts[partIndex] = part;
+  return { ...score, parts };
 }
 
 /**
  * Clone a NoteEntry with a new _id
  */
 function cloneNoteWithNewId(note: NoteEntry): NoteEntry {
-  const cloned: NoteEntry = JSON.parse(JSON.stringify(note));
+  const cloned: NoteEntry = deepClone(note);
   cloned._id = generateId();
   return cloned;
 }
@@ -155,7 +196,7 @@ function cloneNoteWithNewId(note: NoteEntry): NoteEntry {
  * Clone a MeasureEntry with a new _id
  */
 function cloneEntryWithNewId(entry: MeasureEntry): MeasureEntry {
-  const cloned: MeasureEntry = JSON.parse(JSON.stringify(entry));
+  const cloned: MeasureEntry = deepClone(entry);
   cloned._id = generateId();
   return cloned;
 }
@@ -164,7 +205,7 @@ function cloneEntryWithNewId(entry: MeasureEntry): MeasureEntry {
  * Clone a Measure with new _ids for itself and all entries
  */
 function cloneMeasureWithNewIds(measure: Measure): Measure {
-  const cloned: Measure = JSON.parse(JSON.stringify(measure));
+  const cloned: Measure = deepClone(measure);
   cloned._id = generateId();
   cloned.entries = cloned.entries.map(entry => cloneEntryWithNewId(entry));
   if (cloned.barlines) {
@@ -180,7 +221,7 @@ function cloneMeasureWithNewIds(measure: Measure): Measure {
  * Clone a Part with new _ids for itself, all measures, and all entries
  */
 function clonePartWithNewIds(part: Part): Part {
-  const cloned: Part = JSON.parse(JSON.stringify(part));
+  const cloned: Part = deepClone(part);
   cloned._id = generateId();
   cloned.measures = cloned.measures.map(measure => cloneMeasureWithNewIds(measure));
   return cloned;
@@ -441,7 +482,7 @@ export function insertNote(
     return failure([operationError('INVALID_POSITION', `Position cannot be negative`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, options.partIndex, options.measureIndex);
   const measure = result.parts[options.partIndex].measures[options.measureIndex];
 
   // Get context for measure duration
@@ -548,7 +589,7 @@ export function removeNote(
     return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, options.partIndex, options.measureIndex);
   const measure = result.parts[options.partIndex].measures[options.measureIndex];
 
   // Find the note
@@ -616,7 +657,7 @@ export function addChord(
     return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, options.partIndex, options.measureIndex);
   const measure = result.parts[options.partIndex].measures[options.measureIndex];
 
   // Find the note
@@ -700,7 +741,7 @@ export function changeNoteDuration(
     return failure([operationError('INVALID_DURATION', `Duration must be positive`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, options.partIndex, options.measureIndex);
   const measure = result.parts[options.partIndex].measures[options.measureIndex];
 
   // Get context
@@ -850,7 +891,7 @@ export function setNotePitch(
     return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, options.partIndex, options.measureIndex);
   const measure = result.parts[options.partIndex].measures[options.measureIndex];
 
   let noteCount = 0;
@@ -898,7 +939,7 @@ export function setNotePitchBySemitone(
     return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, options.partIndex, options.measureIndex);
   const measure = result.parts[options.partIndex].measures[options.measureIndex];
 
   // Get key signature from measure attributes
@@ -1034,7 +1075,7 @@ export function raiseAccidental(
     return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, options.partIndex, options.measureIndex);
   const measure = result.parts[options.partIndex].measures[options.measureIndex];
 
   // Get key signature for accidental display
@@ -1108,7 +1149,7 @@ export function lowerAccidental(
     return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, options.partIndex, options.measureIndex);
   const measure = result.parts[options.partIndex].measures[options.measureIndex];
 
   // Get key signature for accidental display
@@ -1184,7 +1225,7 @@ export function addVoice(
     return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, options.partIndex, options.measureIndex);
   const measure = result.parts[options.partIndex].measures[options.measureIndex];
 
   // Check if voice already exists
@@ -1508,7 +1549,7 @@ export function moveNoteToStaff(
     return failure([operationError('INVALID_STAFF', `Target staff must be at least 1`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, options.partIndex, options.measureIndex);
   const measure = result.parts[options.partIndex].measures[options.measureIndex];
 
   let noteCount = 0;
@@ -1677,7 +1718,7 @@ export function addTie(
     return failure([operationError('MEASURE_NOT_FOUND', `End measure index ${options.endMeasureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.endMeasureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, options.partIndex, options.startMeasureIndex, options.endMeasureIndex);
   const startMeasure = result.parts[options.partIndex].measures[options.startMeasureIndex];
   const endMeasure = result.parts[options.partIndex].measures[options.endMeasureIndex];
 
@@ -1750,7 +1791,7 @@ export function removeTie(
     return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, options.partIndex, options.measureIndex);
   const measure = result.parts[options.partIndex].measures[options.measureIndex];
 
   const noteResult = findNoteByIndex(measure, options.noteIndex);
@@ -1812,7 +1853,7 @@ export function addSlur(
     return failure([operationError('MEASURE_NOT_FOUND', `End measure index ${options.endMeasureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.endMeasureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, options.partIndex, options.startMeasureIndex, options.endMeasureIndex);
   const startMeasure = result.parts[options.partIndex].measures[options.startMeasureIndex];
   const endMeasure = result.parts[options.partIndex].measures[options.endMeasureIndex];
 
@@ -1885,7 +1926,7 @@ export function removeSlur(
     return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, options.partIndex, options.measureIndex);
   const measure = result.parts[options.partIndex].measures[options.measureIndex];
 
   const noteResult = findNoteByIndex(measure, options.noteIndex);
@@ -1937,7 +1978,7 @@ export function addArticulation(
     return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, options.partIndex, options.measureIndex);
   const measure = result.parts[options.partIndex].measures[options.measureIndex];
 
   const noteResult = findNoteByIndex(measure, options.noteIndex);
@@ -1986,7 +2027,7 @@ export function removeArticulation(
     return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, options.partIndex, options.measureIndex);
   const measure = result.parts[options.partIndex].measures[options.measureIndex];
 
   const noteResult = findNoteByIndex(measure, options.noteIndex);
@@ -2070,7 +2111,7 @@ export function addDynamics(
     return failure([operationError('INVALID_POSITION', 'Position cannot be negative', { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, options.partIndex, options.measureIndex);
   const measure = result.parts[options.partIndex].measures[options.measureIndex];
 
   // Create direction entry with dynamics
@@ -2114,7 +2155,7 @@ export function removeDynamics(
     return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, options.partIndex, options.measureIndex);
   const measure = result.parts[options.partIndex].measures[options.measureIndex];
 
   // Find direction entries with dynamics
@@ -2171,7 +2212,7 @@ export function modifyDynamics(
     return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, options.partIndex, options.measureIndex);
   const measure = result.parts[options.partIndex].measures[options.measureIndex];
 
   // Find dynamics directions
@@ -2445,7 +2486,7 @@ export function createTuplet(
     return failure([operationError('INVALID_DURATION', 'Invalid tuplet ratio', { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, options.partIndex, options.measureIndex);
   const measure = result.parts[options.partIndex].measures[options.measureIndex];
 
   // Find the notes to include in the tuplet
@@ -2552,7 +2593,7 @@ export function removeTuplet(
     return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, options.partIndex, options.measureIndex);
   const measure = result.parts[options.partIndex].measures[options.measureIndex];
 
   // Find the target note
@@ -2688,7 +2729,7 @@ export function addBeam(
     return failure([operationError('INVALID_DURATION', 'Beam must contain at least 2 notes', { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, options.partIndex, options.measureIndex);
   const measure = result.parts[options.partIndex].measures[options.measureIndex];
   const beamLevel = options.beamLevel ?? 1;
 
@@ -2780,7 +2821,7 @@ export function removeBeam(
     return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, options.partIndex, options.measureIndex);
   const measure = result.parts[options.partIndex].measures[options.measureIndex];
 
   // Find the target note
@@ -2892,7 +2933,7 @@ export function autoBeam(
     return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, options.partIndex, options.measureIndex);
   const measure = result.parts[options.partIndex].measures[options.measureIndex];
 
   // Get context for time signature
@@ -3180,7 +3221,7 @@ export function pasteNotes(
     return failure([operationError('INVALID_POSITION', 'Position cannot be negative', { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, options.partIndex, options.measureIndex);
   const measure = result.parts[options.partIndex].measures[options.measureIndex];
 
   // Get context
@@ -3339,7 +3380,7 @@ export function cutNotes(
   const selection = copyResult.data;
 
   // Then, delete the notes from the score
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, options.partIndex, options.measureIndex);
   const measure = result.parts[options.partIndex].measures[options.measureIndex];
 
   // Get context
@@ -3657,7 +3698,7 @@ export function addTempo(
     return failure([operationError('INVALID_DURATION', 'BPM must be positive', { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, options.partIndex, options.measureIndex);
   const measure = result.parts[options.partIndex].measures[options.measureIndex];
 
   const directionTypes: DirectionType[] = [];
@@ -3716,7 +3757,7 @@ export function removeTempo(
     return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, options.partIndex, options.measureIndex);
   const measure = result.parts[options.partIndex].measures[options.measureIndex];
 
   // Find tempo directions
@@ -3775,7 +3816,7 @@ export function modifyTempo(
     return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, options.partIndex, options.measureIndex);
   const measure = result.parts[options.partIndex].measures[options.measureIndex];
 
   // Find tempo directions
@@ -4019,7 +4060,7 @@ export function addFermata(
     return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, options.partIndex, options.measureIndex);
   const measure = result.parts[options.partIndex].measures[options.measureIndex];
 
   // Find the note
@@ -4074,7 +4115,7 @@ export function removeFermata(
     return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, options.partIndex, options.measureIndex);
   const measure = result.parts[options.partIndex].measures[options.measureIndex];
 
   const notes = measure.entries.filter(e => e.type === 'note' && !e.rest);
@@ -4125,7 +4166,7 @@ export function addOrnament(
     return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, options.partIndex, options.measureIndex);
   const measure = result.parts[options.partIndex].measures[options.measureIndex];
 
   const notes = measure.entries.filter(e => e.type === 'note' && !e.rest);
@@ -4180,7 +4221,7 @@ export function removeOrnament(
     return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, options.partIndex, options.measureIndex);
   const measure = result.parts[options.partIndex].measures[options.measureIndex];
 
   const notes = measure.entries.filter(e => e.type === 'note' && !e.rest);
@@ -4235,7 +4276,7 @@ export function addPedal(
     return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, options.partIndex, options.measureIndex);
   const measure = result.parts[options.partIndex].measures[options.measureIndex];
 
   const direction: DirectionEntry = {
@@ -4277,7 +4318,7 @@ export function removePedal(
     return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, options.partIndex, options.measureIndex);
   const measure = result.parts[options.partIndex].measures[options.measureIndex];
 
   // Find pedal directions
@@ -4338,7 +4379,7 @@ export function addTextDirection(
     return failure([operationError('INVALID_TEXT', 'Text cannot be empty', { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, options.partIndex, options.measureIndex);
   const measure = result.parts[options.partIndex].measures[options.measureIndex];
 
   const direction: DirectionEntry = {
@@ -4383,7 +4424,7 @@ export function addRehearsalMark(
     return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${options.measureIndex} out of bounds`, { partIndex: options.partIndex, measureIndex: options.measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, options.partIndex, options.measureIndex);
   const measure = result.parts[options.partIndex].measures[options.measureIndex];
 
   const direction: DirectionEntry = {
@@ -4747,7 +4788,7 @@ export function addSegno(
     return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${measureIndex} out of bounds`, { partIndex, measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, partIndex, measureIndex);
   const measure = result.parts[partIndex].measures[measureIndex];
 
   const direction: DirectionEntry = {
@@ -4786,7 +4827,7 @@ export function addCoda(
     return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${measureIndex} out of bounds`, { partIndex, measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, partIndex, measureIndex);
   const measure = result.parts[partIndex].measures[measureIndex];
 
   const direction: DirectionEntry = {
@@ -4826,7 +4867,7 @@ export function addDaCapo(
     return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${measureIndex} out of bounds`, { partIndex, measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, partIndex, measureIndex);
   const measure = result.parts[partIndex].measures[measureIndex];
   const attrs = getAttributesAtMeasure(result, { part: partIndex, measure: measureIndex });
   const measureDuration = getMeasureDuration(attrs.divisions ?? 1, attrs.time ?? { beats: '4', beatType: 4 });
@@ -4870,7 +4911,7 @@ export function addDalSegno(
     return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${measureIndex} out of bounds`, { partIndex, measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, partIndex, measureIndex);
   const measure = result.parts[partIndex].measures[measureIndex];
   const attrs = getAttributesAtMeasure(result, { part: partIndex, measure: measureIndex });
   const measureDuration = getMeasureDuration(attrs.divisions ?? 1, attrs.time ?? { beats: '4', beatType: 4 });
@@ -4914,7 +4955,7 @@ export function addFine(
     return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${measureIndex} out of bounds`, { partIndex, measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, partIndex, measureIndex);
   const measure = result.parts[partIndex].measures[measureIndex];
   const attrs = getAttributesAtMeasure(result, { part: partIndex, measure: measureIndex });
   const measureDuration = getMeasureDuration(attrs.divisions ?? 1, attrs.time ?? { beats: '4', beatType: 4 });
@@ -4958,7 +4999,7 @@ export function addToCoda(
     return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${measureIndex} out of bounds`, { partIndex, measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, partIndex, measureIndex);
   const measure = result.parts[partIndex].measures[measureIndex];
   const attrs = getAttributesAtMeasure(result, { part: partIndex, measure: measureIndex });
   const measureDuration = getMeasureDuration(attrs.divisions ?? 1, attrs.time ?? { beats: '4', beatType: 4 });
@@ -5041,7 +5082,7 @@ export function addGraceNote(
     return failure([operationError('NOTE_NOT_FOUND', `Note at index ${targetNoteIndex} not found`, { partIndex, measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, partIndex, measureIndex);
   const resultMeasure = result.parts[partIndex].measures[measureIndex];
 
   const graceNote: NoteEntry = {
@@ -5108,7 +5149,7 @@ export function removeGraceNote(
     return failure([operationError('GRACE_NOTE_NOT_FOUND', `Grace note at index ${graceNoteIndex} not found`, { partIndex, measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, partIndex, measureIndex);
   result.parts[partIndex].measures[measureIndex].entries.splice(targetEntryIndex, 1);
 
   return success(result);
@@ -5170,7 +5211,7 @@ export function convertToGrace(
     return failure([operationError('INVALID_GRACE_NOTE', `Note is already a grace note`, { partIndex, measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, partIndex, measureIndex);
   const resultNote = result.parts[partIndex].measures[measureIndex].entries[targetEntryIndex] as NoteEntry;
 
   resultNote.grace = { slash };
@@ -5242,7 +5283,7 @@ export function addLyric(
     return failure([operationError('LYRIC_ALREADY_EXISTS', `Lyric for verse ${verse} already exists on this note`, { partIndex, measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, partIndex, measureIndex);
   const resultNote = result.parts[partIndex].measures[measureIndex].entries[targetEntryIndex] as NoteEntry;
 
   if (!resultNote.lyrics) {
@@ -5319,7 +5360,7 @@ export function removeLyric(
     }
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, partIndex, measureIndex);
   const resultNote = result.parts[partIndex].measures[measureIndex].entries[targetEntryIndex] as NoteEntry;
 
   if (verse !== undefined) {
@@ -5394,7 +5435,7 @@ export function updateLyric(
     return failure([operationError('LYRIC_NOT_FOUND', `Lyric for verse ${verse} not found on note`, { partIndex, measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, partIndex, measureIndex);
   const resultNote = result.parts[partIndex].measures[measureIndex].entries[targetEntryIndex] as NoteEntry;
   const lyric = resultNote.lyrics![lyricIndex];
 
@@ -5468,7 +5509,7 @@ export function addHarmony(
     return failure([operationError('INVALID_HARMONY', `Invalid bass step: ${bass.step}`, { partIndex, measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, partIndex, measureIndex);
   const measure = result.parts[partIndex].measures[measureIndex];
 
   const harmony: HarmonyEntry = {
@@ -5566,7 +5607,7 @@ export function removeHarmony(
     return failure([operationError('HARMONY_NOT_FOUND', `Harmony at index ${harmonyIndex} not found`, { partIndex, measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, partIndex, measureIndex);
   result.parts[partIndex].measures[measureIndex].entries.splice(targetEntryIndex, 1);
 
   return success(result);
@@ -5631,7 +5672,7 @@ export function updateHarmony(
     return failure([operationError('INVALID_HARMONY', `Invalid bass step: ${bass.step}`, { partIndex, measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, partIndex, measureIndex);
   const harmony = result.parts[partIndex].measures[measureIndex].entries[targetEntryIndex] as HarmonyEntry;
 
   if (root) {
@@ -5725,7 +5766,7 @@ export function addFingering(
     return failure([operationError('NOTE_NOT_FOUND', `Note at index ${noteIndex} not found`, { partIndex, measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, partIndex, measureIndex);
   const resultNote = result.parts[partIndex].measures[measureIndex].entries[targetEntryIndex] as NoteEntry;
 
   if (!resultNote.notations) {
@@ -5801,7 +5842,7 @@ export function removeFingering(
     return failure([operationError('NOTE_NOT_FOUND', `No fingering found on note`, { partIndex, measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, partIndex, measureIndex);
   const resultNote = result.parts[partIndex].measures[measureIndex].entries[targetEntryIndex] as NoteEntry;
   resultNote.notations!.splice(fingeringIndex, 1);
 
@@ -5862,7 +5903,7 @@ export function addBowing(
     return failure([operationError('NOTE_NOT_FOUND', `Note at index ${noteIndex} not found`, { partIndex, measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, partIndex, measureIndex);
   const resultNote = result.parts[partIndex].measures[measureIndex].entries[targetEntryIndex] as NoteEntry;
 
   if (!resultNote.notations) {
@@ -5939,7 +5980,7 @@ export function removeBowing(
     return failure([operationError('NOTE_NOT_FOUND', `No bowing found on note`, { partIndex, measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, partIndex, measureIndex);
   const resultNote = result.parts[partIndex].measures[measureIndex].entries[targetEntryIndex] as NoteEntry;
   resultNote.notations!.splice(bowingIndex, 1);
 
@@ -6002,7 +6043,7 @@ export function addStringNumber(
     return failure([operationError('NOTE_NOT_FOUND', `Note at index ${noteIndex} not found`, { partIndex, measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, partIndex, measureIndex);
   const resultNote = result.parts[partIndex].measures[measureIndex].entries[targetEntryIndex] as NoteEntry;
 
   if (!resultNote.notations) {
@@ -6077,7 +6118,7 @@ export function removeStringNumber(
     return failure([operationError('NOTE_NOT_FOUND', `No string number found on note`, { partIndex, measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, partIndex, measureIndex);
   const resultNote = result.parts[partIndex].measures[measureIndex].entries[targetEntryIndex] as NoteEntry;
   resultNote.notations!.splice(stringIndex, 1);
 
@@ -6118,7 +6159,7 @@ export function addOctaveShift(
     return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${measureIndex} out of bounds`, { partIndex, measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, partIndex, measureIndex);
   const measure = result.parts[partIndex].measures[measureIndex];
 
   const direction: DirectionEntry = {
@@ -6162,7 +6203,7 @@ export function stopOctaveShift(
     return failure([operationError('MEASURE_NOT_FOUND', `Measure index ${measureIndex} out of bounds`, { partIndex, measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, partIndex, measureIndex);
   const measure = result.parts[partIndex].measures[measureIndex];
 
   const direction: DirectionEntry = {
@@ -6228,7 +6269,7 @@ export function removeOctaveShift(
     return failure([operationError('NOTE_NOT_FOUND', `Octave shift at index ${octaveShiftIndex} not found`, { partIndex, measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, partIndex, measureIndex);
   result.parts[partIndex].measures[measureIndex].entries.splice(targetEntryIndex, 1);
 
   return success(result);
@@ -6284,7 +6325,7 @@ export function addBreathMark(
     return failure([operationError('NOTE_NOT_FOUND', `Note at index ${noteIndex} not found`, { partIndex, measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, partIndex, measureIndex);
   const resultNote = result.parts[partIndex].measures[measureIndex].entries[targetEntryIndex] as NoteEntry;
 
   if (!resultNote.notations) {
@@ -6366,7 +6407,7 @@ export function removeBreathMark(
     return failure([operationError('ARTICULATION_NOT_FOUND', `No breath mark found on note`, { partIndex, measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, partIndex, measureIndex);
   const resultNote = result.parts[partIndex].measures[measureIndex].entries[targetEntryIndex] as NoteEntry;
   resultNote.notations!.splice(breathMarkIndex, 1);
 
@@ -6428,7 +6469,7 @@ export function addCaesura(
     return failure([operationError('NOTE_NOT_FOUND', `Note at index ${noteIndex} not found`, { partIndex, measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, partIndex, measureIndex);
   const resultNote = result.parts[partIndex].measures[measureIndex].entries[targetEntryIndex] as NoteEntry;
 
   if (!resultNote.notations) {
@@ -6510,7 +6551,7 @@ export function removeCaesura(
     return failure([operationError('ARTICULATION_NOT_FOUND', `No caesura found on note`, { partIndex, measureIndex })]);
   }
 
-  const result = cloneScore(score);
+  const result = cloneScoreAt(score, partIndex, measureIndex);
   const resultNote = result.parts[partIndex].measures[measureIndex].entries[targetEntryIndex] as NoteEntry;
   resultNote.notations!.splice(caesuraIndex, 1);
 

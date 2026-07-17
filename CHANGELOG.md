@@ -1,5 +1,22 @@
 # Changelog
 
+## [Unreleased]
+
+### Performance
+- MusicXML parsing is ~1.45x faster. The txml dependency was replaced with a built-in parser specialized for MusicXML that skips pretty-printing whitespace nodes at scan time, decodes entities inline (no second pass over the tree), and handles processing instructions natively (no regex preprocessing). Node.js additionally gets a faster `Buffer` → string decode path.
+- Bundle size: importing only `parse` now costs ~47 KB minified / ~13 KB gzipped (was ~49 KB / ~14 KB); the txml dependency is gone.
+
+### Fixed
+- Whitespace-significant text is no longer lost when parsing: whitespace-only `<words>`/`<credit-words>` content (including `xml:space="preserve"`), and whitespace-only lyric `<text>` such as the ideographic space `　` used in Japanese lyrics, are now preserved. The previous XML parser silently trimmed or dropped them.
+- Astral-plane numeric character references (e.g. `&#x1D11E;` MUSICAL SYMBOL G CLEF, used by SMuFL text) now decode correctly. The previous entity decoder used `String.fromCharCode`, which corrupted code points above U+FFFF.
+
+### Operations performance
+- Operations are dramatically faster on large scores:
+  - Single-measure operations (`insertNote`, `setNotePitch`, `addLyric`, `addArticulation`, etc.) now use copy-on-write structural sharing — only the modified measure is deep-cloned, everything else is shared by reference with the input score. On a 1.2 MB orchestral score, `insertNote` went from ~12.5 ms to ~0.02 ms per call.
+  - Whole-score operations (`transpose`, `changeKey`, part operations, etc.) replace `JSON.parse(JSON.stringify(...))` with a hand-rolled deep clone (~3.7x faster).
+- Unchanged measures keep their object identity across operations, which enables reference-equality-based rendering optimizations (e.g. `React.memo` per measure).
+- As before, operations never mutate the input score, but scores should be treated as immutable data — see "Immutability and Structural Sharing" in OPERATIONS.md.
+
 ## [0.3.6] - 2025-02-25
 
 ### Fixed
