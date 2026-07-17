@@ -1,5 +1,3 @@
-import { parse as txmlParse } from 'txml/txml';
-import type { tNode } from 'txml/txml';
 import { generateId } from '../id';
 import type {
   Score,
@@ -68,19 +66,17 @@ import type {
   SlideNotation,
 } from '../types';
 
-// txml node type alias for code readability
-type XmlNode = tNode;
+// XML tree node shape (same shape the previous txml-based parser produced)
+interface XmlNode {
+  tagName: string;
+  attributes: Record<string, string>;
+  children: XmlChild[];
+}
 type XmlChild = XmlNode | string;
 
-/** Decode XML entities that txml does not decode (single-pass) */
+/** Decode XML entities (single-pass) */
 const _entityMap: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
 const _entityRegex = /&(?:(amp|lt|gt|quot|apos)|#(\d+)|#x([0-9a-fA-F]+));/g;
-function decodeXmlEntities(s: string): string {
-  if (s.indexOf('&') === -1) return s;
-  return s.replace(_entityRegex, (_, named, dec, hex) =>
-    named ? _entityMap[named] : dec ? String.fromCharCode(parseInt(dec, 10)) : String.fromCharCode(parseInt(hex!, 16))
-  );
-}
 
 /**
  * Characters forbidden in XML 1.0 text content:
@@ -89,36 +85,209 @@ function decodeXmlEntities(s: string): string {
  * Reference: https://www.w3.org/TR/xml/#charsets
  */
 const INVALID_XML_CHARS_RE = /[\x00-\x08\x0B\x0C\x0E-\x1F\uFFFE\uFFFF]/g;
+const INVALID_XML_CHARS_TEST = /[\x00-\x08\x0B\x0C\x0E-\x1F\uFFFE\uFFFF]/;
 
-/** Recursively decode XML entities in all text nodes and attribute values */
-function decodeTree(nodes: XmlChild[]): void {
-  for (let i = 0; i < nodes.length; i++) {
-    const node = nodes[i];
-    if (typeof node === 'string') {
-      let s = node;
-      if (s.indexOf('&') !== -1) {
-        s = decodeXmlEntities(s);
-      }
-      // Strip characters forbidden by XML 1.0 (e.g. control char U+0019 from malformed sources
-      // or from numeric entity references like &#25; that decode to invalid characters)
-      nodes[i] = s.replace(INVALID_XML_CHARS_RE, '');
-    } else {
-      // Decode attribute values
-      const attrs = node.attributes as Record<string, string>;
-      for (const key in attrs) {
-        const v = attrs[key];
-        if (v.indexOf('&') !== -1) {
-          attrs[key] = decodeXmlEntities(v);
-        }
-      }
-      // Recurse into children
-      decodeTree(node.children);
-    }
-  }
+/**
+ * Decode XML entities in a text-node or attribute value. Numeric entity
+ * references (e.g. &#25;) can decode to characters forbidden by XML 1.0,
+ * so the decoded result is cleaned again.
+ */
+function decodeXmlEntities(s: string): string {
+  if (s.indexOf('&') === -1) return s;
+  const decoded = s.replace(_entityRegex, (_, named, dec, hex) =>
+    named ? _entityMap[named] : dec ? String.fromCharCode(parseInt(dec, 10)) : String.fromCharCode(parseInt(hex!, 16))
+  );
+  return INVALID_XML_CHARS_TEST.test(decoded) ? decoded.replace(INVALID_XML_CHARS_RE, '') : decoded;
 }
 
-// Reusable txml options: empty noChildNodes skips the default HTML void-element check.
-const TXML_OPTIONS = { noChildNodes: [] as string[] };
+// Shared attributes object for the (very common) attribute-less element.
+// The importer only ever reads attributes, so sharing is safe.
+const EMPTY_ATTRS: Record<string, string> = Object.freeze({});
+
+// Character codes used by the scanner
+const GT = 62; // >
+const SLASH = 47; // /
+const BANG = 33; // !
+const QUESTION = 63; // ?
+const EQUALS = 61; // =
+const DQUOTE = 34; // "
+const SQUOTE = 39; // '
+const LBRACKET = 91; // [
+const RBRACKET = 93; // ]
+
+function isXmlWhitespace(code: number): boolean {
+  return code === 32 || code === 10 || code === 9 || code === 13;
+}
+
+/** True if the string contains only XML whitespace characters */
+function isWhitespaceOnly(s: string): boolean {
+  for (let i = 0; i < s.length; i++) {
+    if (!isXmlWhitespace(s.charCodeAt(i))) return false;
+  }
+  return true;
+}
+
+/**
+ * Minimal, fast, lenient XML parser specialized for MusicXML.
+ *
+ * Compared to a generic parser it:
+ * - skips pretty-printing whitespace text nodes at scan time (they made up
+ *   roughly half of all nodes and were skipped by every consumer anyway);
+ *   whitespace-only text is kept only when it is the sole content of an
+ *   element (e.g. <text> </text>), matching how the tree is consumed
+ * - decodes entities and strips XML-1.0-forbidden characters inline, so no
+ *   second pass over the tree is needed
+ * - skips processing instructions (e.g. Guitar Pro's <?GP7 ...?>), comments,
+ *   and DOCTYPE declarations
+ * - is lenient about unclosed/mismatched tags (pops to the nearest matching
+ *   ancestor; ignores stray closing tags)
+ */
+function parseXml(xml: string): XmlChild[] {
+  const root: XmlChild[] = [];
+  const stack: XmlNode[] = [];
+  let children = root;
+  const len = xml.length;
+  let pos = 0;
+
+  while (pos < len) {
+    const lt = xml.indexOf('<', pos);
+    if (lt === -1) break; // trailing text outside the root element is formatting only
+
+    if (lt > pos) {
+      // Text run between pos and lt
+      let text = xml.slice(pos, lt);
+      if (!isWhitespaceOnly(text)) {
+        text = decodeXmlEntities(text);
+        children.push(
+          INVALID_XML_CHARS_TEST.test(text) ? text.replace(INVALID_XML_CHARS_RE, '') : text
+        );
+      } else if (children.length === 0 && xml.charCodeAt(lt + 1) === SLASH) {
+        // Whitespace-only text that is the sole content of an element
+        // (e.g. <text> </text>) is meaningful \u2014 keep it.
+        children.push(text);
+      }
+    }
+
+    const c = xml.charCodeAt(lt + 1);
+
+    if (c === SLASH) {
+      // Closing tag: pop to the nearest matching ancestor (lenient)
+      const gt = xml.indexOf('>', lt + 2);
+      if (gt === -1) break;
+      let end = gt;
+      while (end > lt + 2 && isXmlWhitespace(xml.charCodeAt(end - 1))) end--;
+      const name = xml.slice(lt + 2, end);
+      for (let i = stack.length - 1; i >= 0; i--) {
+        if (stack[i].tagName === name) {
+          stack.length = i;
+          break;
+        }
+      }
+      children = stack.length > 0 ? stack[stack.length - 1].children : root;
+      pos = gt + 1;
+    } else if (c === QUESTION) {
+      // Processing instruction (including the <?xml ...?> declaration): skip
+      const end = xml.indexOf('?>', lt + 2);
+      pos = end === -1 ? len : end + 2;
+    } else if (c === BANG) {
+      if (xml.startsWith('<!--', lt)) {
+        // Comment
+        const end = xml.indexOf('-->', lt + 4);
+        pos = end === -1 ? len : end + 3;
+      } else if (xml.startsWith('<![CDATA[', lt)) {
+        // CDATA: literal text, no entity decoding
+        const end = xml.indexOf(']]>', lt + 9);
+        let text = xml.slice(lt + 9, end === -1 ? len : end);
+        if (INVALID_XML_CHARS_TEST.test(text)) text = text.replace(INVALID_XML_CHARS_RE, '');
+        children.push(text);
+        pos = end === -1 ? len : end + 3;
+      } else {
+        // DOCTYPE (may contain an internal subset in brackets): skip
+        let i = lt + 2;
+        let depth = 0;
+        while (i < len) {
+          const ch = xml.charCodeAt(i);
+          if (ch === LBRACKET) depth++;
+          else if (ch === RBRACKET) depth--;
+          else if (ch === GT && depth <= 0) break;
+          i++;
+        }
+        pos = i + 1;
+      }
+    } else {
+      // Opening tag
+      let i = lt + 1;
+      while (i < len) {
+        const ch = xml.charCodeAt(i);
+        if (ch === GT || ch === SLASH || isXmlWhitespace(ch)) break;
+        i++;
+      }
+      const tagName = xml.slice(lt + 1, i);
+
+      let attributes = EMPTY_ATTRS;
+      let selfClosing = false;
+      while (i < len) {
+        let ch = xml.charCodeAt(i);
+        while (isXmlWhitespace(ch)) ch = xml.charCodeAt(++i);
+        if (ch === GT) {
+          i++;
+          break;
+        }
+        if (ch === SLASH) {
+          selfClosing = true;
+          i++;
+          continue;
+        }
+        // Attribute name
+        const nameStart = i;
+        while (i < len) {
+          ch = xml.charCodeAt(i);
+          if (ch === EQUALS || ch === GT || ch === SLASH || isXmlWhitespace(ch)) break;
+          i++;
+        }
+        const attrName = xml.slice(nameStart, i);
+        while (isXmlWhitespace(xml.charCodeAt(i))) i++;
+        if (xml.charCodeAt(i) === EQUALS) {
+          i++;
+          while (isXmlWhitespace(xml.charCodeAt(i))) i++;
+          ch = xml.charCodeAt(i);
+          let value: string;
+          if (ch === DQUOTE || ch === SQUOTE) {
+            const valStart = ++i;
+            while (i < len && xml.charCodeAt(i) !== ch) i++;
+            value = xml.slice(valStart, i);
+            i++; // past the closing quote
+          } else {
+            // Unquoted value (lenient)
+            const valStart = i;
+            while (i < len) {
+              ch = xml.charCodeAt(i);
+              if (ch === GT || isXmlWhitespace(ch)) break;
+              i++;
+            }
+            value = xml.slice(valStart, i);
+          }
+          if (attributes === EMPTY_ATTRS) attributes = {};
+          attributes[attrName] = decodeXmlEntities(value);
+        } else if (attrName.length > 0) {
+          // Valueless attribute (lenient)
+          if (attributes === EMPTY_ATTRS) attributes = {};
+          attributes[attrName] = '';
+        }
+      }
+
+      const node: XmlNode = { tagName, attributes, children: [] };
+      children.push(node);
+      if (!selfClosing) {
+        stack.push(node);
+        children = node.children;
+      }
+      pos = i;
+    }
+  }
+
+  return root;
+}
 
 /**
  * Decode a Uint8Array / Buffer to a UTF-8 string, handling UTF-16 BE/LE BOMs.
@@ -132,7 +301,12 @@ function decodeXmlBytes(data: Uint8Array): string {
   if (data.length >= 2 && data[0] === 0xFF && data[1] === 0xFE) {
     return new TextDecoder('utf-16le').decode(data);
   }
-  // Default to UTF-8 (handles UTF-8 BOM automatically)
+  // UTF-8: in Node, Buffer#toString is noticeably faster than TextDecoder
+  if (typeof Buffer !== 'undefined' && Buffer.isBuffer(data)) {
+    const hasBom = data.length >= 3 && data[0] === 0xEF && data[1] === 0xBB && data[2] === 0xBF;
+    return data.toString('utf8', hasBom ? 3 : 0);
+  }
+  // Default to UTF-8 (TextDecoder strips the UTF-8 BOM automatically)
   return new TextDecoder('utf-8').decode(data);
 }
 
@@ -159,11 +333,13 @@ export function parse(input: string | Uint8Array): Score {
     xmlString = input;
   }
 
-  // Strip Processing Instructions (<?...?>) except the XML declaration (<?xml ...?>).
-  // Some exporters (e.g. Guitar Pro 7) embed PIs like <?GP7 ...?> that txml cannot handle.
-  const cleanedXml = xmlString.replace(/<\?(?!xml\s)[^?]*\?>/g, '');
-  const parsed = txmlParse(cleanedXml, TXML_OPTIONS);
-  decodeTree(parsed);
+  // Strip characters forbidden by XML 1.0 (e.g. control char U+0019 from
+  // malformed sources) in one pass over the document. Entity references that
+  // decode to forbidden characters are handled in decodeXmlEntities.
+  if (INVALID_XML_CHARS_TEST.test(xmlString)) {
+    xmlString = xmlString.replace(INVALID_XML_CHARS_RE, '');
+  }
+  const parsed = parseXml(xmlString);
 
   // Find score-partwise in the ordered result
   let scorePartwiseVersion: string | undefined;
@@ -208,7 +384,7 @@ function extractText(elements: XmlChild[], preserveWhitespace = false): string {
       if (preserveWhitespace) return item;
       const trimmed = item.trim();
       if (trimmed.length > 0) return trimmed;
-      // Skip whitespace-only text nodes (from keepWhitespace txml mode)
+      // Skip whitespace-only text nodes
     }
   }
   return '';

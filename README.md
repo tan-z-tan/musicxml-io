@@ -364,8 +364,21 @@ import { isRest, getPartName } from 'musicxml-io/accessors';
 ```
 
 The package declares `"sideEffects": false`, so bundlers can drop everything
-you don't import — pulling in only `parse` costs roughly 50 KB minified
-(~14 KB gzip).
+you don't import — pulling in only `parse` costs roughly 47 KB minified
+(~13 KB gzip).
+
+Approximate cost of common imports (minified / gzipped):
+
+| Import | Size |
+|--------|------|
+| `parse` (.xml only) | ~47 KB / ~13 KB |
+| `parseAuto` (.xml + .mxl, adds fflate's unzip) | ~53 KB / ~16 KB |
+| `parse` + `serialize` | ~104 KB / ~26 KB |
+| everything | ~298 KB / ~72 KB |
+
+The ABC notation codecs (`parseAbc`, `serializeAbc`), MIDI export, query
+helpers, operations, and the validator are all separate modules — they only
+end up in your bundle if you import them.
 
 ### Browser usage
 

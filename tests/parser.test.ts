@@ -315,4 +315,122 @@ describe('Parser', () => {
       }
     });
   });
+
+  describe('XML parser edge cases', () => {
+    const wrap = (measureContent: string) => `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="4.0">
+  <part-list>
+    <score-part id="P1"><part-name>Test</part-name></score-part>
+  </part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes><divisions>1</divisions></attributes>
+      ${measureContent}
+    </measure>
+  </part>
+</score-partwise>`;
+
+    const lyricNote = (lyricText: string) => wrap(`<note>
+        <pitch><step>C</step><octave>4</octave></pitch>
+        <duration>1</duration>
+        <lyric number="1"><syllabic>single</syllabic><text>${lyricText}</text></lyric>
+      </note>`);
+
+    it('preserves whitespace-only lyric text (e.g. ideographic space in Japanese lyrics)', () => {
+      const score = parse(lyricNote('　'));
+      const note = score.parts[0].measures[0].entries.find(e => e.type === 'note');
+      expect(note?.type).toBe('note');
+      if (note?.type === 'note') {
+        expect(note.lyrics?.[0].text).toBe('　');
+      }
+    });
+
+    it('preserves whitespace-only words text', () => {
+      const score = parse(wrap(
+        `<direction><direction-type><words xml:space="preserve"> </words></direction-type></direction>
+         <note><pitch><step>C</step><octave>4</octave></pitch><duration>1</duration></note>`
+      ));
+      const dir = score.parts[0].measures[0].entries.find(e => e.type === 'direction');
+      expect(dir?.type).toBe('direction');
+      if (dir?.type === 'direction') {
+        expect(dir.directionTypes[0]).toMatchObject({ kind: 'words', text: ' ' });
+      }
+    });
+
+    it('skips inline processing instructions', () => {
+      const score = parse(wrap(
+        `<?GP7 some proprietary data?><note><pitch><step>D</step><octave>4</octave></pitch><duration>1</duration></note>`
+      ));
+      const note = score.parts[0].measures[0].entries.find(e => e.type === 'note');
+      expect(note?.type).toBe('note');
+      if (note?.type === 'note') {
+        expect(note.pitch?.step).toBe('D');
+      }
+    });
+
+    it('skips XML comments', () => {
+      const score = parse(wrap(
+        `<!-- a comment with <note> markup inside --><note><pitch><step>E</step><octave>4</octave></pitch><duration>1</duration></note>`
+      ));
+      const note = score.parts[0].measures[0].entries.find(e => e.type === 'note');
+      expect(note?.type).toBe('note');
+      if (note?.type === 'note') {
+        expect(note.pitch?.step).toBe('E');
+      }
+    });
+
+    it('reads CDATA sections as literal text', () => {
+      const score = parse(lyricNote('<![CDATA[a & b <c>]]>'));
+      const note = score.parts[0].measures[0].entries.find(e => e.type === 'note');
+      expect(note?.type).toBe('note');
+      if (note?.type === 'note') {
+        expect(note.lyrics?.[0].text).toBe('a & b <c>');
+      }
+    });
+
+    it('handles DOCTYPE with an internal subset', () => {
+      const xml = `<?xml version="1.0"?>
+<!DOCTYPE score-partwise [
+  <!ENTITY % foo "bar">
+]>
+<score-partwise version="4.0">
+  <part-list><score-part id="P1"><part-name>T</part-name></score-part></part-list>
+  <part id="P1"><measure number="1"><attributes><divisions>1</divisions></attributes></measure></part>
+</score-partwise>`;
+      const score = parse(xml);
+      expect(score.parts[0].measures).toHaveLength(1);
+    });
+
+    it('handles single-quoted and whitespace-padded attributes', () => {
+      const score = parse(wrap(
+        `<note><pitch><step>F</step><octave>4</octave></pitch><duration>1</duration><lyric number = '2'><text>hi</text></lyric></note>`
+      ));
+      const note = score.parts[0].measures[0].entries.find(e => e.type === 'note');
+      expect(note?.type).toBe('note');
+      if (note?.type === 'note') {
+        expect(note.lyrics?.[0].number).toBe(2);
+        expect(note.lyrics?.[0].text).toBe('hi');
+      }
+    });
+
+    it('decodes entities in attribute values', () => {
+      const score = parse(wrap(
+        `<direction><direction-type><words font-family="A &amp; B">x</words></direction-type></direction>
+         <note><pitch><step>C</step><octave>4</octave></pitch><duration>1</duration></note>`
+      ));
+      const dir = score.parts[0].measures[0].entries.find(e => e.type === 'direction');
+      if (dir?.type === 'direction') {
+        expect(dir.directionTypes[0]).toMatchObject({ kind: 'words', fontFamily: 'A & B' });
+      }
+    });
+
+    it('is lenient about unclosed tags', () => {
+      // <lyric> is never closed; the parser should still recover the rest of the score
+      const score = parse(wrap(
+        `<note><pitch><step>G</step><octave>4</octave></pitch><duration>1</duration></note>`
+      ).replace('</measure>', '<lyric></measure>'));
+      const note = score.parts[0].measures[0].entries.find(e => e.type === 'note');
+      expect(note?.type).toBe('note');
+    });
+  });
 });
