@@ -34,6 +34,7 @@ import type {
   Defaults,
   Credit,
   CreditWords,
+  CreditImage,
   RestInfo,
   NoteheadInfo,
   NoteheadValue,
@@ -807,8 +808,21 @@ function parseCredits(elements: XmlChild[]): Credit[] | undefined {
       if (a['xml:space']) cw.xmlSpace = a['xml:space'];
       return cw;
     });
+    const images = collectElements(content, 'credit-image', (_c, a) => {
+      const ci: CreditImage = { source: a['source'] || '', type: a['type'] || '' };
+      if (a['height']) ci.height = parseFloat(a['height']);
+      if (a['width']) ci.width = parseFloat(a['width']);
+      if (a['default-x']) ci.defaultX = parseFloat(a['default-x']);
+      if (a['default-y']) ci.defaultY = parseFloat(a['default-y']);
+      if (a['relative-x']) ci.relativeX = parseFloat(a['relative-x']);
+      if (a['relative-y']) ci.relativeY = parseFloat(a['relative-y']);
+      if (a['halign']) ci.halign = a['halign'];
+      if (a['valign']) ci.valign = a['valign'];
+      return ci;
+    });
     if (types.length > 0) credit.creditType = types;
     if (words.length > 0) credit.creditWords = words;
+    if (images.length > 0) credit.creditImage = images[0];
     return credit;
   });
   return credits.length > 0 ? credits : undefined;

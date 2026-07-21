@@ -407,6 +407,20 @@ function serializeCredit(credit: Credit, indent: string, out: string[]): void {
     }
   }
 
+  if (credit.creditImage) {
+    const ci = credit.creditImage;
+    let attrs = ` source="${escapeXml(ci.source)}" type="${escapeXml(ci.type)}"`;
+    if (ci.height !== undefined) attrs += ` height="${ci.height}"`;
+    if (ci.width !== undefined) attrs += ` width="${ci.width}"`;
+    if (ci.defaultX !== undefined) attrs += ` default-x="${ci.defaultX}"`;
+    if (ci.defaultY !== undefined) attrs += ` default-y="${ci.defaultY}"`;
+    if (ci.relativeX !== undefined) attrs += ` relative-x="${ci.relativeX}"`;
+    if (ci.relativeY !== undefined) attrs += ` relative-y="${ci.relativeY}"`;
+    if (ci.halign) attrs += ` halign="${escapeXml(ci.halign)}"`;
+    if (ci.valign) attrs += ` valign="${escapeXml(ci.valign)}"`;
+    out.push(`${indent}${indent}<credit-image${attrs}/>`);
+  }
+
   if (credit.creditWords) {
     for (const cw of credit.creditWords) {
       let attrs = '';

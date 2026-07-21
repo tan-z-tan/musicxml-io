@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- `<credit-image>` support: credit images are now parsed into `credit.creditImage` and serialized back to MusicXML. The `CreditImage` type covers the full MusicXML image attribute set (`source`, `type`, `height`, `width`, `default-x/y`, `relative-x/y`, `halign`, `valign`). Previously the field existed on the `Credit` type but was silently dropped on both parse and serialize. `CreditImage` and `CreditWords` are now exported from the package root.
+
 ### Performance
 - MusicXML parsing is ~1.45x faster. The txml dependency was replaced with a built-in parser specialized for MusicXML that skips pretty-printing whitespace nodes at scan time, decodes entities inline (no second pass over the tree), and handles processing instructions natively (no regex preprocessing). Node.js additionally gets a faster `Buffer` → string decode path.
 - Bundle size: importing only `parse` now costs ~47 KB minified / ~13 KB gzipped (was ~49 KB / ~14 KB); the txml dependency is gone.
