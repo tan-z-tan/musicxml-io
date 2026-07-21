@@ -397,4 +397,92 @@ describe('Serializer', () => {
     expect(xml).toContain(`<measure number="1" id="${measure._id}"`);
     expect(xml).toContain(`<note id="${note._id}"`);
   });
+
+  it('should serialize credit-image', () => {
+    const score: Score = {
+      metadata: {},
+      partList: [{ type: 'score-part', id: 'P1', name: 'Piano' }],
+      parts: [{ id: 'P1', measures: [] }],
+      credits: [
+        {
+          _id: 'credit1',
+          page: 1,
+          creditType: ['logo'],
+          creditImage: {
+            source: 'logo.png',
+            type: 'image/png',
+            height: 30,
+            width: 120,
+            defaultX: 70,
+            defaultY: 1650,
+            halign: 'left',
+            valign: 'top',
+          },
+        },
+      ],
+    };
+
+    const xml = serialize(score);
+
+    expect(xml).toContain(
+      '<credit-image source="logo.png" type="image/png" height="30" width="120" default-x="70" default-y="1650" halign="left" valign="top"/>'
+    );
+  });
+
+  it('should preserve credit-image through parse-serialize roundtrip', () => {
+    const inputXml = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 4.0 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">
+<score-partwise version="4.0">
+  <credit page="1">
+    <credit-type>logo</credit-type>
+    <credit-image source="logo.png" type="image/png" height="30" width="120" default-x="70" default-y="1650" relative-x="5" relative-y="-5" halign="left" valign="top"/>
+  </credit>
+  <part-list>
+    <score-part id="P1">
+      <part-name>Test</part-name>
+    </score-part>
+  </part-list>
+  <part id="P1">
+    <measure number="1">
+      <note>
+        <pitch>
+          <step>C</step>
+          <octave>4</octave>
+        </pitch>
+        <duration>4</duration>
+        <voice>1</voice>
+        <type>whole</type>
+      </note>
+    </measure>
+  </part>
+</score-partwise>`;
+
+    const score = parse(inputXml);
+
+    expect(score.credits).toHaveLength(1);
+    const credit = score.credits![0];
+    expect(credit.page).toBe(1);
+    expect(credit.creditType).toEqual(['logo']);
+    expect(credit.creditImage).toEqual({
+      source: 'logo.png',
+      type: 'image/png',
+      height: 30,
+      width: 120,
+      defaultX: 70,
+      defaultY: 1650,
+      relativeX: 5,
+      relativeY: -5,
+      halign: 'left',
+      valign: 'top',
+    });
+
+    const xml = serialize(score);
+    expect(xml).toContain(
+      '<credit-image source="logo.png" type="image/png" height="30" width="120" default-x="70" default-y="1650" relative-x="5" relative-y="-5" halign="left" valign="top"/>'
+    );
+
+    // Reparse to verify full roundtrip stability
+    const reparsed = parse(xml);
+    expect(reparsed.credits![0].creditImage).toEqual(credit.creditImage);
+  });
 });

@@ -120,7 +120,20 @@ export interface Credit {
   page?: number;
   creditType?: string[];
   creditWords?: CreditWords[];
-  creditImage?: { source: string; type: string; height?: number; width?: number };
+  creditImage?: CreditImage;
+}
+
+export interface CreditImage {
+  source: string;
+  type: string;
+  height?: number;
+  width?: number;
+  defaultX?: number;
+  defaultY?: number;
+  relativeX?: number;
+  relativeY?: number;
+  halign?: string;
+  valign?: string;
 }
 
 export interface CreditWords {

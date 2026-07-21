@@ -36,6 +36,8 @@ export type {
   Print,
   Defaults,
   Credit,
+  CreditWords,
+  CreditImage,
   // Extended Query Types
   VoiceToStaffMap,
   NoteWithContext,
