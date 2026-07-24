@@ -1382,6 +1382,7 @@ function serializeTechnicalGroup(technicals: Notation[], indent: string, out: st
       const techNotation = tech as TechnicalNotation;
       if (techNotation.defaultX !== undefined) placementAttr += ` default-x="${techNotation.defaultX}"`;
       if (techNotation.defaultY !== undefined) placementAttr += ` default-y="${techNotation.defaultY}"`;
+      if (techNotation.fontSize !== undefined) placementAttr += ` font-size="${techNotation.fontSize}"`;
       if (tech.technical === 'bend' && (techNotation.bendAlter !== undefined || techNotation.preBend || techNotation.release)) {
         out.push(`${indent}    <bend${placementAttr}>`);
         if (techNotation.bendAlter !== undefined) {

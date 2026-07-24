@@ -741,6 +741,8 @@ export interface TechnicalNotation extends BaseNotation {
   // Positioning
   defaultX?: number;
   defaultY?: number;
+  // Print style
+  fontSize?: string;
 }
 
 export type TechnicalType =

@@ -1890,6 +1890,9 @@ function parseNotations(elements: XmlChild[], notationsIndex: number = 0): Notat
             if (techAttrs['default-y']) {
               notation.defaultY = parseFloat(techAttrs['default-y']);
             }
+            if (techAttrs['font-size']) {
+              notation.fontSize = techAttrs['font-size'];
+            }
             notations.push(notation);
           }
         }
