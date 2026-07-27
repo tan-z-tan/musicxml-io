@@ -18,6 +18,7 @@ import type {
   MeasureEntry,
 } from '../types';
 import {
+  ABC_BODY_FIELD_MARKER,
   ABC_SHORTHAND_DECORATIONS,
   abcDecorationFor,
   type AbcDecorationTarget,
@@ -141,8 +142,11 @@ function modeToAbcString(mode: string): string {
 // ============================================================
 
 function serializeTimeSignature(time: TimeSignature): string {
+  if (time.senzaMisura) return 'none';
   if (time.symbol === 'common') return 'C';
   if (time.symbol === 'cut') return 'C|';
+  // Additive meters are parenthesised, as in M:(2+3+2)/8
+  if (time.beats.includes('+')) return `(${time.beats})/${time.beatType}`;
   return `${time.beats}/${time.beatType}`;
 }
 
@@ -162,9 +166,9 @@ function computeUnitNoteLength(score: Score): UnitNote {
   const time = firstMeasure?.attributes?.time;
 
   if (time) {
-    const beats = parseInt(time.beats, 10);
-    const beatType = time.beatType;
-    const ratio = beats / beatType;
+    // Additive meters (2+3+2) sum their groups
+    const beats = time.beats.split('+').reduce((sum, b) => sum + parseInt(b, 10), 0);
+    const ratio = beats / time.beatType;
     if (ratio < 0.75) {
       return { num: 1, den: 16 };
     }
@@ -332,9 +336,8 @@ function notationToDecoration(notation: Notation): AbcDecorationTarget | null {
       return { kind: 'ornament', ornament: notation.ornament };
     case 'technical':
       if (notation.technical === 'fingering') {
-        return notation.fingering !== undefined
-          ? { kind: 'fingering', fingering: notation.fingering }
-          : null;
+        const digits = notation.text ?? notation.fingering;
+        return digits !== undefined ? { kind: 'fingering', fingering: digits } : null;
       }
       return { kind: 'technical', technical: notation.technical };
     case 'fermata':
@@ -459,6 +462,22 @@ function serializeTempo(direction: DirectionEntry): string | null {
 // ============================================================
 // Main Serializer
 // ============================================================
+
+/**
+ * Serialize several Scores into a single multi-tune ABC file.
+ *
+ * Counterpart to `parseAbcTunes`: each Score becomes one tune, separated by a
+ * blank line as the ABC standard requires.
+ */
+export function serializeAbcTunes(scores: Score[], options?: AbcSerializeOptions): string {
+  return scores
+    .map((score, index) => serializeAbc(score, {
+      ...options,
+      // Number the tunes when they carry no reference number of their own
+      referenceNumber: options?.referenceNumber ?? index + 1,
+    }))
+    .join('\n');
+}
 
 /**
  * Serialize a Score object to ABC notation format string.
@@ -594,6 +613,8 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
   const lyricsAfterAll = score.metadata.miscellaneous?.find(m => m.name === 'abc-lyrics-after-all')?.value === 'true';
   const lyricsLineCountsStr = score.metadata.miscellaneous?.find(m => m.name === 'abc-lyrics-line-counts')?.value;
   const lyricsLineCounts: number[] = lyricsLineCountsStr ? JSON.parse(lyricsLineCountsStr) : [];
+  const lyricsLineVersesStr = score.metadata.miscellaneous?.find(m => m.name === 'abc-lyrics-line-verses')?.value;
+  const lyricsLineVerses: number[] = lyricsLineVersesStr ? JSON.parse(lyricsLineVersesStr) : [];
 
   // Check for inline voice markers
   const inlineVoiceMarkersStr = score.metadata.miscellaneous?.find(m => m.name === 'abc-inline-voice-markers')?.value;
@@ -661,7 +682,10 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
         if (currentKey === undefined ||
             newKey.fifths !== currentKey.fifths ||
             (newKey.mode || 'major') !== (currentKey.mode || 'major')) {
-          measureStr += '\nK:' + serializeKey(newKey) + '\n';
+          // An inline [K:...] marker already writes the change in place
+          if (!hasInlineKeyMarker(measure)) {
+            measureStr += '\nK:' + serializeKey(newKey) + '\n';
+          }
           currentKey = newKey;
         }
       }
@@ -683,6 +707,8 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
       const rightBarline = measure.barlines?.find(b => b.location === 'right');
       if (rightBarline) {
         measureStr += serializeBarline(rightBarline);
+      } else if (!measureHasNotes(measure)) {
+        // A measure holding only round-trip markers gets no bar line
       } else if (mi < part.measures.length - 1) {
         // Don't add default | if the next measure has a left barline with barStyle or repeat
         // (the left barline serves as both the right of this measure and left of next)
@@ -802,7 +828,7 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
           }
         }
         voiceMeasureCursor[voiceId] = endMeasure;
-        lines.push(groupMusic);
+        lines.push(stripLeadingBlankLines(groupMusic));
       }
 
       // Output comment separator between groups (if not last group)
@@ -835,7 +861,7 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
       }
 
       const divisions = partDivisions[partIdx];
-      const bodyResult = serializePartBody(part, divisions, unitNote, opts, lineBreaks, lyricsAfterAll, lyricsLineCounts);
+      const bodyResult = serializePartBody(part, divisions, unitNote, opts, lineBreaks, lyricsAfterAll, lyricsLineCounts, lyricsLineVerses);
 
       let musicLine = bodyResult.music;
 
@@ -846,7 +872,7 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
         musicLine = marker + musicLine;
       }
 
-      lines.push(musicLine);
+      lines.push(stripLeadingBlankLines(musicLine));
 
       if (opts.includeLyrics && bodyResult.lyrics) {
         lines.push(bodyResult.lyrics);
@@ -872,6 +898,15 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
   }
 
   return lines.join('\n') + '\n';
+}
+
+/**
+ * Drop leading newlines from a body chunk. Field and key-change markers are
+ * written with a newline on both sides; at the start of a chunk that would
+ * open the body with a blank line.
+ */
+function stripLeadingBlankLines(text: string): string {
+  return text.replace(/^\n+/, '');
 }
 
 function findTempoInMeasure(measure?: Measure): string | null {
@@ -915,10 +950,12 @@ function serializePartBody(
   lineBreaks: number[] = [],
   lyricsAfterAll: boolean = false,
   lyricsLineCounts: number[] = [],
+  lyricsLineVerses: number[] = [],
 ): PartBodyResult {
   let unitNote = { ...initialUnitNote };
   const musicParts: string[] = [];
-  const allLyrics: Map<number, string[]> = new Map(); // measureIndex -> lyrics array
+  // measureIndex -> verse number -> syllables
+  const allLyrics: Map<number, Map<number, string[]>> = new Map();
 
   // Track current key for detecting inline key changes
   let currentKey: KeySignature | undefined = part.measures[0]?.attributes?.key;
@@ -937,7 +974,10 @@ function serializePartBody(
       if (currentKey === undefined ||
           newKey.fifths !== currentKey.fifths ||
           (newKey.mode || 'major') !== (currentKey.mode || 'major')) {
-        musicParts.push('\nK:' + serializeKey(newKey) + '\n');
+        // An inline [K:...] marker already writes the change in place
+        if (!hasInlineKeyMarker(measure)) {
+          musicParts.push('\nK:' + serializeKey(newKey) + '\n');
+        }
         currentKey = newKey;
       }
     }
@@ -960,7 +1000,7 @@ function serializePartBody(
     for (let k = 1; k <= collapsed.absorbed; k++) absorbedMeasures.add(mi + k);
     musicParts.push(collapsed.text);
 
-    if (lyrics.length > 0) {
+    if (lyrics.size > 0) {
       allLyrics.set(mi, lyrics);
     }
 
@@ -968,6 +1008,8 @@ function serializePartBody(
     const rightBarline = measure.barlines?.find(b => b.location === 'right');
     if (rightBarline) {
       musicParts.push(serializeBarline(rightBarline));
+    } else if (!measureHasNotes(measure)) {
+      // A measure holding only round-trip markers gets no bar line
     } else if (mi < part.measures.length - 1) {
       // Don't add default | if the next measure has a left barline with barStyle or repeat
       // (the left barline serves as both the right of this measure and left of next)
@@ -1006,22 +1048,34 @@ function serializePartBody(
     return { music: musicStr, lyrics: null };
   }
 
+  // Verse numbers present anywhere in this part, in ascending order
+  const verses = new Set<number>();
+  for (const byVerse of allLyrics.values()) {
+    for (const verse of byVerse.keys()) verses.add(verse);
+  }
+  const sortedVerses = Array.from(verses).sort((a, b) => a - b);
+
+  /** Syllables of one verse across the measure range [from, to]. */
+  function syllablesIn(verse: number, from: number, to: number): string[] {
+    const syllables: string[] = [];
+    for (let m = from; m <= to; m++) {
+      const forVerse = allLyrics.get(m)?.get(verse);
+      if (forVerse) syllables.push(...forVerse);
+    }
+    return syllables;
+  }
+
   // Group lyrics by line break positions
   // Each "line" spans from one line break to the next
   // lineBreaks can have negative values (line continuations), use absolute values for grouping
   const lineBreakSet = new Set(lineBreaks.map(v => Math.abs(v)));
-  const lyricsByLine: { startMeasure: number; endMeasure: number; syllables: string[] }[] = [];
+  const lyricLineRanges: { startMeasure: number; endMeasure: number }[] = [];
   let lineStart = 0;
   for (let mi = 0; mi < part.measures.length; mi++) {
     if (lineBreakSet.has(mi + 1) || mi === part.measures.length - 1) {
-      // Collect lyrics for measures [lineStart, mi]
-      const syllables: string[] = [];
-      for (let m = lineStart; m <= mi; m++) {
-        const ls = allLyrics.get(m);
-        if (ls) syllables.push(...ls);
-      }
-      if (syllables.length > 0) {
-        lyricsByLine.push({ startMeasure: lineStart, endMeasure: mi, syllables });
+      const hasAny = sortedVerses.some(v => syllablesIn(v, lineStart, mi).length > 0);
+      if (hasAny) {
+        lyricLineRanges.push({ startMeasure: lineStart, endMeasure: mi });
       }
       lineStart = mi + 1;
     }
@@ -1046,39 +1100,47 @@ function serializePartBody(
     return result;
   }
 
+  /** One `w:` line per verse for the measure range [from, to]. */
+  function lyricLinesFor(from: number, to: number): string[] {
+    const out: string[] = [];
+    for (const verse of sortedVerses) {
+      const syllables = syllablesIn(verse, from, to);
+      if (syllables.length > 0) out.push(formatLyrics(syllables));
+    }
+    return out;
+  }
+
+  const lastMeasure = part.measures.length - 1;
+
   // If lyricsAfterAll, output all lyrics after all music lines
   if (lyricsAfterAll) {
-    // Collect all syllables in order
-    const allSyllables: string[] = [];
-    const sortedMeasures = Array.from(allLyrics.keys()).sort((a, b) => a - b);
-    for (const mi of sortedMeasures) {
-      allSyllables.push(...allLyrics.get(mi)!);
-    }
-
-    // Split syllables back into w: lines using stored counts
+    // Split each verse back into w: lines using the stored syllable counts
     if (lyricsLineCounts.length > 0) {
       const lyricsLines: string[] = [];
-      let offset = 0;
-      for (const count of lyricsLineCounts) {
-        const chunk = allSyllables.slice(offset, offset + count);
-        if (chunk.length > 0) {
-          lyricsLines.push(formatLyrics(chunk));
-        }
-        offset += count;
+      const offsets = new Map<number, number>();
+      for (let li = 0; li < lyricsLineCounts.length; li++) {
+        const verse = lyricsLineVerses[li] ?? 1;
+        const all = syllablesIn(verse, 0, lastMeasure);
+        const offset = offsets.get(verse) ?? 0;
+        const chunk = all.slice(offset, offset + lyricsLineCounts[li]);
+        if (chunk.length > 0) lyricsLines.push(formatLyrics(chunk));
+        offsets.set(verse, offset + lyricsLineCounts[li]);
       }
-      // Any remaining syllables
-      if (offset < allSyllables.length) {
-        lyricsLines.push(formatLyrics(allSyllables.slice(offset)));
+      // Any syllables beyond the recorded counts
+      for (const verse of sortedVerses) {
+        const all = syllablesIn(verse, 0, lastMeasure);
+        const offset = offsets.get(verse) ?? 0;
+        if (offset < all.length) lyricsLines.push(formatLyrics(all.slice(offset)));
       }
       return { music: musicStr, lyrics: lyricsLines.join('\n') };
     }
 
-    // Fallback: single w: line
-    return { music: musicStr, lyrics: formatLyrics(allSyllables) };
+    // Fallback: one w: line per verse
+    return { music: musicStr, lyrics: lyricLinesFor(0, lastMeasure).join('\n') };
   }
 
   // If there are line breaks, interleave lyrics
-  if (lyricsByLine.length > 0 && lineBreaks.length > 0) {
+  if (lyricLineRanges.length > 0 && lineBreaks.length > 0) {
     // Split music string by newlines
     const musicLines = musicStr.split('\n');
     const resultLines: string[] = [];
@@ -1087,16 +1149,16 @@ function serializePartBody(
     for (let li = 0; li < musicLines.length; li++) {
       resultLines.push(musicLines[li]);
       // Check if there are lyrics for this music line
-      if (lyricIdx < lyricsByLine.length) {
-        const lyricGroup = lyricsByLine[lyricIdx];
-        // The line index corresponds to the line break position
-        resultLines.push(formatLyrics(lyricGroup.syllables));
+      if (lyricIdx < lyricLineRanges.length) {
+        const range = lyricLineRanges[lyricIdx];
+        resultLines.push(...lyricLinesFor(range.startMeasure, range.endMeasure));
         lyricIdx++;
       }
     }
     // Any remaining lyrics
-    while (lyricIdx < lyricsByLine.length) {
-      resultLines.push(formatLyrics(lyricsByLine[lyricIdx].syllables));
+    while (lyricIdx < lyricLineRanges.length) {
+      const range = lyricLineRanges[lyricIdx];
+      resultLines.push(...lyricLinesFor(range.startMeasure, range.endMeasure));
       lyricIdx++;
     }
 
@@ -1104,13 +1166,7 @@ function serializePartBody(
   }
 
   // No line breaks - output all lyrics after music
-  const allSyllables: string[] = [];
-  const sortedMeasures = Array.from(allLyrics.keys()).sort((a, b) => a - b);
-  for (const mi of sortedMeasures) {
-    allSyllables.push(...allLyrics.get(mi)!);
-  }
-
-  return { music: musicStr, lyrics: formatLyrics(allSyllables) };
+  return { music: musicStr, lyrics: lyricLinesFor(0, lastMeasure).join('\n') };
 }
 
 function serializeMeasureEntries(
@@ -1118,9 +1174,10 @@ function serializeMeasureEntries(
   divisions: number,
   unitNote: UnitNote,
   opts: Required<AbcSerializeOptions>,
-): { noteStr: string; lyrics: string[]; updatedUnitNote?: UnitNote } {
+): { noteStr: string; lyrics: Map<number, string[]>; updatedUnitNote?: UnitNote } {
   const parts: string[] = [];
-  const lyrics: string[] = [];
+  // Syllables of this measure, keyed by verse number
+  const lyrics = new Map<number, string[]>();
   // Mutable unit note for inline [L:] changes
   let currentUnitNote = { ...unitNote };
   // Collect chord pitches to emit them as [CEG] when the chord ends
@@ -1204,13 +1261,16 @@ function serializeMeasureEntries(
           chordSlurEnd = '';
         }
 
-        // Handle lyrics
+        // Handle lyrics (one entry per verse)
         if (note.lyrics && note.lyrics.length > 0 && opts.includeLyrics) {
-          const lyric = note.lyrics[0];
-          if (lyric.text) {
+          for (const lyric of note.lyrics) {
+            if (!lyric.text) continue;
             const syllabic = lyric.syllabic || 'single';
             const suffix = syllabic === 'begin' || syllabic === 'middle' ? '-' : '';
-            lyrics.push(lyric.text + suffix);
+            const verse = lyric.number ?? 1;
+            const bucket = lyrics.get(verse);
+            if (bucket) bucket.push(lyric.text + suffix);
+            else lyrics.set(verse, [lyric.text + suffix]);
           }
         }
 
@@ -1400,6 +1460,14 @@ function serializeMeasureEntries(
             handledAsSpecial = true;
             break;
           }
+          // Whole-line body field (P:, s:, r:, ...) kept verbatim
+          if (dt.text.startsWith(ABC_BODY_FIELD_MARKER)) {
+            // The newline that follows comes from the line break token that
+            // separates the field from the music line below it
+            parts.push('\n' + dt.text.slice(ABC_BODY_FIELD_MARKER.length));
+            handledAsSpecial = true;
+            break;
+          }
           const inlineField = dt.text.match(/^\[([A-Za-z]):\s*([^\]]*)\]$/);
           if (inlineField) {
             parts.push(dt.text);
@@ -1471,6 +1539,18 @@ function applyMultiMeasureRest(measure: Measure, noteStr: string): { text: strin
   const count = multipleRestCount(measure);
   if (count < 2 || noteStr.trim() !== 'Z') return { text: noteStr, absorbed: 0 };
   return { text: `Z${count}`, absorbed: count - 1 };
+}
+
+/** True when a measure already writes its key change as an inline [K:...] field. */
+function hasInlineKeyMarker(measure: Measure): boolean {
+  return measure.entries.some(e =>
+    e.type === 'direction' &&
+    e.directionTypes.some(dt => dt.kind === 'words' && /^\[K:/.test(dt.text)));
+}
+
+/** True when a measure carries any note or rest (as opposed to markers only). */
+function measureHasNotes(measure: Measure): boolean {
+  return measure.entries.some(e => e.type === 'note');
 }
 
 /** True when the entry at `index` is the first note of a chord. */

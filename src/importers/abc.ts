@@ -38,6 +38,7 @@ import type {
 } from '../types';
 import { generateId } from '../id';
 import {
+  ABC_BODY_FIELD_MARKER,
   ABC_DYNAMICS,
   ABC_SHORTHAND_DECORATIONS,
   lookupAbcDecoration,
@@ -114,6 +115,8 @@ interface AbcToken {
   dotted?: boolean;
   /** Annotation-specific: the ABC placement character (^, _, <, >, @). */
   annotationPlacement?: string;
+  /** Field-specific: true for a field on its own line rather than an inline [X:...]. */
+  standalone?: boolean;
   // Ending-specific: true when ending uses bracket notation [1 vs number-after-barline 1
   bracket?: boolean;
   // Tuplet-specific
@@ -194,12 +197,28 @@ const MICROTONE_ACCIDENTALS: Record<string, Accidental> = {
 // Header Parsing
 // ============================================================
 
+/** Append the text of a `+:` continuation line to the field it continues. */
+function appendToHeaderField(header: AbcHeader, field: string, text: string) {
+  switch (field) {
+    case 'T': header.title = (header.title ?? '') + text; break;
+    case 'C': header.composer = (header.composer ?? '') + text; break;
+    default: {
+      const extra = header.extraFields;
+      if (extra && extra.length > 0 && extra[extra.length - 1].field === field) {
+        extra[extra.length - 1].value += text;
+      }
+      break;
+    }
+  }
+}
+
 function parseHeader(lines: string[]): { header: AbcHeader; bodyStartIndex: number; headerFieldOrder: string[] } {
   const header: AbcHeader = { voices: [], extraFields: [], directives: [] };
   let bodyStartIndex = 0;
   let foundKey = false;
   let postKHeaderDone = false; // true once we've seen non-header content after K:
   const headerFieldOrder: string[] = []; // Track order of all header fields
+  let lastField: string | null = null; // field a following "+:" line continues
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
@@ -234,6 +253,14 @@ function parseHeader(lines: string[]): { header: AbcHeader; bodyStartIndex: numb
       continue;
     }
 
+    // Field continuation "+:value" extends the field on the previous line
+    const continuationMatch = line.match(/^\+:(.*)$/);
+    if (continuationMatch && !foundKey && lastField) {
+      appendToHeaderField(header, lastField, continuationMatch[1]);
+      headerFieldOrder.push(line);
+      continue;
+    }
+
     // Header fields are in format "X:value"
     const fieldMatch = line.match(/^([A-Za-z]):\s*(.*)/);
     // After K: is found, only accept specific header-like fields (I:, N:)
@@ -242,6 +269,7 @@ function parseHeader(lines: string[]): { header: AbcHeader; bodyStartIndex: numb
     const postKFields = new Set(['I', 'N']);
     if (fieldMatch && (!foundKey || fieldMatch[1] === 'V' || (foundKey && postKFields.has(fieldMatch[1])))) {
       const [, field, value] = fieldMatch;
+      lastField = field;
       // If we're after K: and this is a post-K: header field (I:, N:)
       if (foundKey && field !== 'V') {
         if (!postKHeaderDone) {
@@ -409,13 +437,39 @@ function parseTimeSignature(meterStr: string): TimeSignature {
   if (trimmed === 'C|' || trimmed.toLowerCase() === 'cut') {
     return { beats: '2', beatType: 2, symbol: 'cut' };
   }
+  if (trimmed.toLowerCase() === 'none') {
+    return { beats: '4', beatType: 4, senzaMisura: true };
+  }
 
   const match = trimmed.match(/^(\d+)\/(\d+)$/);
   if (match) {
     return { beats: match[1], beatType: parseInt(match[2], 10) };
   }
 
+  // Additive meters: (2+3+2)/8 or 3+2/8
+  const additive = trimmed.match(/^\(?\s*(\d+(?:\s*\+\s*\d+)+)\s*\)?\/(\d+)$/);
+  if (additive) {
+    const groups = additive[1].split('+').map(g => parseInt(g.trim(), 10));
+    return {
+      beats: groups.join('+'),
+      beatType: parseInt(additive[2], 10),
+      beatsList: groups,
+    };
+  }
+
   return { beats: '4', beatType: 4 };
+}
+
+/**
+ * Total measure length of a meter, in units of a whole note.
+ * Additive meters sum their groups; an unmeasured meter has no fixed length.
+ */
+function timeSignatureWholeNotes(time: TimeSignature): number {
+  const beats = time.beatsList
+    ? time.beatsList.reduce((sum, b) => sum + b, 0)
+    : parseInt(time.beats, 10);
+  if (!Number.isFinite(beats) || time.beatType === 0) return 1;
+  return beats / time.beatType;
 }
 
 // ============================================================
@@ -432,12 +486,9 @@ function parseUnitNoteLength(lengthStr: string | undefined, meterStr: string | u
   }
 
   // Default: if meter >= 3/4, default is 1/8; otherwise 1/16
-  if (meterStr) {
-    const mMatch = meterStr.trim().match(/^(\d+)\/(\d+)$/);
-    if (mMatch) {
-      const ratio = parseInt(mMatch[1], 10) / parseInt(mMatch[2], 10);
-      return ratio >= 0.75 ? { num: 1, den: 8 } : { num: 1, den: 16 };
-    }
+  if (meterStr && meterStr.trim() !== '') {
+    const ratio = timeSignatureWholeNotes(parseTimeSignature(meterStr));
+    return ratio >= 0.75 ? { num: 1, den: 8 } : { num: 1, den: 16 };
   }
   return { num: 1, den: 8 };
 }
@@ -637,15 +688,21 @@ function tokenizeBody(bodyLines: string[]): { tokens: AbcToken[][]; voiceIds: st
           currentTokens.push({ type: 'line_break', value: '\n' });
         }
       }
-      currentTokens.push({ type: 'inline_field', value: `K:${bodyKeyMatch[1]}` });
+      currentTokens.push({ type: 'inline_field', value: `K:${bodyKeyMatch[1]}`, standalone: true });
       // Add a line_break after K: so the next music line starts on a new line
       currentTokens.push({ type: 'line_break', value: '\n' });
       isContinuation = false;
       continue;
     }
 
-    // Skip other header-like fields in body (but not inline fields starting with [)
-    if (/^[A-Za-z]:\s*/.test(line) && !/^\[/.test(line)) {
+    // Other field lines in the body (P:, s:, r:, ...). These have no internal
+    // model counterpart, so keep them in place for round-trip.
+    const bodyFieldMatch = line.match(/^([A-Za-z]):\s*(.*)$/);
+    if (bodyFieldMatch && !/^\[/.test(line)) {
+      voiceTokens.get(currentVoice)!.push({
+        type: 'inline_field',
+        value: `${ABC_BODY_FIELD_MARKER}${line}`,
+      });
       isContinuation = false;
       continue;
     }
@@ -1240,10 +1297,8 @@ function buildScore(header: AbcHeader, voiceTokensList: AbcToken[][], voiceIds: 
   const timeSignature = parseTimeSignature(header.meter || '4/4');
   const keySignature = parseKeySignature(header.key || 'C');
 
-  const beatsNum = parseInt(timeSignature.beats, 10);
-  const beatType = timeSignature.beatType;
   // Duration of one full measure in divisions
-  const measureDuration = Math.round((beatsNum / beatType) * 4 * DIVISIONS);
+  const measureDuration = Math.round(timeSignatureWholeNotes(timeSignature) * 4 * DIVISIONS);
 
   const parts: Part[] = [];
   const partListEntries: Score['partList'] = [];
@@ -1403,15 +1458,23 @@ function buildScore(header: AbcHeader, voiceTokensList: AbcToken[][], voiceIds: 
       let lyricsAfterAll = true;
       let seenLyrics = false;
       const lyricLineCounts: number[] = []; // syllable count for each w: line
-      for (const token of tokens) {
+      const lyricLineVerses: number[] = []; // verse number for each w: line
+      let verse = 0;
+      for (let ti = 0; ti < tokens.length; ti++) {
+        const token = tokens[ti];
         if (token.type === 'lyrics') {
           hasLyrics = true;
           seenLyrics = true;
+          verse = ti > 0 && tokens[ti - 1].type === 'lyrics' ? verse + 1 : 1;
           lyricLineCounts.push(token.syllables?.length || 0);
+          lyricLineVerses.push(verse);
         } else if (seenLyrics && (token.type === 'note' || token.type === 'rest' || token.type === 'bar')) {
           // Music after lyrics means interleaved layout
           lyricsAfterAll = false;
         }
+      }
+      if (hasLyrics && lyricLineVerses.some(v => v > 1)) {
+        miscellaneous.push({ name: 'abc-lyrics-line-verses', value: JSON.stringify(lyricLineVerses) });
       }
       if (hasLyrics && lyricsAfterAll) {
         miscellaneous.push({ name: 'abc-lyrics-after-all', value: 'true' });
@@ -1533,12 +1596,16 @@ function buildMeasures(
   let pendingEndingNumber: string | null = null;
   let currentLyrics: string[] = [];
   let noteCountForLyrics = 0;
+  // Verse number and target notes of the w: line group being processed
+  let lyricVerse = 0;
+  let lyricTargets: NoteEntry[] = [];
   let inChord = false;
   let chordNotes: AbcToken[] = [];
   let chordNoteTies: boolean[] = []; // track ties per chord note
   let currentUnitNote = { ...unitNote };
   let pendingTupletStart = false;
   let pendingKeyChange: string | null = null;
+  let pendingTimeChange: TimeSignature | null = null;
   const lineBreaks: number[] = []; // measure numbers after which line breaks occur
   // Bar count of a multi-measure rest (Zn) awaiting attachment to its measure
   let pendingMultipleRest: number | null = null;
@@ -1594,6 +1661,15 @@ function buildMeasures(
       const kValue = pendingKeyChange.replace(/^K:\s*/, '');
       measure.attributes.key = parseKeySignature(kValue);
       pendingKeyChange = null;
+    }
+
+    // Apply pending inline meter change to this measure
+    if (pendingTimeChange) {
+      if (!measure.attributes) {
+        measure.attributes = { _id: generateId() };
+      }
+      measure.attributes.time = pendingTimeChange;
+      pendingTimeChange = null;
     }
 
     // Add barlines
@@ -1888,8 +1964,9 @@ function buildMeasures(
           },
         };
         // If preceding token was a regular barline that was ignored (no entries at start of measure),
-        // include a 'regular' barStyle so the | is preserved in roundtrip (e.g., || then |1 → |||1)
-        if (ti > 0 && tokens[ti - 1].type === 'bar' &&
+        // include a 'regular' barStyle so the | is preserved in roundtrip (e.g., || then |1 → |||1).
+        // Bracket endings ([1) keep no bar style so they are written back as brackets.
+        if (!token.bracket && ti > 0 && tokens[ti - 1].type === 'bar' &&
             (!tokens[ti - 1].barType || tokens[ti - 1].barType === 'regular') &&
             currentEntries.length === 0) {
           endingBarline.barStyle = 'regular';
@@ -2023,10 +2100,17 @@ function buildMeasures(
       }
 
       case 'lyrics': {
-        // In ABC, w: lines come AFTER the music lines they apply to.
-        // We need to retroactively apply lyrics to the notes already processed.
+        // In ABC, w: lines come AFTER the music line they apply to, and
+        // consecutive w: lines are successive verses of the same music.
         const syllables = token.syllables || [];
-        applyLyricsToExistingNotes(measures, currentEntries, syllables);
+        const previousWasLyrics = ti > 0 && tokens[ti - 1].type === 'lyrics';
+        if (previousWasLyrics) {
+          lyricVerse++;
+        } else {
+          lyricVerse = 1;
+          lyricTargets = collectUnlyricedNotes(measures, currentEntries);
+        }
+        applyLyricsToNotes(lyricTargets, syllables, lyricVerse);
         break;
       }
 
@@ -2045,22 +2129,42 @@ function buildMeasures(
       }
 
       case 'inline_field': {
-        // Handle inline field changes like [L:1/32], [M:3/4], [K:Am]
-        const lMatch = token.value.match(/^L:\s*(\d+)\/(\d+)/);
-        if (lMatch) {
-          currentUnitNote = { num: parseInt(lMatch[1], 10), den: parseInt(lMatch[2], 10) };
-          // Store inline L: as a direction with words, so it can survive MusicXML round-trip
-          const inlineEntry: DirectionEntry = {
-            _id: generateId(),
-            type: 'direction',
-            directionTypes: [{ kind: 'words', text: `[L:${lMatch[1]}/${lMatch[2]}]` }],
-          };
-          currentEntries.push(inlineEntry);
+        // Whole-line body fields (P:, s:, r:, ...) are carried through verbatim
+        if (token.value.startsWith(ABC_BODY_FIELD_MARKER)) {
+          currentEntries.push(createRawWordsDirection(token.value));
+          break;
         }
-        const kMatch = token.value.match(/^K:\s*(.*)/);
-        if (kMatch) {
-          // Store inline K: key change - will be attached to the next measure
-          pendingKeyChange = `K:${kMatch[1]}`;
+
+        const fieldMatch = token.value.match(/^([A-Za-z]):\s*(.*)$/);
+        if (!fieldMatch) break;
+        const [, field, rawValue] = fieldMatch;
+        const value = rawValue.trim();
+
+        // Keep a marker so the field survives a MusicXML round-trip and is
+        // written back inline rather than as a stand-alone field line. Fields
+        // that already had their own line keep that layout instead.
+        if (!token.standalone) {
+          currentEntries.push(createRawWordsDirection(`[${field}:${value}]`));
+        }
+
+        // K: is a key change - attached to the measure it opens
+        if (field === 'K') {
+          pendingKeyChange = `K:${rawValue}`;
+          break;
+        }
+
+        if (field === 'L') {
+          const lMatch = value.match(/^(\d+)\/(\d+)/);
+          if (lMatch) {
+            currentUnitNote = { num: parseInt(lMatch[1], 10), den: parseInt(lMatch[2], 10) };
+          }
+        } else if (field === 'M') {
+          // Inline meter change applies from the next measure onwards
+          pendingTimeChange = parseTimeSignature(value);
+        } else if (field === 'Q') {
+          // Inline tempo change: also model it so MusicXML gets a real <sound>
+          const tempoDirection = parseTempoToDirection(value);
+          if (tempoDirection) currentEntries.push(tempoDirection);
         }
         break;
       }
@@ -2068,7 +2172,7 @@ function buildMeasures(
       case 'space':
         break;
 
-      case 'line_break':
+      case 'line_break': {
         // Flush pending items before recording line break position
         flushPendingPreNoteItems();
         // Store intra-measure line breaks as direction entries for round-trip
@@ -2081,8 +2185,13 @@ function buildMeasures(
           };
           currentEntries.push(lineBreakDir);
         }
+        // A break that only follows markers (a body field line, say) is fully
+        // described by the marker entry above; recording it again here would
+        // make the serializer emit a second newline.
+        const onlyMarkersSoFar = currentEntries.length > 0 &&
+          !currentEntries.some(e => e.type === 'note');
         // Record line break position: after the last finalized measure
-        if (measures.length > 0) {
+        if (measures.length > 0 && !onlyMarkersSoFar) {
           if (token.value === '\\\n') {
             // Line continuation: store as negative to distinguish from regular breaks
             lineBreaks.push(-(measures.length));
@@ -2091,6 +2200,7 @@ function buildMeasures(
           }
         }
         break;
+      }
 
       default:
         break;
@@ -2108,36 +2218,30 @@ function buildMeasures(
   return { measures, lineBreaks, hasIndividualChordDurations };
 }
 
-function applyLyricsToExistingNotes(
+/**
+ * The notes a `w:` line applies to: every pitched, non-grace note seen so far
+ * that has not yet been given a syllable.
+ */
+function collectUnlyricedNotes(
   finalizedMeasures: Measure[],
   currentEntries: MeasureEntry[],
-  syllables: string[],
-) {
-  // Gather all pitched, non-grace notes from the most recent music line
-  // The lyrics apply to the notes that were just before this w: line
-  const allNotes: NoteEntry[] = [];
-
-  // Collect notes from finalized measures and current entries
-  for (const measure of finalizedMeasures) {
-    for (const entry of measure.entries) {
-      if (entry.type === 'note' && !entry.rest && !entry.grace && !entry.chord) {
-        allNotes.push(entry);
+): NoteEntry[] {
+  const notes: NoteEntry[] = [];
+  const collect = (entries: MeasureEntry[]) => {
+    for (const entry of entries) {
+      if (entry.type === 'note' && !entry.rest && !entry.grace && !entry.chord &&
+        (!entry.lyrics || entry.lyrics.length === 0)) {
+        notes.push(entry);
       }
     }
-  }
-  for (const entry of currentEntries) {
-    if (entry.type === 'note' && !entry.rest && !entry.grace && !entry.chord) {
-      allNotes.push(entry);
-    }
-  }
+  };
+  for (const measure of finalizedMeasures) collect(measure.entries);
+  collect(currentEntries);
+  return notes;
+}
 
-  // Only apply to the most recent notes (notes without lyrics assigned yet)
-  // Find notes without lyrics
-  const unlyricedNotes = allNotes.filter(n => !n.lyrics || n.lyrics.length === 0);
-
-  // Apply syllables to the most recent unlyriced notes
-  const targetNotes = unlyricedNotes.slice(0, syllables.length);
-
+/** Assign one verse of syllables to the given notes, in order. */
+function applyLyricsToNotes(targetNotes: NoteEntry[], syllables: string[], verse: number) {
   for (let si = 0; si < syllables.length && si < targetNotes.length; si++) {
     const syllable = syllables[si];
     if (!syllable || syllable === '' || syllable === '*') continue;
@@ -2156,11 +2260,8 @@ function applyLyricsToExistingNotes(
       }
     }
 
-    note.lyrics = [{
-      number: 1,
-      text,
-      syllabic,
-    }];
+    if (!note.lyrics) note.lyrics = [];
+    note.lyrics.push({ number: verse, text, syllabic });
   }
 }
 
@@ -2429,7 +2530,8 @@ function decorationToNotation(target: AbcDecorationTarget): Notation | null {
     case 'technical':
       return { type: 'technical', technical: target.technical };
     case 'fingering':
-      return { type: 'technical', technical: 'fingering', fingering: target.fingering };
+      // <fingering> content lives in `text` for note-level technicals
+      return { type: 'technical', technical: 'fingering', text: target.fingering };
     case 'fermata':
       return target.inverted
         ? { type: 'fermata', fermataType: 'inverted' }
@@ -2524,10 +2626,52 @@ function createDynamicsDirection(dynamic: string): DirectionEntry | null {
 // ============================================================
 
 /**
+ * Split an ABC file into its individual tunes.
+ *
+ * A new tune starts at every `X:` reference-number field; text before the
+ * first one is a file header shared by all tunes (ABC v2.1 §2.2).
+ */
+function splitTunes(lines: string[]): string[][] {
+  const tunes: string[][] = [];
+  let fileHeader: string[] = [];
+  let current: string[] | null = null;
+
+  for (const line of lines) {
+    if (/^X:/.test(line.trim())) {
+      if (current) tunes.push(current);
+      current = [...fileHeader, line];
+      fileHeader = [];
+      continue;
+    }
+    if (current) current.push(line);
+    else fileHeader.push(line);
+  }
+  if (current) tunes.push(current);
+  // No X: field at all: treat the whole input as a single tune
+  return tunes.length > 0 ? tunes : [lines];
+}
+
+/**
+ * Parse every tune in an ABC file.
+ *
+ * ABC files may hold any number of tunes, each introduced by an `X:` field.
+ * {@link parseAbc} returns only the first; use this to get them all.
+ */
+export function parseAbcTunes(abcString: string): Score[] {
+  return splitTunes(abcString.split('\n')).map(tuneLines => parseTune(tuneLines));
+}
+
+/**
  * Parse an ABC notation string into a Score object.
+ *
+ * When the input holds several tunes, only the first is returned — use
+ * {@link parseAbcTunes} to parse them all.
  */
 export function parseAbc(abcString: string): Score {
-  const lines = abcString.split('\n');
+  return parseTune(splitTunes(abcString.split('\n'))[0]);
+}
+
+function parseTune(lines: string[]): Score {
   const { header, bodyStartIndex, headerFieldOrder } = parseHeader(lines);
   const bodyLines = lines.slice(bodyStartIndex);
   const { tokens: voiceTokensList, voiceIds, inlineVoiceMarkers, voiceDeclarationLines, bodyComments, bodyDirectives, wFields, voiceInterleavePattern, groupBarCounts, voiceComments, preVoiceComments, trailingComments } = tokenizeBody(bodyLines);

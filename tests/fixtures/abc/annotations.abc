@@ -1,0 +1,8 @@
+X:1
+T:Text Annotations
+M:4/4
+L:1/8
+K:C
+"^above"C D E F|"_below"G A B c|
+"<left"C D E F|">right"G A B c|"@free"C4|
+"Am""^soft"C D E F|

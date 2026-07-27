@@ -20,6 +20,13 @@ import type {
   DynamicsValue,
 } from './types';
 
+/**
+ * Prefix marking a `<words>` direction that stands in for a whole-line ABC
+ * body field (P:, s:, r:, ...) which has no internal model counterpart. The
+ * rest of the text is the field line, reproduced verbatim on serialization.
+ */
+export const ABC_BODY_FIELD_MARKER = '__abc_field__';
+
 /** Semantic target a decoration maps onto in the internal model. */
 export type AbcDecorationTarget =
   | { kind: 'articulation'; articulation: ArticulationType }
