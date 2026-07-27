@@ -152,6 +152,13 @@ const NOTE_TYPE_MAP: Record<number, NoteType> = {
   0.0625: '64th',
 };
 
+/**
+ * NOTE_TYPE_MAP as a pre-parsed array, in the same iteration order.
+ * `durationToNoteType` runs once per note, so it must not rebuild this.
+ */
+const NOTE_TYPE_ENTRIES: [number, NoteType][] = Object.entries(NOTE_TYPE_MAP)
+  .map(([quarterNotes, type]) => [parseFloat(quarterNotes), type]);
+
 // Key signature mapping
 const KEY_FIFTHS: Record<string, number> = {
   'Cb': -7, 'Gb': -6, 'Db': -5, 'Ab': -4, 'Eb': -3, 'Bb': -2, 'F': -1,
@@ -515,8 +522,7 @@ function durationToNoteType(duration: number): { noteType: NoteType; dots: numbe
   const quarterNotes = duration / DIVISIONS;
 
   // Try to find exact match with dots
-  for (const [qnStr, type] of Object.entries(NOTE_TYPE_MAP)) {
-    const qn = parseFloat(qnStr);
+  for (const [qn, type] of NOTE_TYPE_ENTRIES) {
     // No dots
     if (Math.abs(quarterNotes - qn) < 0.001) {
       return { noteType: type, dots: 0 };
@@ -534,8 +540,8 @@ function durationToNoteType(duration: number): { noteType: NoteType; dots: numbe
   // Fallback: find closest
   let bestType: NoteType = 'quarter';
   let bestDiff = Infinity;
-  for (const [qnStr, type] of Object.entries(NOTE_TYPE_MAP)) {
-    const diff = Math.abs(quarterNotes - parseFloat(qnStr));
+  for (const [qn, type] of NOTE_TYPE_ENTRIES) {
+    const diff = Math.abs(quarterNotes - qn);
     if (diff < bestDiff) {
       bestDiff = diff;
       bestType = type;
