@@ -56,6 +56,11 @@ let useIndividualChordDurations = false;
  * pick between `!crescendo)!` and `!diminuendo)!`.
  */
 let openWedge: 'crescendo' | 'diminuendo' | null = null;
+/**
+ * octave= shift of the voice being serialized. The importer folds it into the
+ * pitches, so writing ABC has to take it back out.
+ */
+let voiceOctaveShift = 0;
 
 /** Map KeySignature fifths to ABC key note */
 const FIFTHS_TO_KEY_MAJOR: Record<number, string> = {
@@ -95,16 +100,24 @@ const NOTE_TYPE_TO_QUARTER_LENGTH: Record<string, number> = {
 // Key Serialization
 // ============================================================
 
-function musicXmlClefToAbc(clef: { sign: string; line?: number }): string | null {
-  if (clef.sign === 'G' && (clef.line === 2 || clef.line === undefined)) return 'treble';
-  if (clef.sign === 'F' && (clef.line === 4 || clef.line === undefined)) return 'bass';
-  if (clef.sign === 'C' && clef.line === 3) return 'alto';
-  if (clef.sign === 'C' && clef.line === 4) return 'tenor';
-  if (clef.sign === 'C' && clef.line === 1) return 'soprano';
-  if (clef.sign === 'C' && clef.line === 2) return 'mezzo-soprano';
-  if (clef.sign === 'C' && clef.line === 5) return 'baritone';
-  if (clef.sign === 'percussion') return 'perc';
-  return null;
+function musicXmlClefToAbc(clef: { sign: string; line?: number; clefOctaveChange?: number }): string | null {
+  let name: string | null = null;
+  if (clef.sign === 'G' && (clef.line === 2 || clef.line === undefined)) name = 'treble';
+  else if (clef.sign === 'F' && clef.line === 3) name = 'bass3';
+  else if (clef.sign === 'F' && (clef.line === 4 || clef.line === undefined)) name = 'bass';
+  else if (clef.sign === 'C' && clef.line === 3) name = 'alto';
+  else if (clef.sign === 'C' && clef.line === 4) name = 'tenor';
+  else if (clef.sign === 'C' && clef.line === 1) name = 'soprano';
+  else if (clef.sign === 'C' && clef.line === 2) name = 'mezzo-soprano';
+  else if (clef.sign === 'C' && clef.line === 5) name = 'baritone';
+  else if (clef.sign === 'percussion') name = 'perc';
+  if (name === null) return null;
+
+  // Octave-transposing clefs are written treble-8, bass+8, treble-15, ...
+  const shift = clef.clefOctaveChange;
+  if (shift === undefined || shift === 0) return name;
+  const steps = Math.abs(shift) === 2 ? '15' : '8';
+  return `${name}${shift > 0 ? '+' : '-'}${steps}`;
 }
 
 function serializeKey(key: KeySignature): string {
@@ -254,9 +267,9 @@ function serializePitch(pitch: Pitch, explicitNatural?: boolean): string {
     else result += serializeMicrotone(pitch.alter);
   }
 
-  // Note letter and octave
+  // Note letter and octave, with the voice's octave= shift removed
   const step = pitch.step;
-  const octave = pitch.octave;
+  const octave = pitch.octave - voiceOctaveShift;
 
   if (octave >= 5) {
     // Lowercase letter
@@ -491,6 +504,9 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
     includeLyrics: options?.includeLyrics ?? true,
   };
 
+  openWedge = null;
+  voiceOctaveShift = 0;
+
   // Set module-level flag for explicit /2 duration format
   useExplicitHalf = score.metadata.miscellaneous?.find(m => m.name === 'abc-explicit-half')?.value === 'true';
 
@@ -594,11 +610,15 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
       }
     }
 
-    if (attrs?.key) {
-      lines.push(`K:${serializeKey(attrs.key)}`);
-    } else {
-      lines.push('K:C');
+    // A single-voice tune carries its clef on the K: field; multi-voice tunes
+    // put it on their V: lines instead
+    let clefSuffix = '';
+    if (score.parts.length === 1) {
+      const clef = attrs?.clef?.[0];
+      const clefName = clef ? musicXmlClefToAbc(clef) : null;
+      if (clefName && clefName !== 'treble') clefSuffix = ` clef=${clefName}`;
     }
+    lines.push(`K:${attrs?.key ? serializeKey(attrs.key) : 'C'}${clefSuffix}`);
   }
 
   // Read line break positions from metadata
@@ -660,6 +680,7 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
   const partDivisions: number[] = [];
   for (let partIdx = 0; partIdx < score.parts.length; partIdx++) {
     const part = score.parts[partIdx];
+    voiceOctaveShift = readVoiceOctaveShift(score, partIdx);
     const divisions = getPartDivisions(part);
     partDivisions.push(divisions);
     const measStrings: string[] = [];
@@ -861,6 +882,7 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
       }
 
       const divisions = partDivisions[partIdx];
+      voiceOctaveShift = readVoiceOctaveShift(score, partIdx);
       const bodyResult = serializePartBody(part, divisions, unitNote, opts, lineBreaks, lyricsAfterAll, lyricsLineCounts, lyricsLineVerses);
 
       let musicLine = bodyResult.music;
@@ -907,6 +929,15 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
  */
 function stripLeadingBlankLines(text: string): string {
   return text.replace(/^\n+/, '');
+}
+
+/** The octave= shift the importer folded into this part's pitches. */
+function readVoiceOctaveShift(score: Score, partIndex: number): number {
+  const stored = score.metadata.miscellaneous?.find(
+    m => m.name === `abc-voice-octave-${partIndex}`,
+  )?.value;
+  const shift = stored ? parseInt(stored, 10) : 0;
+  return Number.isFinite(shift) ? shift : 0;
 }
 
 function findTempoInMeasure(measure?: Measure): string | null {

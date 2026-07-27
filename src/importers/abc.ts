@@ -57,6 +57,8 @@ interface AbcHeader {
   unitNoteLength?: string;
   tempo?: string;
   key?: string;
+  /** Clef named by the K: field, e.g. `K:C clef=bass`. */
+  clef?: string;
   voices?: AbcVoice[];
   /** Extra header fields (R:, S:, N:, I:, etc.) preserved for round-trip */
   extraFields?: { field: string; value: string }[];
@@ -68,6 +70,8 @@ interface AbcVoice {
   id: string;
   name?: string;
   clef?: string;
+  /** octave= shift declared on the V: field, in octaves. */
+  octave?: number;
   /** Full original V: definition line text (for round-trip) */
   fullLine?: string;
 }
@@ -307,6 +311,7 @@ function parseHeader(lines: string[]): { header: AbcHeader; bodyStartIndex: numb
           break;
         case 'K':
           header.key = value.trim();
+          header.clef = line;
           foundKey = true;
           bodyStartIndex = i + 1;
           headerFieldOrder.push(line);
@@ -317,6 +322,7 @@ function parseHeader(lines: string[]): { header: AbcHeader; bodyStartIndex: numb
           const nameMatch = voiceValue.match(/name=["']?([^"'\s]+)["']?/i);
           const nmMatch = voiceValue.match(/nm=["']([^"']*)["']/i);
           const clefMatch = voiceValue.match(/clef=(\S+)/i);
+          const octaveMatch = voiceValue.match(/octave\s*=\s*(-?\d+)/i);
           const displayName = nameMatch ? nameMatch[1] : nmMatch ? nmMatch[1] : voiceId;
 
           // After K:, determine if this V: line is a header definition or body voice switch
@@ -336,6 +342,7 @@ function parseHeader(lines: string[]): { header: AbcHeader; bodyStartIndex: numb
           if (existingVoice) {
             if (nameMatch || nmMatch) existingVoice.name = displayName;
             if (clefMatch) existingVoice.clef = clefMatch[1];
+            if (octaveMatch) existingVoice.octave = parseInt(octaveMatch[1], 10);
             // Keep the most detailed full line (post-K: definitions typically have more detail)
             if (foundKey && !isBodyVoiceSwitch) existingVoice.fullLine = lines[i];
           } else {
@@ -343,6 +350,7 @@ function parseHeader(lines: string[]): { header: AbcHeader; bodyStartIndex: numb
               id: voiceId,
               name: displayName,
               clef: clefMatch ? clefMatch[1] : undefined,
+              octave: octaveMatch ? parseInt(octaveMatch[1], 10) : undefined,
               fullLine: lines[i],
             });
           }
@@ -1296,6 +1304,8 @@ function buildScore(header: AbcHeader, voiceTokensList: AbcToken[][], voiceIds: 
   const unitNote = parseUnitNoteLength(header.unitNoteLength, header.meter);
   const timeSignature = parseTimeSignature(header.meter || '4/4');
   const keySignature = parseKeySignature(header.key || 'C');
+  // A clef named on the K: field applies to every voice that declares none
+  const headerClef = header.clef ? parseAbcClefSpec(header.clef) : undefined;
 
   // Duration of one full measure in divisions
   const measureDuration = Math.round(timeSignatureWholeNotes(timeSignature) * 4 * DIVISIONS);
@@ -1429,10 +1439,15 @@ function buildScore(header: AbcHeader, voiceTokensList: AbcToken[][], voiceIds: 
       name: voiceName,
     });
 
-    const voiceClef = headerVoice
+    // A clef on the voice wins; otherwise fall back to the one on K:
+    const voiceClef = headerVoice?.clef
       ? abcClefToMusicXml(headerVoice.clef)
-      : undefined;
-    const buildResult = buildMeasures(tokens, unitNote, keySignature, timeSignature, measureDuration, voiceClef);
+      : headerClef;
+    const octaveShift = headerVoice?.octave ?? 0;
+    const buildResult = buildMeasures(tokens, unitNote, keySignature, timeSignature, measureDuration, voiceClef, octaveShift);
+    if (octaveShift !== 0) {
+      miscellaneous.push({ name: `abc-voice-octave-${voiceIndex}`, value: String(octaveShift) });
+    }
     parts.push({
       _id: generateId(),
       id: partId,
@@ -1548,18 +1563,57 @@ function parseTempoToDirection(tempoStr: string): DirectionEntry | null {
   };
 }
 
+/** Base clef names accepted in K: and V: fields (ABC v2.1 §4.6). */
+const ABC_CLEF_NAMES: Record<string, Clef> = {
+  'treble': { sign: 'G', line: 2 },
+  'bass': { sign: 'F', line: 4 },
+  'bass3': { sign: 'F', line: 3 },
+  'alto': { sign: 'C', line: 3 },
+  'tenor': { sign: 'C', line: 4 },
+  'soprano': { sign: 'C', line: 1 },
+  'mezzo': { sign: 'C', line: 2 },
+  'mezzo-soprano': { sign: 'C', line: 2 },
+  'baritone': { sign: 'C', line: 5 },
+  'perc': { sign: 'percussion' },
+  'percussion': { sign: 'percussion' },
+  'none': { sign: 'G', line: 2 },
+};
+
 function abcClefToMusicXml(abcClef?: string): Clef {
   if (!abcClef) return { sign: 'G', line: 2 };
-  const c = abcClef.toLowerCase();
-  if (c === 'treble' || c === 'treble-8va' || c === 'treble+8') return { sign: 'G', line: 2 };
-  if (c === 'bass' || c === 'bass3') return { sign: 'F', line: 4 };
-  if (c === 'alto') return { sign: 'C', line: 3 };
-  if (c === 'tenor') return { sign: 'C', line: 4 };
-  if (c === 'soprano') return { sign: 'C', line: 1 };
-  if (c === 'mezzo' || c === 'mezzo-soprano') return { sign: 'C', line: 2 };
-  if (c === 'baritone') return { sign: 'C', line: 5 };
-  if (c === 'perc' || c === 'percussion') return { sign: 'percussion' };
-  return { sign: 'G', line: 2 };
+
+  // Split off an octave shift suffix: treble-8, bass+8, treble-8va, ...
+  const match = abcClef.trim().toLowerCase().match(/^([a-z-]*?)\s*([+-])?(8|15)(?:va|vb)?$/);
+  const baseName = match ? match[1] : abcClef.trim().toLowerCase();
+  const base = ABC_CLEF_NAMES[baseName] ?? ABC_CLEF_NAMES[abcClef.trim().toLowerCase()];
+  if (!base) return { sign: 'G', line: 2 };
+
+  const clef: Clef = { ...base };
+  if (match && match[3]) {
+    // -8 sounds an octave lower, +8 an octave higher; 15 is two octaves
+    const octaves = match[3] === '15' ? 2 : 1;
+    clef.clefOctaveChange = (match[2] === '+' ? octaves : -octaves);
+  }
+  return clef;
+}
+
+/**
+ * Clef specification carried by a K: or V: field, e.g. `clef=bass`,
+ * `clef=treble-8`, or the bare form `K:C bass` (ABC v2.1 §4.6).
+ *
+ * @returns The clef, or undefined when the field names none.
+ */
+function parseAbcClefSpec(fieldValue: string): Clef | undefined {
+  const explicit = fieldValue.match(/clef\s*=\s*(\S+)/i);
+  if (explicit) return abcClefToMusicXml(explicit[1]);
+
+  // Bare clef name, as in "K:C bass" or "V:1 treble-8"
+  for (const word of fieldValue.trim().split(/\s+/).slice(1)) {
+    if (word.includes('=')) continue;
+    const bare = word.toLowerCase().replace(/([+-]?(?:8|15)(?:va|vb)?)$/, '');
+    if (ABC_CLEF_NAMES[bare] && bare !== 'none') return abcClefToMusicXml(word);
+  }
+  return undefined;
 }
 
 function buildMeasures(
@@ -1569,6 +1623,7 @@ function buildMeasures(
   timeSignature: TimeSignature,
   measureDuration: number,
   clef?: Clef,
+  octaveShift: number = 0,
 ): { measures: Measure[]; lineBreaks: number[]; hasIndividualChordDurations: boolean } {
   const measures: Measure[] = [];
   let currentEntries: MeasureEntry[] = [];
@@ -1701,7 +1756,7 @@ function buildMeasures(
           break;
         }
 
-        const entry = createNoteEntry(token, currentUnitNote, pendingTie, inGrace, tupletState, graceSlash);
+        const entry = createNoteEntry(token, currentUnitNote, pendingTie, inGrace, tupletState, graceSlash, octaveShift);
         pendingTie = false;
         attachPendingNotations(entry);
 
@@ -1861,7 +1916,7 @@ function buildMeasures(
 
             const entry = chordToken.type === 'rest'
               ? createRestEntry(chordToken, currentUnitNote, tupletState, measureDuration)
-              : createNoteEntry(chordToken, currentUnitNote, false, inGrace, tupletState, graceSlash);
+              : createNoteEntry(chordToken, currentUnitNote, false, inGrace, tupletState, graceSlash, octaveShift);
 
             // Restore for any other processing
             chordToken.durationNum = originalNum;
@@ -2311,6 +2366,7 @@ function createNoteEntry(
   isGrace: boolean,
   tupletState: { p: number; q: number; remaining: number } | null,
   graceSlash: boolean = false,
+  octaveShift: number = 0,
 ): NoteEntry {
   const num = token.durationNum || 1;
   const den = token.durationDen || 1;
@@ -2328,10 +2384,15 @@ function createNoteEntry(
 
   const { noteType, dots } = durationToNoteType(isGrace ? lengthToDuration(num, den, unitNote) : duration);
 
+  // A voice's octave= shift moves every written pitch by whole octaves
+  const pitch = token.pitch && octaveShift !== 0
+    ? { ...token.pitch, octave: token.pitch.octave + octaveShift }
+    : token.pitch;
+
   const entry: NoteEntry = {
     _id: generateId(),
     type: 'note',
-    pitch: token.pitch,
+    pitch,
     duration,
     voice: '1',
     noteType,

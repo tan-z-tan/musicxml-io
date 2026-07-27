@@ -581,6 +581,38 @@ describe('ABC 2.1 syntax coverage', () => {
     });
   });
 
+  describe('Clefs and voice octaves', () => {
+    it('should apply a clef named on the K: field', () => {
+      const clef = parseAbc('X:1\nK:C clef=bass\nC,D,E,F,|\n')
+        .parts[0].measures[0].attributes?.clef?.[0];
+      expect(clef).toEqual({ sign: 'F', line: 4 });
+    });
+
+    it('should accept the bare clef form', () => {
+      const clef = parseAbc('X:1\nK:C bass\nC,D,E,F,|\n')
+        .parts[0].measures[0].attributes?.clef?.[0];
+      expect(clef).toEqual({ sign: 'F', line: 4 });
+    });
+
+    it('should parse octave-transposing clefs', () => {
+      const clef = parseAbc('X:1\nK:C clef=treble-8\nCDEF|\n')
+        .parts[0].measures[0].attributes?.clef?.[0];
+      expect(clef).toMatchObject({ sign: 'G', line: 2, clefOctaveChange: -1 });
+      expect(roundTrip('X:1\nK:C clef=treble-8\nCDEF|\n')).toContain('clef=treble-8');
+    });
+
+    it('should apply a voice octave= shift to its pitches', () => {
+      const score = parseAbc('X:1\nV:1 clef=bass octave=-2\nK:C\nCDEF|\n');
+      const note = score.parts[0].measures[0].entries.find(e => e.type === 'note') as any;
+      expect(note.pitch.octave).toBe(2);
+    });
+
+    it('should take the octave= shift back out when serializing', () => {
+      const abc = 'X:1\nV:1 clef=bass octave=-2\nK:C\nCDEF|\n';
+      expect(roundTrip(abc)).toContain('CDEF');
+    });
+  });
+
   describe('Multi-tune files', () => {
     const twoTunes = 'X:1\nT:One\nK:C\nCDEF|\n\nX:2\nT:Two\nK:G\nGABc|\n';
 
