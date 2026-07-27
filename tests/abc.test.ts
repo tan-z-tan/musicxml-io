@@ -613,6 +613,25 @@ describe('ABC 2.1 syntax coverage', () => {
     });
   });
 
+  describe('Pathological input', () => {
+    it('should serialize an unterminated inline field marker in linear time', () => {
+      // A <words> direction carries arbitrary text from MusicXML, including
+      // text that opens an ABC inline field and never closes it. Matching that
+      // against a pattern whose whitespace run overlaps the value run costs
+      // ~4.4s here; keeping the two unambiguous makes it immeasurable.
+      const score = parseAbc('X:1\nK:C\nCDEF|\n');
+      score.parts[0].measures[0].entries.unshift({
+        _id: 'test-words',
+        type: 'direction',
+        directionTypes: [{ kind: 'words', text: `[A:${' '.repeat(64_000)}` }],
+      });
+
+      const start = performance.now();
+      serializeAbc(score);
+      expect(performance.now() - start).toBeLessThan(2000);
+    });
+  });
+
   describe('Multi-tune files', () => {
     const twoTunes = 'X:1\nT:One\nK:C\nCDEF|\n\nX:2\nT:Two\nK:G\nGABc|\n';
 

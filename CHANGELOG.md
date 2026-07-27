@@ -24,6 +24,7 @@
 - Bundle size: importing only `parse` now costs ~47 KB minified / ~13 KB gzipped (was ~49 KB / ~14 KB); the txml dependency is gone.
 
 ### Fixed
+- Fixed a quadratic-backtracking regular expression in the ABC serializer (CodeQL `js/polynomial-redos`). A `<words>` direction carrying text that opens an ABC inline field without closing it — `[A:` followed by whitespace, which MusicXML input can supply — was matched against a pattern whose whitespace run overlapped its value run. 64k characters took ~4.4s; it is now immeasurable. Six further ABC field patterns with the same ambiguity were made unambiguous; none of those were reachable with an input that triggered the blowup, but the shape is a hazard worth removing.
 - ABC fingering decorations (`!0!` … `!5!`) kept their digits through a MusicXML round-trip. The value was written to the wrong field, so `<fingering>` came out empty.
 - Whitespace-significant text is no longer lost when parsing: whitespace-only `<words>`/`<credit-words>` content (including `xml:space="preserve"`), and whitespace-only lyric `<text>` such as the ideographic space `　` used in Japanese lyrics, are now preserved. The previous XML parser silently trimmed or dropped them.
 - Astral-plane numeric character references (e.g. `&#x1D11E;` MUSICAL SYMBOL G CLEF, used by SMuFL text) now decode correctly. The previous entity decoder used `String.fromCharCode`, which corrupted code points above U+FFFF.

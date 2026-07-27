@@ -273,13 +273,16 @@ function parseHeader(lines: string[]): { header: AbcHeader; bodyStartIndex: numb
     }
 
     // Header fields are in format "X:value"
-    const fieldMatch = line.match(/^([A-Za-z]):\s*(.*)/);
+    // Capture everything after the colon and trim in code: an in-pattern \s*
+    // ahead of (.*) makes the split point ambiguous and the match quadratic.
+    const fieldMatch = line.match(/^([A-Za-z]):(.*)/);
     // After K: is found, only accept specific header-like fields (I:, N:)
     // V: lines after K: are handled separately - they go to both header (for voice defs)
     // and remain in the body (for voice switching), so they DON'T go in headerFieldOrder
     const postKFields = new Set(['I', 'N']);
     if (fieldMatch && (!foundKey || fieldMatch[1] === 'V' || (foundKey && postKFields.has(fieldMatch[1])))) {
-      const [, field, value] = fieldMatch;
+      const [, field, rawFieldValue] = fieldMatch;
+      const value = rawFieldValue.trimStart();
       lastField = field;
       // If we're after K: and this is a post-K: header field (I:, N:)
       if (foundKey && field !== 'V') {
@@ -680,12 +683,12 @@ function tokenizeBody(bodyLines: string[]): { tokens: AbcToken[][]; voiceIds: st
     }
 
     // Check for lyrics line
-    const lyricsMatch = line.match(/^w:\s*(.*)/);
+    const lyricsMatch = line.match(/^w:(.*)/);
     if (lyricsMatch) {
       const syllables = parseLyricLine(lyricsMatch[1]);
       voiceTokens.get(currentVoice)!.push({
         type: 'lyrics',
-        value: lyricsMatch[1],
+        value: lyricsMatch[1].trimStart(),
         syllables,
       });
       isContinuation = false;
@@ -693,7 +696,7 @@ function tokenizeBody(bodyLines: string[]): { tokens: AbcToken[][]; voiceIds: st
     }
 
     // Handle body K: line (key change mid-tune)
-    const bodyKeyMatch = line.match(/^K:\s*(.*)/);
+    const bodyKeyMatch = line.match(/^K:(.*)/);
     if (bodyKeyMatch) {
       const currentTokens = voiceTokens.get(currentVoice)!;
       if (currentTokens.length > 0) {
@@ -711,7 +714,7 @@ function tokenizeBody(bodyLines: string[]): { tokens: AbcToken[][]; voiceIds: st
 
     // Other field lines in the body (P:, s:, r:, ...). These have no internal
     // model counterpart, so keep them in place for round-trip.
-    const bodyFieldMatch = line.match(/^([A-Za-z]):\s*(.*)$/);
+    const bodyFieldMatch = /^[A-Za-z]:/.test(line);
     if (bodyFieldMatch && !/^\[/.test(line)) {
       voiceTokens.get(currentVoice)!.push({
         type: 'inline_field',
@@ -753,7 +756,7 @@ function tokenizeBody(bodyLines: string[]): { tokens: AbcToken[][]; voiceIds: st
     // Process tokens, handling inline voice changes
     for (const token of tokens) {
       if (token.type === 'inline_field') {
-        const fieldMatch = token.value.match(/^V:\s*(.+)/);
+        const fieldMatch = token.value.match(/^V:(.+)/);
         if (fieldMatch) {
           const voiceId = fieldMatch[1].trim().split(/\s+/)[0];
           currentVoice = voiceId;
@@ -1245,12 +1248,11 @@ function parseNoteToken(line: string, i: number): { token: AbcToken; nextIndex: 
  * @returns The multiplier to apply to the accidental, and the index after it.
  */
 function parseMicrotoneFactor(line: string, i: number): { factor: number; nextIndex: number } {
-  const match = line.slice(i).match(/^(\d*)\/(\d*)|^(\d+)(?![\d/])/);
+  // Only the fractional forms are microtones in ABC 2.1. A plain integer
+  // (^3) belongs to the duration parser, and is left alone by requiring the
+  // slash here. Repetitions are bounded so the match stays linear.
+  const match = line.slice(i).match(/^(\d{0,3})\/(\d{0,3})/);
   if (!match) return { factor: 1, nextIndex: i };
-
-  // Plain integer with no slash (e.g. ^3) is not valid microtone syntax in
-  // ABC 2.1 — only the fractional forms are. Leave it for the duration parser.
-  if (match[3] !== undefined) return { factor: 1, nextIndex: i };
 
   const num = match[1] === '' ? 1 : parseInt(match[1], 10);
   const den = match[2] === '' ? 2 : parseInt(match[2], 10);
@@ -1545,16 +1547,19 @@ function buildScore(header: AbcHeader, voiceTokensList: AbcToken[][], voiceIds: 
 }
 
 function parseTempoToDirection(tempoStr: string): DirectionEntry | null {
-  // Match patterns like "1/4=120", "120", "Allegro 1/4=120"
-  const match = tempoStr.match(/(?:(\d+)\/(\d+)\s*=\s*)?(\d+)/);
-  if (!match) return null;
+  // "1/4=120" or "Allegro 1/4=120": a beat unit and a rate. Digit runs are
+  // bounded so searching an unanchored pattern stays linear.
+  const withUnit = tempoStr.match(/(\d{1,4})\/(\d{1,4})\s*=\s*(\d{1,6})/);
+  // Otherwise a bare rate, as in "120"
+  const rateOnly = withUnit ? null : tempoStr.match(/\d{1,6}/);
+  if (!withUnit && !rateOnly) return null;
 
-  const perMinute = parseInt(match[3], 10);
+  const perMinute = parseInt(withUnit ? withUnit[3] : rateOnly![0], 10);
   let beatUnit: NoteType = 'quarter';
 
-  if (match[1] && match[2]) {
-    const num = parseInt(match[1], 10);
-    const den = parseInt(match[2], 10);
+  if (withUnit) {
+    const num = parseInt(withUnit[1], 10);
+    const den = parseInt(withUnit[2], 10);
     const quarterNotes = (num / den) * 4;
     const found = NOTE_TYPE_MAP[quarterNotes];
     if (found) beatUnit = found;
@@ -2196,7 +2201,7 @@ function buildMeasures(
           break;
         }
 
-        const fieldMatch = token.value.match(/^([A-Za-z]):\s*(.*)$/);
+        const fieldMatch = token.value.match(/^([A-Za-z]):(.*)$/);
         if (!fieldMatch) break;
         const [, field, rawValue] = fieldMatch;
         const value = rawValue.trim();

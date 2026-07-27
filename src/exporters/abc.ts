@@ -1499,11 +1499,11 @@ function serializeMeasureEntries(
             handledAsSpecial = true;
             break;
           }
-          const inlineField = dt.text.match(/^\[([A-Za-z]):\s*([^\]]*)\]$/);
+          const inlineField = dt.text.match(/^\[([A-Za-z]):([^\]]*)\]$/);
           if (inlineField) {
             parts.push(dt.text);
             if (inlineField[1] === 'L') {
-              const lMatch = inlineField[2].match(/^(\d+)\/(\d+)$/);
+              const lMatch = inlineField[2].trim().match(/^(\d+)\/(\d+)$/);
               if (lMatch) {
                 currentUnitNote = { num: parseInt(lMatch[1], 10), den: parseInt(lMatch[2], 10) };
               }
