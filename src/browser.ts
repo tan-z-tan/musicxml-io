@@ -75,10 +75,10 @@ export type {
 } from './types';
 
 // Importers
-export { parse, parseCompressed, isCompressed, parseAuto, parseAbc } from './importers';
+export { parse, parseCompressed, isCompressed, parseAuto, parseAbc, parseAbcTunes } from './importers';
 
 // Exporters
-export { serialize, serializeCompressed, exportMidi, exportMidiWithTimingMap, serializeAbc } from './exporters';
+export { serialize, serializeCompressed, exportMidi, exportMidiWithTimingMap, serializeAbc, serializeAbcTunes } from './exporters';
 export type {
   SerializeOptions,
   MidiExportOptions,

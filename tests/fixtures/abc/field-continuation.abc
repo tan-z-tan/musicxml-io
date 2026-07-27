@@ -1,0 +1,9 @@
+X:1
+T:A very long title that
++:continues on the next line
+C:Composer name
++: and more
+M:4/4
+L:1/8
+K:C
+CDEF GABc|

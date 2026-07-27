@@ -14,7 +14,15 @@ import type {
   KeySignature,
   TimeSignature,
   Barline,
+  Notation,
+  MeasureEntry,
 } from '../types';
+import {
+  ABC_BODY_FIELD_MARKER,
+  ABC_SHORTHAND_DECORATIONS,
+  abcDecorationFor,
+  type AbcDecorationTarget,
+} from '../abc-decorations';
 
 // ============================================================
 // Options
@@ -42,6 +50,17 @@ const DIVISIONS_PER_QUARTER = 960;
 // Module-level flag: whether to use explicit /2 form instead of shorthand /
 let useExplicitHalf = false;
 let useIndividualChordDurations = false;
+/**
+ * Hairpin currently open. MusicXML closes both crescendo and diminuendo with
+ * `<wedge type="stop"/>`, so the direction has to be carried across entries to
+ * pick between `!crescendo)!` and `!diminuendo)!`.
+ */
+let openWedge: 'crescendo' | 'diminuendo' | null = null;
+/**
+ * octave= shift of the voice being serialized. The importer folds it into the
+ * pitches, so writing ABC has to take it back out.
+ */
+let voiceOctaveShift = 0;
 
 /** Map KeySignature fifths to ABC key note */
 const FIFTHS_TO_KEY_MAJOR: Record<number, string> = {
@@ -81,16 +100,24 @@ const NOTE_TYPE_TO_QUARTER_LENGTH: Record<string, number> = {
 // Key Serialization
 // ============================================================
 
-function musicXmlClefToAbc(clef: { sign: string; line?: number }): string | null {
-  if (clef.sign === 'G' && (clef.line === 2 || clef.line === undefined)) return 'treble';
-  if (clef.sign === 'F' && (clef.line === 4 || clef.line === undefined)) return 'bass';
-  if (clef.sign === 'C' && clef.line === 3) return 'alto';
-  if (clef.sign === 'C' && clef.line === 4) return 'tenor';
-  if (clef.sign === 'C' && clef.line === 1) return 'soprano';
-  if (clef.sign === 'C' && clef.line === 2) return 'mezzo-soprano';
-  if (clef.sign === 'C' && clef.line === 5) return 'baritone';
-  if (clef.sign === 'percussion') return 'perc';
-  return null;
+function musicXmlClefToAbc(clef: { sign: string; line?: number; clefOctaveChange?: number }): string | null {
+  let name: string | null = null;
+  if (clef.sign === 'G' && (clef.line === 2 || clef.line === undefined)) name = 'treble';
+  else if (clef.sign === 'F' && clef.line === 3) name = 'bass3';
+  else if (clef.sign === 'F' && (clef.line === 4 || clef.line === undefined)) name = 'bass';
+  else if (clef.sign === 'C' && clef.line === 3) name = 'alto';
+  else if (clef.sign === 'C' && clef.line === 4) name = 'tenor';
+  else if (clef.sign === 'C' && clef.line === 1) name = 'soprano';
+  else if (clef.sign === 'C' && clef.line === 2) name = 'mezzo-soprano';
+  else if (clef.sign === 'C' && clef.line === 5) name = 'baritone';
+  else if (clef.sign === 'percussion') name = 'perc';
+  if (name === null) return null;
+
+  // Octave-transposing clefs are written treble-8, bass+8, treble-15, ...
+  const shift = clef.clefOctaveChange;
+  if (shift === undefined || shift === 0) return name;
+  const steps = Math.abs(shift) === 2 ? '15' : '8';
+  return `${name}${shift > 0 ? '+' : '-'}${steps}`;
 }
 
 function serializeKey(key: KeySignature): string {
@@ -128,8 +155,11 @@ function modeToAbcString(mode: string): string {
 // ============================================================
 
 function serializeTimeSignature(time: TimeSignature): string {
+  if (time.senzaMisura) return 'none';
   if (time.symbol === 'common') return 'C';
   if (time.symbol === 'cut') return 'C|';
+  // Additive meters are parenthesised, as in M:(2+3+2)/8
+  if (time.beats.includes('+')) return `(${time.beats})/${time.beatType}`;
   return `${time.beats}/${time.beatType}`;
 }
 
@@ -149,9 +179,9 @@ function computeUnitNoteLength(score: Score): UnitNote {
   const time = firstMeasure?.attributes?.time;
 
   if (time) {
-    const beats = parseInt(time.beats, 10);
-    const beatType = time.beatType;
-    const ratio = beats / beatType;
+    // Additive meters (2+3+2) sum their groups
+    const beats = time.beats.split('+').reduce((sum, b) => sum + parseInt(b, 10), 0);
+    const ratio = beats / time.beatType;
     if (ratio < 0.75) {
       return { num: 1, den: 16 };
     }
@@ -205,6 +235,24 @@ function formatAbcDuration(num: number, den: number): string {
 // Note Pitch Serialization
 // ============================================================
 
+/**
+ * ABC spelling for a microtonal alteration, e.g. 0.5 → `^1/2`, -1.5 → `_3/2`.
+ * The fraction is written explicitly so the value survives a round-trip.
+ */
+function serializeMicrotone(alter: number): string {
+  const symbol = alter > 0 ? '^' : '_';
+  const magnitude = Math.abs(alter);
+  // Find the simplest fraction that reproduces the alteration
+  for (let den = 2; den <= 64; den++) {
+    const num = magnitude * den;
+    if (Math.abs(num - Math.round(num)) < 1e-9) {
+      return `${symbol}${Math.round(num)}/${den}`;
+    }
+  }
+  // Not expressible as a simple fraction: fall back to the nearest semitone
+  return magnitude >= 1.5 ? symbol + symbol : symbol;
+}
+
 function serializePitch(pitch: Pitch, explicitNatural?: boolean): string {
   let result = '';
 
@@ -216,11 +264,12 @@ function serializePitch(pitch: Pitch, explicitNatural?: boolean): string {
     else if (pitch.alter === 2) result += '^^';
     else if (pitch.alter === -1) result += '_';
     else if (pitch.alter === -2) result += '__';
+    else result += serializeMicrotone(pitch.alter);
   }
 
-  // Note letter and octave
+  // Note letter and octave, with the voice's octave= shift removed
   const step = pitch.step;
-  const octave = pitch.octave;
+  const octave = pitch.octave - voiceOctaveShift;
 
   if (octave >= 5) {
     // Lowercase letter
@@ -282,16 +331,123 @@ function serializeHarmony(harmony: HarmonyEntry): string {
 }
 
 // ============================================================
+// Decoration Serialization
+// ============================================================
+
+/** Map a `<notations>` child back to the ABC decoration it came from. */
+function notationToDecoration(notation: Notation): AbcDecorationTarget | null {
+  switch (notation.type) {
+    case 'articulation':
+      return { kind: 'articulation', articulation: notation.articulation };
+    case 'ornament':
+      if (notation.ornament === 'wavy-line') {
+        if (notation.wavyLineType === 'start' || notation.wavyLineType === 'stop') {
+          return { kind: 'trill-line', wavyLineType: notation.wavyLineType };
+        }
+        return null;
+      }
+      return { kind: 'ornament', ornament: notation.ornament };
+    case 'technical':
+      if (notation.technical === 'fingering') {
+        const digits = notation.text ?? notation.fingering;
+        return digits !== undefined ? { kind: 'fingering', fingering: digits } : null;
+      }
+      return { kind: 'technical', technical: notation.technical };
+    case 'fermata':
+      return { kind: 'fermata', inverted: notation.fermataType === 'inverted' };
+    case 'arpeggiate':
+      return { kind: 'arpeggiate' };
+    default:
+      return null;
+  }
+}
+
+/** ABC decorations for a note, emitted immediately before the note itself. */
+function serializeNoteDecorations(note: NoteEntry): string {
+  if (!note.notations) return '';
+  let result = '';
+  for (const notation of note.notations) {
+    const target = notationToDecoration(notation);
+    if (!target) continue;
+    const spelling = abcDecorationFor(target);
+    if (spelling) result += spelling;
+  }
+  return result;
+}
+
+// ============================================================
 // Dynamics Serialization
 // ============================================================
 
-function serializeDynamics(direction: DirectionEntry): string | null {
+/**
+ * ABC text for a `<direction>` that is not a tempo mark: dynamics, hairpins,
+ * navigation marks, ABC round-trip markers and free text annotations.
+ *
+ * @returns The ABC text, or `null` when the direction has no ABC form.
+ */
+function serializeDirectionText(
+  direction: DirectionEntry,
+  opts: Required<AbcSerializeOptions>,
+): string | null {
   for (const dt of direction.directionTypes) {
-    if (dt.kind === 'dynamics' && dt.value) {
-      return `!${dt.value}!`;
+    switch (dt.kind) {
+      case 'dynamics':
+        return opts.includeDynamics && dt.value ? `!${dt.value}!` : null;
+
+      case 'wedge': {
+        if (dt.type === 'stop') {
+          const closing = openWedge ?? 'crescendo';
+          openWedge = null;
+          return abcDecorationFor({ kind: 'wedge', wedge: closing, stop: true });
+        }
+        openWedge = dt.type;
+        return abcDecorationFor({ kind: 'wedge', wedge: dt.type, stop: false });
+      }
+
+      case 'segno':
+        return abcDecorationFor({ kind: 'segno' });
+      case 'coda':
+        return abcDecorationFor({ kind: 'coda' });
+
+      case 'words':
+        return serializeWordsDirection(dt.text, direction);
+
+      default:
+        break;
     }
   }
   return null;
+}
+
+/**
+ * ABC text for a `<words>` direction.
+ *
+ * ABC constructs with no MusicXML counterpart (spacers, unmapped decorations)
+ * are stored as `<words>` carrying their literal ABC text; anything else is a
+ * text annotation and is quoted with the placement prefix ABC uses.
+ */
+function serializeWordsDirection(text: string, direction: DirectionEntry): string | null {
+  // Decorations preserved verbatim: !name! long form or single-char shorthand
+  if (/^![^!]+!$/.test(text)) return text;
+  if (text.length === 1 && ABC_SHORTHAND_DECORATIONS.has(text)) return text;
+  // Spacer (y, y4, ...)
+  if (/^y\d*$/.test(text)) return text;
+  // Navigation words that ABC spells as decorations (!D.C.!, !fine!, ...)
+  const asDecoration = abcDecorationFor({ kind: 'words', text });
+  if (asDecoration) return asDecoration;
+  if (text === '') return null;
+
+  // Otherwise a text annotation: restore the ABC placement prefix
+  const halign = direction.directionTypes.find(d => d.kind === 'words' && d.text === text) as
+    | { halign?: string }
+    | undefined;
+  let marker = '^';
+  if (direction.placement === 'below') marker = '_';
+  else if (direction.placement === 'above') marker = '^';
+  else if (halign?.halign === 'right') marker = '<';
+  else if (halign?.halign === 'left') marker = '>';
+  else if (halign?.halign === 'center') marker = '@';
+  return `"${marker}${text}"`;
 }
 
 // ============================================================
@@ -321,6 +477,22 @@ function serializeTempo(direction: DirectionEntry): string | null {
 // ============================================================
 
 /**
+ * Serialize several Scores into a single multi-tune ABC file.
+ *
+ * Counterpart to `parseAbcTunes`: each Score becomes one tune, separated by a
+ * blank line as the ABC standard requires.
+ */
+export function serializeAbcTunes(scores: Score[], options?: AbcSerializeOptions): string {
+  return scores
+    .map((score, index) => serializeAbc(score, {
+      ...options,
+      // Number the tunes when they carry no reference number of their own
+      referenceNumber: options?.referenceNumber ?? index + 1,
+    }))
+    .join('\n');
+}
+
+/**
  * Serialize a Score object to ABC notation format string.
  */
 export function serializeAbc(score: Score, options?: AbcSerializeOptions): string {
@@ -331,6 +503,9 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
     includeDynamics: options?.includeDynamics ?? true,
     includeLyrics: options?.includeLyrics ?? true,
   };
+
+  openWedge = null;
+  voiceOctaveShift = 0;
 
   // Set module-level flag for explicit /2 duration format
   useExplicitHalf = score.metadata.miscellaneous?.find(m => m.name === 'abc-explicit-half')?.value === 'true';
@@ -435,11 +610,15 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
       }
     }
 
-    if (attrs?.key) {
-      lines.push(`K:${serializeKey(attrs.key)}`);
-    } else {
-      lines.push('K:C');
+    // A single-voice tune carries its clef on the K: field; multi-voice tunes
+    // put it on their V: lines instead
+    let clefSuffix = '';
+    if (score.parts.length === 1) {
+      const clef = attrs?.clef?.[0];
+      const clefName = clef ? musicXmlClefToAbc(clef) : null;
+      if (clefName && clefName !== 'treble') clefSuffix = ` clef=${clefName}`;
     }
+    lines.push(`K:${attrs?.key ? serializeKey(attrs.key) : 'C'}${clefSuffix}`);
   }
 
   // Read line break positions from metadata
@@ -454,6 +633,8 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
   const lyricsAfterAll = score.metadata.miscellaneous?.find(m => m.name === 'abc-lyrics-after-all')?.value === 'true';
   const lyricsLineCountsStr = score.metadata.miscellaneous?.find(m => m.name === 'abc-lyrics-line-counts')?.value;
   const lyricsLineCounts: number[] = lyricsLineCountsStr ? JSON.parse(lyricsLineCountsStr) : [];
+  const lyricsLineVersesStr = score.metadata.miscellaneous?.find(m => m.name === 'abc-lyrics-line-verses')?.value;
+  const lyricsLineVerses: number[] = lyricsLineVersesStr ? JSON.parse(lyricsLineVersesStr) : [];
 
   // Check for inline voice markers
   const inlineVoiceMarkersStr = score.metadata.miscellaneous?.find(m => m.name === 'abc-inline-voice-markers')?.value;
@@ -499,12 +680,19 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
   const partDivisions: number[] = [];
   for (let partIdx = 0; partIdx < score.parts.length; partIdx++) {
     const part = score.parts[partIdx];
+    voiceOctaveShift = readVoiceOctaveShift(score, partIdx);
     const divisions = getPartDivisions(part);
     partDivisions.push(divisions);
     const measStrings: string[] = [];
     let currentUnitNote = { ...unitNote };
     let currentKey: KeySignature | undefined = part.measures[0]?.attributes?.key;
+    // Measures absorbed into a preceding Zn multi-measure rest
+    const absorbedMeasures = new Set<number>();
     for (let mi = 0; mi < part.measures.length; mi++) {
+      if (absorbedMeasures.has(mi)) {
+        measStrings.push('');
+        continue;
+      }
       const measure = part.measures[mi];
       const measDivisions = measure.attributes?.divisions ?? divisions;
       let measureStr = '';
@@ -515,7 +703,10 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
         if (currentKey === undefined ||
             newKey.fifths !== currentKey.fifths ||
             (newKey.mode || 'major') !== (currentKey.mode || 'major')) {
-          measureStr += '\nK:' + serializeKey(newKey) + '\n';
+          // An inline [K:...] marker already writes the change in place
+          if (!hasInlineKeyMarker(measure)) {
+            measureStr += '\nK:' + serializeKey(newKey) + '\n';
+          }
           currentKey = newKey;
         }
       }
@@ -529,12 +720,16 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
       // Entries
       const { noteStr, updatedUnitNote } = serializeMeasureEntries(measure, measDivisions, currentUnitNote, opts);
       if (updatedUnitNote) currentUnitNote = updatedUnitNote;
-      measureStr += noteStr;
+      const collapsed = applyMultiMeasureRest(measure, noteStr);
+      for (let k = 1; k <= collapsed.absorbed; k++) absorbedMeasures.add(mi + k);
+      measureStr += collapsed.text;
 
       // Right barline
       const rightBarline = measure.barlines?.find(b => b.location === 'right');
       if (rightBarline) {
         measureStr += serializeBarline(rightBarline);
+      } else if (!measureHasNotes(measure)) {
+        // A measure holding only round-trip markers gets no bar line
       } else if (mi < part.measures.length - 1) {
         // Don't add default | if the next measure has a left barline with barStyle or repeat
         // (the left barline serves as both the right of this measure and left of next)
@@ -654,7 +849,7 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
           }
         }
         voiceMeasureCursor[voiceId] = endMeasure;
-        lines.push(groupMusic);
+        lines.push(stripLeadingBlankLines(groupMusic));
       }
 
       // Output comment separator between groups (if not last group)
@@ -687,7 +882,8 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
       }
 
       const divisions = partDivisions[partIdx];
-      const bodyResult = serializePartBody(part, divisions, unitNote, opts, lineBreaks, lyricsAfterAll, lyricsLineCounts);
+      voiceOctaveShift = readVoiceOctaveShift(score, partIdx);
+      const bodyResult = serializePartBody(part, divisions, unitNote, opts, lineBreaks, lyricsAfterAll, lyricsLineCounts, lyricsLineVerses);
 
       let musicLine = bodyResult.music;
 
@@ -698,7 +894,7 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
         musicLine = marker + musicLine;
       }
 
-      lines.push(musicLine);
+      lines.push(stripLeadingBlankLines(musicLine));
 
       if (opts.includeLyrics && bodyResult.lyrics) {
         lines.push(bodyResult.lyrics);
@@ -724,6 +920,24 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
   }
 
   return lines.join('\n') + '\n';
+}
+
+/**
+ * Drop leading newlines from a body chunk. Field and key-change markers are
+ * written with a newline on both sides; at the start of a chunk that would
+ * open the body with a blank line.
+ */
+function stripLeadingBlankLines(text: string): string {
+  return text.replace(/^\n+/, '');
+}
+
+/** The octave= shift the importer folded into this part's pitches. */
+function readVoiceOctaveShift(score: Score, partIndex: number): number {
+  const stored = score.metadata.miscellaneous?.find(
+    m => m.name === `abc-voice-octave-${partIndex}`,
+  )?.value;
+  const shift = stored ? parseInt(stored, 10) : 0;
+  return Number.isFinite(shift) ? shift : 0;
 }
 
 function findTempoInMeasure(measure?: Measure): string | null {
@@ -767,15 +981,21 @@ function serializePartBody(
   lineBreaks: number[] = [],
   lyricsAfterAll: boolean = false,
   lyricsLineCounts: number[] = [],
+  lyricsLineVerses: number[] = [],
 ): PartBodyResult {
   let unitNote = { ...initialUnitNote };
   const musicParts: string[] = [];
-  const allLyrics: Map<number, string[]> = new Map(); // measureIndex -> lyrics array
+  // measureIndex -> verse number -> syllables
+  const allLyrics: Map<number, Map<number, string[]>> = new Map();
 
   // Track current key for detecting inline key changes
   let currentKey: KeySignature | undefined = part.measures[0]?.attributes?.key;
 
+  // Measures absorbed into a preceding Zn multi-measure rest
+  const absorbedMeasures = new Set<number>();
+
   for (let mi = 0; mi < part.measures.length; mi++) {
+    if (absorbedMeasures.has(mi)) continue;
     const measure = part.measures[mi];
     const measDivisions = measure.attributes?.divisions ?? divisions;
 
@@ -785,7 +1005,10 @@ function serializePartBody(
       if (currentKey === undefined ||
           newKey.fifths !== currentKey.fifths ||
           (newKey.mode || 'major') !== (currentKey.mode || 'major')) {
-        musicParts.push('\nK:' + serializeKey(newKey) + '\n');
+        // An inline [K:...] marker already writes the change in place
+        if (!hasInlineKeyMarker(measure)) {
+          musicParts.push('\nK:' + serializeKey(newKey) + '\n');
+        }
         currentKey = newKey;
       }
     }
@@ -804,9 +1027,11 @@ function serializePartBody(
     if (updatedUnitNote) {
       unitNote = updatedUnitNote;
     }
-    musicParts.push(noteStr);
+    const collapsed = applyMultiMeasureRest(measure, noteStr);
+    for (let k = 1; k <= collapsed.absorbed; k++) absorbedMeasures.add(mi + k);
+    musicParts.push(collapsed.text);
 
-    if (lyrics.length > 0) {
+    if (lyrics.size > 0) {
       allLyrics.set(mi, lyrics);
     }
 
@@ -814,6 +1039,8 @@ function serializePartBody(
     const rightBarline = measure.barlines?.find(b => b.location === 'right');
     if (rightBarline) {
       musicParts.push(serializeBarline(rightBarline));
+    } else if (!measureHasNotes(measure)) {
+      // A measure holding only round-trip markers gets no bar line
     } else if (mi < part.measures.length - 1) {
       // Don't add default | if the next measure has a left barline with barStyle or repeat
       // (the left barline serves as both the right of this measure and left of next)
@@ -852,22 +1079,34 @@ function serializePartBody(
     return { music: musicStr, lyrics: null };
   }
 
+  // Verse numbers present anywhere in this part, in ascending order
+  const verses = new Set<number>();
+  for (const byVerse of allLyrics.values()) {
+    for (const verse of byVerse.keys()) verses.add(verse);
+  }
+  const sortedVerses = Array.from(verses).sort((a, b) => a - b);
+
+  /** Syllables of one verse across the measure range [from, to]. */
+  function syllablesIn(verse: number, from: number, to: number): string[] {
+    const syllables: string[] = [];
+    for (let m = from; m <= to; m++) {
+      const forVerse = allLyrics.get(m)?.get(verse);
+      if (forVerse) syllables.push(...forVerse);
+    }
+    return syllables;
+  }
+
   // Group lyrics by line break positions
   // Each "line" spans from one line break to the next
   // lineBreaks can have negative values (line continuations), use absolute values for grouping
   const lineBreakSet = new Set(lineBreaks.map(v => Math.abs(v)));
-  const lyricsByLine: { startMeasure: number; endMeasure: number; syllables: string[] }[] = [];
+  const lyricLineRanges: { startMeasure: number; endMeasure: number }[] = [];
   let lineStart = 0;
   for (let mi = 0; mi < part.measures.length; mi++) {
     if (lineBreakSet.has(mi + 1) || mi === part.measures.length - 1) {
-      // Collect lyrics for measures [lineStart, mi]
-      const syllables: string[] = [];
-      for (let m = lineStart; m <= mi; m++) {
-        const ls = allLyrics.get(m);
-        if (ls) syllables.push(...ls);
-      }
-      if (syllables.length > 0) {
-        lyricsByLine.push({ startMeasure: lineStart, endMeasure: mi, syllables });
+      const hasAny = sortedVerses.some(v => syllablesIn(v, lineStart, mi).length > 0);
+      if (hasAny) {
+        lyricLineRanges.push({ startMeasure: lineStart, endMeasure: mi });
       }
       lineStart = mi + 1;
     }
@@ -892,39 +1131,47 @@ function serializePartBody(
     return result;
   }
 
+  /** One `w:` line per verse for the measure range [from, to]. */
+  function lyricLinesFor(from: number, to: number): string[] {
+    const out: string[] = [];
+    for (const verse of sortedVerses) {
+      const syllables = syllablesIn(verse, from, to);
+      if (syllables.length > 0) out.push(formatLyrics(syllables));
+    }
+    return out;
+  }
+
+  const lastMeasure = part.measures.length - 1;
+
   // If lyricsAfterAll, output all lyrics after all music lines
   if (lyricsAfterAll) {
-    // Collect all syllables in order
-    const allSyllables: string[] = [];
-    const sortedMeasures = Array.from(allLyrics.keys()).sort((a, b) => a - b);
-    for (const mi of sortedMeasures) {
-      allSyllables.push(...allLyrics.get(mi)!);
-    }
-
-    // Split syllables back into w: lines using stored counts
+    // Split each verse back into w: lines using the stored syllable counts
     if (lyricsLineCounts.length > 0) {
       const lyricsLines: string[] = [];
-      let offset = 0;
-      for (const count of lyricsLineCounts) {
-        const chunk = allSyllables.slice(offset, offset + count);
-        if (chunk.length > 0) {
-          lyricsLines.push(formatLyrics(chunk));
-        }
-        offset += count;
+      const offsets = new Map<number, number>();
+      for (let li = 0; li < lyricsLineCounts.length; li++) {
+        const verse = lyricsLineVerses[li] ?? 1;
+        const all = syllablesIn(verse, 0, lastMeasure);
+        const offset = offsets.get(verse) ?? 0;
+        const chunk = all.slice(offset, offset + lyricsLineCounts[li]);
+        if (chunk.length > 0) lyricsLines.push(formatLyrics(chunk));
+        offsets.set(verse, offset + lyricsLineCounts[li]);
       }
-      // Any remaining syllables
-      if (offset < allSyllables.length) {
-        lyricsLines.push(formatLyrics(allSyllables.slice(offset)));
+      // Any syllables beyond the recorded counts
+      for (const verse of sortedVerses) {
+        const all = syllablesIn(verse, 0, lastMeasure);
+        const offset = offsets.get(verse) ?? 0;
+        if (offset < all.length) lyricsLines.push(formatLyrics(all.slice(offset)));
       }
       return { music: musicStr, lyrics: lyricsLines.join('\n') };
     }
 
-    // Fallback: single w: line
-    return { music: musicStr, lyrics: formatLyrics(allSyllables) };
+    // Fallback: one w: line per verse
+    return { music: musicStr, lyrics: lyricLinesFor(0, lastMeasure).join('\n') };
   }
 
   // If there are line breaks, interleave lyrics
-  if (lyricsByLine.length > 0 && lineBreaks.length > 0) {
+  if (lyricLineRanges.length > 0 && lineBreaks.length > 0) {
     // Split music string by newlines
     const musicLines = musicStr.split('\n');
     const resultLines: string[] = [];
@@ -933,16 +1180,16 @@ function serializePartBody(
     for (let li = 0; li < musicLines.length; li++) {
       resultLines.push(musicLines[li]);
       // Check if there are lyrics for this music line
-      if (lyricIdx < lyricsByLine.length) {
-        const lyricGroup = lyricsByLine[lyricIdx];
-        // The line index corresponds to the line break position
-        resultLines.push(formatLyrics(lyricGroup.syllables));
+      if (lyricIdx < lyricLineRanges.length) {
+        const range = lyricLineRanges[lyricIdx];
+        resultLines.push(...lyricLinesFor(range.startMeasure, range.endMeasure));
         lyricIdx++;
       }
     }
     // Any remaining lyrics
-    while (lyricIdx < lyricsByLine.length) {
-      resultLines.push(formatLyrics(lyricsByLine[lyricIdx].syllables));
+    while (lyricIdx < lyricLineRanges.length) {
+      const range = lyricLineRanges[lyricIdx];
+      resultLines.push(...lyricLinesFor(range.startMeasure, range.endMeasure));
       lyricIdx++;
     }
 
@@ -950,13 +1197,7 @@ function serializePartBody(
   }
 
   // No line breaks - output all lyrics after music
-  const allSyllables: string[] = [];
-  const sortedMeasures = Array.from(allLyrics.keys()).sort((a, b) => a - b);
-  for (const mi of sortedMeasures) {
-    allSyllables.push(...allLyrics.get(mi)!);
-  }
-
-  return { music: musicStr, lyrics: formatLyrics(allSyllables) };
+  return { music: musicStr, lyrics: lyricLinesFor(0, lastMeasure).join('\n') };
 }
 
 function serializeMeasureEntries(
@@ -964,9 +1205,10 @@ function serializeMeasureEntries(
   divisions: number,
   unitNote: UnitNote,
   opts: Required<AbcSerializeOptions>,
-): { noteStr: string; lyrics: string[]; updatedUnitNote?: UnitNote } {
+): { noteStr: string; lyrics: Map<number, string[]>; updatedUnitNote?: UnitNote } {
   const parts: string[] = [];
-  const lyrics: string[] = [];
+  // Syllables of this measure, keyed by verse number
+  const lyrics = new Map<number, string[]>();
   // Mutable unit note for inline [L:] changes
   let currentUnitNote = { ...unitNote };
   // Collect chord pitches to emit them as [CEG] when the chord ends
@@ -991,17 +1233,30 @@ function serializeMeasureEntries(
         if (note.grace) {
           const graceNotes: string[] = [];
           let gi = ei;
+          // A chord inside the group ({[ce]}) is written with its brackets kept
+          let openChord = false;
           while (gi < measure.entries.length) {
             const ge = measure.entries[gi];
             if (ge.type === 'note' && ge.grace) {
               const gs = serializeNote(ge, divisions, currentUnitNote, false);
+              const startsChord = !ge.chord && isChordHead(measure.entries, gi);
+              if (startsChord && !openChord) {
+                graceNotes.push('[');
+                openChord = true;
+              } else if (openChord && !ge.chord) {
+                graceNotes.push(']');
+                openChord = startsChord;
+                if (startsChord) graceNotes.push('[');
+              }
               graceNotes.push(gs.pitch);
               gi++;
             } else {
               break;
             }
           }
-          parts.push('{' + graceNotes.join('') + '}');
+          if (openChord) graceNotes.push(']');
+          // ABC {/...} is an acciaccatura (slashed); plain {...} an appoggiatura
+          parts.push((note.grace.slash ? '{/' : '{') + graceNotes.join('') + '}');
           ei = gi - 1; // Skip the grouped grace notes
           break;
         }
@@ -1037,13 +1292,16 @@ function serializeMeasureEntries(
           chordSlurEnd = '';
         }
 
-        // Handle lyrics
+        // Handle lyrics (one entry per verse)
         if (note.lyrics && note.lyrics.length > 0 && opts.includeLyrics) {
-          const lyric = note.lyrics[0];
-          if (lyric.text) {
+          for (const lyric of note.lyrics) {
+            if (!lyric.text) continue;
             const syllabic = lyric.syllabic || 'single';
             const suffix = syllabic === 'begin' || syllabic === 'middle' ? '-' : '';
-            lyrics.push(lyric.text + suffix);
+            const verse = lyric.number ?? 1;
+            const bucket = lyrics.get(verse);
+            if (bucket) bucket.push(lyric.text + suffix);
+            else lyrics.set(verse, [lyric.text + suffix]);
           }
         }
 
@@ -1079,18 +1337,20 @@ function serializeMeasureEntries(
           if (note.notations) {
             for (const notation of note.notations) {
               if (notation.type === 'slur') {
-                if (notation.slurType === 'start') slurStart += '(';
+                if (notation.slurType === 'start') slurStart += notation.lineType === 'dotted' ? '.(' : '(';
                 if (notation.slurType === 'stop') slurEnd += ')';
               }
             }
           }
+          const decorations = serializeNoteDecorations(note);
           effectiveSerialized = {
-            full: slurStart + pitchStr + baseDurationStr + tieStr + slurEnd,
+            full: slurStart + decorations + pitchStr + baseDurationStr + tieStr + slurEnd,
             pitch: pitchStr,
             duration: baseDurationStr,
             slurStart,
             slurEnd,
             tieStr,
+            decorations,
           };
         }
 
@@ -1135,7 +1395,7 @@ function serializeMeasureEntries(
             let insertIdx = parts.length;
             for (let pi = parts.length - 1; pi >= 0; pi--) {
               const p = parts[pi];
-              if (/^[vuTM]$/.test(p) || /^![^!]+!$/.test(p) || /^"[^"]*"$/.test(p)) {
+              if ((p.length === 1 && ABC_SHORTHAND_DECORATIONS.has(p)) || /^![^!]+!$/.test(p) || /^"[^"]*"$/.test(p)) {
                 insertIdx = pi;
               } else {
                 break;
@@ -1143,11 +1403,11 @@ function serializeMeasureEntries(
             }
             if (insertIdx < parts.length) {
               parts.splice(insertIdx, 0, chordSlurStart);
-              parts.push(tupletPrefix);
+              parts.push(tupletPrefix + effectiveSerialized.decorations);
               break;
             }
           }
-          parts.push(tupletPrefix + chordSlurStart);
+          parts.push(tupletPrefix + chordSlurStart + effectiveSerialized.decorations);
           break;
         }
 
@@ -1170,7 +1430,7 @@ function serializeMeasureEntries(
             // Insert slur start before decorations
             parts.splice(insertIdx, 0, effectiveSerialized.slurStart);
             // Push note without slur start
-            const noteOnly = effectiveSerialized.pitch + effectiveSerialized.duration + effectiveSerialized.tieStr + effectiveSerialized.slurEnd;
+            const noteOnly = effectiveSerialized.decorations + effectiveSerialized.pitch + effectiveSerialized.duration + effectiveSerialized.tieStr + effectiveSerialized.slurEnd;
             parts.push(tupletPrefix + noteOnly);
             break;
           }
@@ -1186,11 +1446,11 @@ function serializeMeasureEntries(
           const tie1 = effectiveSerialized.tieStr;
           const slurS1 = effectiveSerialized.slurStart;
           const slurE1 = effectiveSerialized.slurEnd;
-          parts.push(tupletPrefix + slurS1 + pitchStr1 + baseDurStr1 + tie1 + brokenResult.marker);
+          parts.push(tupletPrefix + slurS1 + effectiveSerialized.decorations + pitchStr1 + baseDurStr1 + tie1 + brokenResult.marker);
 
           // Serialize the second note with its base duration
           const note2 = brokenResult.nextNote;
-          const pitchStr2 = serializePitch(note2.pitch!, note2.accidental?.value === 'natural');
+          const pitchStr2 = serializeNoteDecorations(note2) + serializePitch(note2.pitch!, note2.accidental?.value === 'natural');
           let tieStr2 = '';
           if (note2.tie?.type === 'start' || note2.ties?.some(t => t.type === 'start')) tieStr2 = '-';
           let slurEnd2 = '';
@@ -1216,49 +1476,48 @@ function serializeMeasureEntries(
       }
 
       case 'direction': {
-        // Check for special ABC markers in words direction types
+        // Check for round-trip markers that stand in for ABC layout syntax
         let handledAsSpecial = false;
         for (const dt of entry.directionTypes) {
-          if (dt.kind === 'words') {
-            // Intra-measure line break/continuation markers
-            if (dt.text === '__abc_line_cont__') {
-              parts.push('\\\n');
-              handledAsSpecial = true;
-              break;
+          if (dt.kind !== 'words') continue;
+          // Intra-measure line break/continuation markers
+          if (dt.text === '__abc_line_cont__') {
+            parts.push('\\\n');
+            handledAsSpecial = true;
+            break;
+          }
+          if (dt.text === '__abc_line_break__') {
+            parts.push('\n');
+            handledAsSpecial = true;
+            break;
+          }
+          // Whole-line body field (P:, s:, r:, ...) kept verbatim
+          if (dt.text.startsWith(ABC_BODY_FIELD_MARKER)) {
+            // The newline that follows comes from the line break token that
+            // separates the field from the music line below it
+            parts.push('\n' + dt.text.slice(ABC_BODY_FIELD_MARKER.length));
+            handledAsSpecial = true;
+            break;
+          }
+          const inlineField = dt.text.match(/^\[([A-Za-z]):([^\]]*)\]$/);
+          if (inlineField) {
+            parts.push(dt.text);
+            if (inlineField[1] === 'L') {
+              const lMatch = inlineField[2].trim().match(/^(\d+)\/(\d+)$/);
+              if (lMatch) {
+                currentUnitNote = { num: parseInt(lMatch[1], 10), den: parseInt(lMatch[2], 10) };
+              }
             }
-            if (dt.text === '__abc_line_break__') {
-              parts.push('\n');
-              handledAsSpecial = true;
-              break;
-            }
-            const lMatch = dt.text.match(/^\[L:\s*(\d+)\/(\d+)\]$/);
-            if (lMatch) {
-              parts.push(dt.text);
-              currentUnitNote = { num: parseInt(lMatch[1], 10), den: parseInt(lMatch[2], 10) };
-              handledAsSpecial = true;
-              break;
-            }
-            // ABC decoration stored as words
-            // Full form: "!crescendo(!", shorthand: "M", "T", "v", "u"
-            const decoMatch = dt.text.match(/^!([^!]+)!$/);
-            if (decoMatch) {
-              parts.push(dt.text);
-              handledAsSpecial = true;
-              break;
-            }
-            // Shorthand single-char decoration (v, u, T, M)
-            if (dt.text.length === 1 && /^[vuTM]$/.test(dt.text)) {
-              parts.push(dt.text);
-              handledAsSpecial = true;
-              break;
-            }
+            handledAsSpecial = true;
+            break;
           }
         }
         if (handledAsSpecial) break;
-        if (opts.includeDynamics) {
-          const dynStr = serializeDynamics(entry);
-          if (dynStr) {
-            parts.push(dynStr);
+
+        const text = serializeDirectionText(entry, opts);
+        if (text) {
+          if (opts.includeChordSymbols || !text.startsWith('"')) {
+            parts.push(text);
           }
         }
         // Tempo is handled in header, skip here
@@ -1287,6 +1546,48 @@ function serializeMeasureEntries(
   // Return updated unit note if it changed (from inline [L:] fields)
   const unitNoteChanged = currentUnitNote.num !== unitNote.num || currentUnitNote.den !== unitNote.den;
   return { noteStr: parts.join(''), lyrics, updatedUnitNote: unitNoteChanged ? currentUnitNote : undefined };
+}
+
+/**
+ * Number of bars covered by the multi-measure rest starting at this measure,
+ * or 0 when the measure does not start one.
+ */
+function multipleRestCount(measure: Measure): number {
+  const styles = measure.attributes?.measureStyle;
+  if (!styles) return 0;
+  for (const style of styles) {
+    if (style.multipleRest && style.multipleRest > 1) return style.multipleRest;
+  }
+  return 0;
+}
+
+/**
+ * Collapse a multi-measure rest back to ABC's `Zn` form.
+ *
+ * @returns The measure text, and how many following measures it absorbed.
+ */
+function applyMultiMeasureRest(measure: Measure, noteStr: string): { text: string; absorbed: number } {
+  const count = multipleRestCount(measure);
+  if (count < 2 || noteStr.trim() !== 'Z') return { text: noteStr, absorbed: 0 };
+  return { text: `Z${count}`, absorbed: count - 1 };
+}
+
+/** True when a measure already writes its key change as an inline [K:...] field. */
+function hasInlineKeyMarker(measure: Measure): boolean {
+  return measure.entries.some(e =>
+    e.type === 'direction' &&
+    e.directionTypes.some(dt => dt.kind === 'words' && /^\[K:/.test(dt.text)));
+}
+
+/** True when a measure carries any note or rest (as opposed to markers only). */
+function measureHasNotes(measure: Measure): boolean {
+  return measure.entries.some(e => e.type === 'note');
+}
+
+/** True when the entry at `index` is the first note of a chord. */
+function isChordHead(entries: MeasureEntry[], index: number): boolean {
+  const next = entries[index + 1];
+  return next !== undefined && next.type === 'note' && next.chord === true;
 }
 
 /**
@@ -1424,6 +1725,8 @@ interface SerializedNote {
   slurStart: string;
   slurEnd: string;
   tieStr: string;
+  /** ABC decorations, emitted between the slur opening and the note. */
+  decorations: string;
 }
 
 function serializeNote(
@@ -1471,14 +1774,15 @@ function serializeNote(
   if (note.notations) {
     for (const notation of note.notations) {
       if (notation.type === 'slur') {
-        if (notation.slurType === 'start') slurStart += '(';
+        if (notation.slurType === 'start') slurStart += notation.lineType === 'dotted' ? '.(' : '(';
         if (notation.slurType === 'stop') slurEnd += ')';
       }
     }
   }
 
-  const full = slurStart + pitchStr + durationStr + tieStr + slurEnd;
-  return { full, pitch: pitchStr, duration: durationStr, slurStart, slurEnd, tieStr };
+  const decorations = serializeNoteDecorations(note);
+  const full = slurStart + decorations + pitchStr + durationStr + tieStr + slurEnd;
+  return { full, pitch: pitchStr, duration: durationStr, slurStart, slurEnd, tieStr, decorations };
 }
 
 
@@ -1501,6 +1805,8 @@ function serializeBarline(barline: Barline): string {
       case 'light-light': result += '||'; break;
       case 'light-heavy': result += '|]'; break;
       case 'heavy-light': result += '[|'; break;
+      case 'none': result += '[|]'; break;
+      case 'dotted': case 'dashed': result += '.|'; break;
       default: result += '|'; break;
     }
   }

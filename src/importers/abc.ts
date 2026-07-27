@@ -3,19 +3,19 @@
  * Parses ABC notation format into the Score internal model.
  *
  * Supports ABC standard v2.1 core features:
- * - Header fields (X, T, C, M, L, Q, K, V, w)
- * - Notes with pitch, duration, accidentals, octave modifiers
- * - Rests (z, Z)
- * - Bar lines (|, ||, |], [|, |:, :|, ::)
- * - Repeats and volta endings ([1, [2)
- * - Chords (simultaneous notes: [CEG])
- * - Chord symbols ("Am", "G7", etc.)
- * - Ties (-) and slurs ((...))
- * - Grace notes ({...})
+ * - Header fields (X, T, C, M, L, Q, K, V, P, U, w, W, and `+:` continuations)
+ * - Notes with pitch, duration, accidentals (including microtones), octaves
+ * - Rests (z, Z, multi-measure Zn), invisible rests (x, Xn) and spacers (y)
+ * - Bar lines (|, ||, |], [|, |:, :|, ::, [|], .|)
+ * - Repeats and volta endings, including lists and ranges ([1,3, [1-3)
+ * - Chords (simultaneous notes: [CEG]) with rests and per-note durations
+ * - Chord symbols ("Am", "G7") and text annotations ("^above", "_below", ...)
+ * - Ties (-), slurs ((...)) and dotted slurs (.(...))
+ * - Grace notes ({...}) and acciaccaturas ({/...})
  * - Tuplets ((3..., (p:q:r...)
- * - Dynamics (!p!, !f!, etc.)
- * - Lyrics (w: field)
- * - Multi-voice (V: field)
+ * - Decorations: shorthand (. ~ H L M O P S T u v), !name! and legacy +name+
+ * - Lyrics (w: field, multiple verses) and symbol lines (s:)
+ * - Multi-voice (V: field) and multi-tune files (repeated X: fields)
  */
 
 import type {
@@ -33,8 +33,17 @@ import type {
   Barline,
   Clef,
   DynamicsValue,
+  Notation,
+  Accidental,
 } from '../types';
 import { generateId } from '../id';
+import {
+  ABC_BODY_FIELD_MARKER,
+  ABC_DYNAMICS,
+  ABC_SHORTHAND_DECORATIONS,
+  lookupAbcDecoration,
+  type AbcDecorationTarget,
+} from '../abc-decorations';
 
 // ============================================================
 // Types
@@ -48,6 +57,8 @@ interface AbcHeader {
   unitNoteLength?: string;
   tempo?: string;
   key?: string;
+  /** Clef named by the K: field, e.g. `K:C clef=bass`. */
+  clef?: string;
   voices?: AbcVoice[];
   /** Extra header fields (R:, S:, N:, I:, etc.) preserved for round-trip */
   extraFields?: { field: string; value: string }[];
@@ -59,6 +70,8 @@ interface AbcVoice {
   id: string;
   name?: string;
   clef?: string;
+  /** octave= shift declared on the V: field, in octaves. */
+  octave?: number;
   /** Full original V: definition line text (for round-trip) */
   fullLine?: string;
 }
@@ -71,6 +84,7 @@ interface AbcToken {
   | 'chord_start'
   | 'chord_end'
   | 'chord_symbol'
+  | 'annotation'
   | 'tie'
   | 'slur_start'
   | 'slur_end'
@@ -78,6 +92,7 @@ interface AbcToken {
   | 'grace_end'
   | 'tuplet'
   | 'decoration'
+  | 'spacer'
   | 'voice'
   | 'inline_field'
   | 'ending'
@@ -92,9 +107,20 @@ interface AbcToken {
   duration?: number; // in units of default note length
   durationNum?: number;
   durationDen?: number;
-  accidental?: number; // -2, -1, 0, 1, 2
+  /** Accidental in semitones; fractional for microtones (e.g. 0.5 for ^/2). */
+  accidental?: number;
+  // Rest-specific: measure count for multi-measure rests (Zn / Xn)
+  restMeasures?: number;
   // Bar-specific
   barType?: string;
+  /** Grace-specific: true for an acciaccatura ({/...}). */
+  slashGrace?: boolean;
+  /** Slur-specific: true for a dotted slur (.(). */
+  dotted?: boolean;
+  /** Annotation-specific: the ABC placement character (^, _, <, >, @). */
+  annotationPlacement?: string;
+  /** Field-specific: true for a field on its own line rather than an inline [X:...]. */
+  standalone?: boolean;
   // Ending-specific: true when ending uses bracket notation [1 vs number-after-barline 1
   bracket?: boolean;
   // Tuplet-specific
@@ -126,6 +152,13 @@ const NOTE_TYPE_MAP: Record<number, NoteType> = {
   0.0625: '64th',
 };
 
+/**
+ * NOTE_TYPE_MAP as a pre-parsed array, in the same iteration order.
+ * `durationToNoteType` runs once per note, so it must not rebuild this.
+ */
+const NOTE_TYPE_ENTRIES: [number, NoteType][] = Object.entries(NOTE_TYPE_MAP)
+  .map(([quarterNotes, type]) => [parseFloat(quarterNotes), type]);
+
 // Key signature mapping
 const KEY_FIFTHS: Record<string, number> = {
   'Cb': -7, 'Gb': -6, 'Db': -5, 'Ab': -4, 'Eb': -3, 'Bb': -2, 'F': -1,
@@ -155,16 +188,40 @@ const MODE_NAME: Record<string, KeySignature['mode']> = {
   'locrian': 'locrian', 'loc': 'locrian',
 };
 
-const DYNAMICS_VALUES = new Set([
-  'pppppp', 'ppppp', 'pppp', 'ppp', 'pp', 'p',
-  'mp', 'mf',
-  'f', 'ff', 'fff', 'ffff', 'fffff', 'ffffff',
-  'sf', 'sfz', 'sffz', 'sfp', 'sfpp', 'fp', 'rf', 'rfz', 'fz', 'pf',
-]);
+const DYNAMICS_VALUES = ABC_DYNAMICS;
+
+/**
+ * Volta ending specification: a number, or a comma/dash separated list of them
+ * (`1`, `1,3`, `1-3`). Matched against the text following a bar line or `[`.
+ */
+const ENDING_SPEC = /^(\d+(?:[,-]\d+)*)/;
+
+/** Microtonal accidental values (in semitones) that MusicXML can name. */
+const MICROTONE_ACCIDENTALS: Record<string, Accidental> = {
+  '0.5': 'quarter-sharp',
+  '-0.5': 'quarter-flat',
+  '1.5': 'three-quarters-sharp',
+  '-1.5': 'three-quarters-flat',
+};
 
 // ============================================================
 // Header Parsing
 // ============================================================
+
+/** Append the text of a `+:` continuation line to the field it continues. */
+function appendToHeaderField(header: AbcHeader, field: string, text: string) {
+  switch (field) {
+    case 'T': header.title = (header.title ?? '') + text; break;
+    case 'C': header.composer = (header.composer ?? '') + text; break;
+    default: {
+      const extra = header.extraFields;
+      if (extra && extra.length > 0 && extra[extra.length - 1].field === field) {
+        extra[extra.length - 1].value += text;
+      }
+      break;
+    }
+  }
+}
 
 function parseHeader(lines: string[]): { header: AbcHeader; bodyStartIndex: number; headerFieldOrder: string[] } {
   const header: AbcHeader = { voices: [], extraFields: [], directives: [] };
@@ -172,6 +229,7 @@ function parseHeader(lines: string[]): { header: AbcHeader; bodyStartIndex: numb
   let foundKey = false;
   let postKHeaderDone = false; // true once we've seen non-header content after K:
   const headerFieldOrder: string[] = []; // Track order of all header fields
+  let lastField: string | null = null; // field a following "+:" line continues
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
@@ -206,14 +264,26 @@ function parseHeader(lines: string[]): { header: AbcHeader; bodyStartIndex: numb
       continue;
     }
 
+    // Field continuation "+:value" extends the field on the previous line
+    const continuationMatch = line.match(/^\+:(.*)$/);
+    if (continuationMatch && !foundKey && lastField) {
+      appendToHeaderField(header, lastField, continuationMatch[1]);
+      headerFieldOrder.push(line);
+      continue;
+    }
+
     // Header fields are in format "X:value"
-    const fieldMatch = line.match(/^([A-Za-z]):\s*(.*)/);
+    // Capture everything after the colon and trim in code: an in-pattern \s*
+    // ahead of (.*) makes the split point ambiguous and the match quadratic.
+    const fieldMatch = line.match(/^([A-Za-z]):(.*)/);
     // After K: is found, only accept specific header-like fields (I:, N:)
     // V: lines after K: are handled separately - they go to both header (for voice defs)
     // and remain in the body (for voice switching), so they DON'T go in headerFieldOrder
     const postKFields = new Set(['I', 'N']);
     if (fieldMatch && (!foundKey || fieldMatch[1] === 'V' || (foundKey && postKFields.has(fieldMatch[1])))) {
-      const [, field, value] = fieldMatch;
+      const [, field, rawFieldValue] = fieldMatch;
+      const value = rawFieldValue.trimStart();
+      lastField = field;
       // If we're after K: and this is a post-K: header field (I:, N:)
       if (foundKey && field !== 'V') {
         if (!postKHeaderDone) {
@@ -251,6 +321,7 @@ function parseHeader(lines: string[]): { header: AbcHeader; bodyStartIndex: numb
           break;
         case 'K':
           header.key = value.trim();
+          header.clef = line;
           foundKey = true;
           bodyStartIndex = i + 1;
           headerFieldOrder.push(line);
@@ -261,6 +332,7 @@ function parseHeader(lines: string[]): { header: AbcHeader; bodyStartIndex: numb
           const nameMatch = voiceValue.match(/name=["']?([^"'\s]+)["']?/i);
           const nmMatch = voiceValue.match(/nm=["']([^"']*)["']/i);
           const clefMatch = voiceValue.match(/clef=(\S+)/i);
+          const octaveMatch = voiceValue.match(/octave\s*=\s*(-?\d+)/i);
           const displayName = nameMatch ? nameMatch[1] : nmMatch ? nmMatch[1] : voiceId;
 
           // After K:, determine if this V: line is a header definition or body voice switch
@@ -280,6 +352,7 @@ function parseHeader(lines: string[]): { header: AbcHeader; bodyStartIndex: numb
           if (existingVoice) {
             if (nameMatch || nmMatch) existingVoice.name = displayName;
             if (clefMatch) existingVoice.clef = clefMatch[1];
+            if (octaveMatch) existingVoice.octave = parseInt(octaveMatch[1], 10);
             // Keep the most detailed full line (post-K: definitions typically have more detail)
             if (foundKey && !isBodyVoiceSwitch) existingVoice.fullLine = lines[i];
           } else {
@@ -287,6 +360,7 @@ function parseHeader(lines: string[]): { header: AbcHeader; bodyStartIndex: numb
               id: voiceId,
               name: displayName,
               clef: clefMatch ? clefMatch[1] : undefined,
+              octave: octaveMatch ? parseInt(octaveMatch[1], 10) : undefined,
               fullLine: lines[i],
             });
           }
@@ -381,13 +455,39 @@ function parseTimeSignature(meterStr: string): TimeSignature {
   if (trimmed === 'C|' || trimmed.toLowerCase() === 'cut') {
     return { beats: '2', beatType: 2, symbol: 'cut' };
   }
+  if (trimmed.toLowerCase() === 'none') {
+    return { beats: '4', beatType: 4, senzaMisura: true };
+  }
 
   const match = trimmed.match(/^(\d+)\/(\d+)$/);
   if (match) {
     return { beats: match[1], beatType: parseInt(match[2], 10) };
   }
 
+  // Additive meters: (2+3+2)/8 or 3+2/8
+  const additive = trimmed.match(/^\(?\s*(\d+(?:\s*\+\s*\d+)+)\s*\)?\/(\d+)$/);
+  if (additive) {
+    const groups = additive[1].split('+').map(g => parseInt(g.trim(), 10));
+    return {
+      beats: groups.join('+'),
+      beatType: parseInt(additive[2], 10),
+      beatsList: groups,
+    };
+  }
+
   return { beats: '4', beatType: 4 };
+}
+
+/**
+ * Total measure length of a meter, in units of a whole note.
+ * Additive meters sum their groups; an unmeasured meter has no fixed length.
+ */
+function timeSignatureWholeNotes(time: TimeSignature): number {
+  const beats = time.beatsList
+    ? time.beatsList.reduce((sum, b) => sum + b, 0)
+    : parseInt(time.beats, 10);
+  if (!Number.isFinite(beats) || time.beatType === 0) return 1;
+  return beats / time.beatType;
 }
 
 // ============================================================
@@ -404,12 +504,9 @@ function parseUnitNoteLength(lengthStr: string | undefined, meterStr: string | u
   }
 
   // Default: if meter >= 3/4, default is 1/8; otherwise 1/16
-  if (meterStr) {
-    const mMatch = meterStr.trim().match(/^(\d+)\/(\d+)$/);
-    if (mMatch) {
-      const ratio = parseInt(mMatch[1], 10) / parseInt(mMatch[2], 10);
-      return ratio >= 0.75 ? { num: 1, den: 8 } : { num: 1, den: 16 };
-    }
+  if (meterStr && meterStr.trim() !== '') {
+    const ratio = timeSignatureWholeNotes(parseTimeSignature(meterStr));
+    return ratio >= 0.75 ? { num: 1, den: 8 } : { num: 1, den: 16 };
   }
   return { num: 1, den: 8 };
 }
@@ -428,8 +525,7 @@ function durationToNoteType(duration: number): { noteType: NoteType; dots: numbe
   const quarterNotes = duration / DIVISIONS;
 
   // Try to find exact match with dots
-  for (const [qnStr, type] of Object.entries(NOTE_TYPE_MAP)) {
-    const qn = parseFloat(qnStr);
+  for (const [qn, type] of NOTE_TYPE_ENTRIES) {
     // No dots
     if (Math.abs(quarterNotes - qn) < 0.001) {
       return { noteType: type, dots: 0 };
@@ -447,8 +543,8 @@ function durationToNoteType(duration: number): { noteType: NoteType; dots: numbe
   // Fallback: find closest
   let bestType: NoteType = 'quarter';
   let bestDiff = Infinity;
-  for (const [qnStr, type] of Object.entries(NOTE_TYPE_MAP)) {
-    const diff = Math.abs(quarterNotes - parseFloat(qnStr));
+  for (const [qn, type] of NOTE_TYPE_ENTRIES) {
+    const diff = Math.abs(quarterNotes - qn);
     if (diff < bestDiff) {
       bestDiff = diff;
       bestType = type;
@@ -587,12 +683,12 @@ function tokenizeBody(bodyLines: string[]): { tokens: AbcToken[][]; voiceIds: st
     }
 
     // Check for lyrics line
-    const lyricsMatch = line.match(/^w:\s*(.*)/);
+    const lyricsMatch = line.match(/^w:(.*)/);
     if (lyricsMatch) {
       const syllables = parseLyricLine(lyricsMatch[1]);
       voiceTokens.get(currentVoice)!.push({
         type: 'lyrics',
-        value: lyricsMatch[1],
+        value: lyricsMatch[1].trimStart(),
         syllables,
       });
       isContinuation = false;
@@ -600,7 +696,7 @@ function tokenizeBody(bodyLines: string[]): { tokens: AbcToken[][]; voiceIds: st
     }
 
     // Handle body K: line (key change mid-tune)
-    const bodyKeyMatch = line.match(/^K:\s*(.*)/);
+    const bodyKeyMatch = line.match(/^K:(.*)/);
     if (bodyKeyMatch) {
       const currentTokens = voiceTokens.get(currentVoice)!;
       if (currentTokens.length > 0) {
@@ -609,15 +705,21 @@ function tokenizeBody(bodyLines: string[]): { tokens: AbcToken[][]; voiceIds: st
           currentTokens.push({ type: 'line_break', value: '\n' });
         }
       }
-      currentTokens.push({ type: 'inline_field', value: `K:${bodyKeyMatch[1]}` });
+      currentTokens.push({ type: 'inline_field', value: `K:${bodyKeyMatch[1]}`, standalone: true });
       // Add a line_break after K: so the next music line starts on a new line
       currentTokens.push({ type: 'line_break', value: '\n' });
       isContinuation = false;
       continue;
     }
 
-    // Skip other header-like fields in body (but not inline fields starting with [)
-    if (/^[A-Za-z]:\s*/.test(line) && !/^\[/.test(line)) {
+    // Other field lines in the body (P:, s:, r:, ...). These have no internal
+    // model counterpart, so keep them in place for round-trip.
+    const bodyFieldMatch = /^[A-Za-z]:/.test(line);
+    if (bodyFieldMatch && !/^\[/.test(line)) {
+      voiceTokens.get(currentVoice)!.push({
+        type: 'inline_field',
+        value: `${ABC_BODY_FIELD_MARKER}${line}`,
+      });
       isContinuation = false;
       continue;
     }
@@ -654,7 +756,7 @@ function tokenizeBody(bodyLines: string[]): { tokens: AbcToken[][]; voiceIds: st
     // Process tokens, handling inline voice changes
     for (const token of tokens) {
       if (token.type === 'inline_field') {
-        const fieldMatch = token.value.match(/^V:\s*(.+)/);
+        const fieldMatch = token.value.match(/^V:(.+)/);
         if (fieldMatch) {
           const voiceId = fieldMatch[1].trim().split(/\s+/)[0];
           currentVoice = voiceId;
@@ -750,19 +852,29 @@ function tokenizeMusicLine(line: string): AbcToken[] {
     // Comment
     if (ch === '%') break;
 
-    // Chord symbol "..."
+    // Chord symbol "Am" or text annotation "^above" / "_below" / "<" / ">" / "@"
     if (ch === '"') {
       const end = line.indexOf('"', i + 1);
       if (end !== -1) {
-        tokens.push({ type: 'chord_symbol', value: line.slice(i + 1, end) });
+        const text = line.slice(i + 1, end);
+        if (/^[\^_<>@]/.test(text)) {
+          tokens.push({
+            type: 'annotation',
+            value: text.slice(1),
+            annotationPlacement: text[0],
+          });
+        } else {
+          tokens.push({ type: 'chord_symbol', value: text });
+        }
         i = end + 1;
         continue;
       }
     }
 
-    // Decoration !...!
-    if (ch === '!') {
-      const end = line.indexOf('!', i + 1);
+    // Decoration !...! (and the deprecated +...+ form)
+    if (ch === '!' || ch === '+') {
+      const end = line.indexOf(ch, i + 1);
+      // A lone '!' at end of line is a (deprecated) line-break marker, not a decoration
       if (end !== -1) {
         tokens.push({ type: 'decoration', value: line.slice(i + 1, end) });
         i = end + 1;
@@ -770,16 +882,36 @@ function tokenizeMusicLine(line: string): AbcToken[] {
       }
     }
 
-    // Grace notes {
+    // Grace notes { or acciaccatura {/
     if (ch === '{') {
-      tokens.push({ type: 'grace_start', value: '{' });
-      i++;
+      const isSlash = i + 1 < line.length && line[i + 1] === '/';
+      tokens.push({ type: 'grace_start', value: isSlash ? '{/' : '{', slashGrace: isSlash });
+      i += isSlash ? 2 : 1;
       continue;
     }
     if (ch === '}') {
       tokens.push({ type: 'grace_end', value: '}' });
       i++;
       continue;
+    }
+
+    // '.' introduces a dotted slur (.(), a dotted bar line (.|) or a staccato mark
+    if (ch === '.') {
+      const next = i + 1 < line.length ? line[i + 1] : '';
+      if (next === '(') {
+        tokens.push({ type: 'slur_start', value: '.(', dotted: true });
+        i += 2;
+        continue;
+      }
+      if (next === '|') {
+        const dottedBar = parseBarLine(line, i + 1);
+        if (dottedBar) {
+          tokens.push({ type: 'bar', value: '.' + dottedBar.token.value, barType: 'dotted' });
+          i = dottedBar.nextIndex;
+          continue;
+        }
+      }
+      // Otherwise fall through to the shorthand decoration handling below
     }
 
     // Slur
@@ -816,9 +948,9 @@ function tokenizeMusicLine(line: string): AbcToken[] {
       if (barResult) {
         tokens.push(barResult.token);
         i = barResult.nextIndex;
-        // Check for ending number directly after barline (e.g., ||1, :|2)
+        // Check for ending number directly after barline (e.g., ||1, :|2, |1,3)
         if (i < line.length && /\d/.test(line[i])) {
-          const numMatch = line.slice(i).match(/^(\d+)/);
+          const numMatch = line.slice(i).match(ENDING_SPEC);
           if (numMatch) {
             tokens.push({ type: 'ending', value: numMatch[1] });
             i += numMatch[1].length;
@@ -829,9 +961,9 @@ function tokenizeMusicLine(line: string): AbcToken[] {
       }
     }
 
-    // Ending markers [1, [2 (standalone bracket notation)
+    // Ending markers [1, [2, [1,3, [1-3 (standalone bracket notation)
     if (ch === '[' && i + 1 < line.length && /\d/.test(line[i + 1])) {
-      const numMatch = line.slice(i + 1).match(/^(\d+)/);
+      const numMatch = line.slice(i + 1).match(ENDING_SPEC);
       if (numMatch) {
         tokens.push({ type: 'ending', value: numMatch[1], bracket: true });
         i += 1 + numMatch[1].length;
@@ -890,19 +1022,30 @@ function tokenizeMusicLine(line: string): AbcToken[] {
       continue;
     }
 
-    // ABC shorthand decorations: v (down-bow), u (up-bow), T (trill), M (mordent)
-    // These appear as standalone characters before a note (or another decoration)
-    if ((ch === 'v' || ch === 'u' || ch === 'T' || ch === 'M') && i + 1 < line.length) {
+    // ABC shorthand decorations (. ~ H J L M O P R S T u v)
+    // These appear as standalone characters before the note they decorate
+    if (ABC_SHORTHAND_DECORATIONS.has(ch) && i + 1 < line.length) {
       const nextCh = line[i + 1];
-      // Treat as decoration if followed by a note, chord, rest, another decoration,
-      // slur start, !...! decoration, or chord symbol
-      if (isNoteStart(nextCh) || nextCh === '[' || nextCh === 'z' || nextCh === 'x' ||
-        nextCh === 'v' || nextCh === 'u' || nextCh === 'T' || nextCh === 'M' ||
-        nextCh === '(' || nextCh === '!' || nextCh === '"') {
+      // Treat as decoration if followed by a note, chord, rest, grace group,
+      // another decoration, slur start, !...! decoration, or chord symbol
+      if (isNoteStart(nextCh) || nextCh === '[' || nextCh === '{' ||
+        nextCh === 'z' || nextCh === 'Z' || nextCh === 'x' || nextCh === 'X' || nextCh === 'y' ||
+        ABC_SHORTHAND_DECORATIONS.has(nextCh) ||
+        nextCh === '(' || nextCh === '!' || nextCh === '+' || nextCh === '"') {
         tokens.push({ type: 'decoration', value: ch });
         i++;
         continue;
       }
+    }
+
+    // Spacer y (invisible rest with no duration; a pure typesetting hint)
+    if (ch === 'y') {
+      const start = i;
+      i++;
+      const dur = parseDuration(line, i);
+      i = dur.nextIndex;
+      tokens.push({ type: 'spacer', value: line.slice(start, i) });
+      continue;
     }
 
     // Note or rest (including x/X invisible rests)
@@ -966,11 +1109,13 @@ function parseTuplet(line: string, i: number): { token: AbcToken; nextIndex: num
 function parseBarLine(line: string, i: number): { token: AbcToken; nextIndex: number } | null {
   // Order matters - try longest matches first
   const patterns: [string, string][] = [
+    ['[|]', 'invisible'],
     [':|]', 'end-repeat-final'],
     [':||:', 'double-repeat'],
     ['::', 'double-repeat'],
     [':|:', 'double-repeat'],
     ['|>|', 'thick-thin'],
+    ['[|:', 'start-repeat'],
     ['|:', 'start-repeat'],
     [':|', 'end-repeat'],
     ['||', 'double'],
@@ -1004,21 +1149,26 @@ function parseNoteToken(line: string, i: number): { token: AbcToken; nextIndex: 
 
   // Rest (z/Z = visible rest, x/X = invisible rest / spacer)
   if (line[i] === 'z' || line[i] === 'Z' || line[i] === 'x' || line[i] === 'X') {
+    const restLetter = line[i];
     i++;
     const dur = parseDuration(line, i);
     i = dur.nextIndex;
+    // For Z the number counts whole measures rather than note lengths.
+    // X is left alone: real-world files use it interchangeably with x.
+    const isMultiMeasure = restLetter === 'Z';
     return {
       token: {
         type: 'rest',
         value: line.slice(start, i),
-        durationNum: dur.num,
-        durationDen: dur.den,
+        durationNum: isMultiMeasure ? 1 : dur.num,
+        durationDen: isMultiMeasure ? 1 : dur.den,
+        restMeasures: isMultiMeasure ? Math.max(1, dur.num) : undefined,
       },
       nextIndex: i,
     };
   }
 
-  // Accidental
+  // Accidental, including microtones (^/2 = quarter sharp, _3/2 = 3/4 flat)
   let accidental = 0;
   let explicitNatural = false;
   if (line[i] === '^') {
@@ -1028,6 +1178,9 @@ function parseNoteToken(line: string, i: number): { token: AbcToken; nextIndex: 
       accidental = 2;
       i++;
     }
+    const micro = parseMicrotoneFactor(line, i);
+    accidental *= micro.factor;
+    i = micro.nextIndex;
   } else if (line[i] === '_') {
     accidental = -1;
     i++;
@@ -1035,6 +1188,9 @@ function parseNoteToken(line: string, i: number): { token: AbcToken; nextIndex: 
       accidental = -2;
       i++;
     }
+    const micro = parseMicrotoneFactor(line, i);
+    accidental *= micro.factor;
+    i = micro.nextIndex;
   } else if (line[i] === '=') {
     accidental = 0; // natural (explicit)
     explicitNatural = true;
@@ -1083,6 +1239,25 @@ function parseNoteToken(line: string, i: number): { token: AbcToken; nextIndex: 
     token,
     nextIndex: i,
   };
+}
+
+/**
+ * Parse the optional fraction that follows an accidental to express a
+ * microtone: `^/2` (half a sharp), `^3/2`, `_/4`. A bare `/` means `/2`.
+ *
+ * @returns The multiplier to apply to the accidental, and the index after it.
+ */
+function parseMicrotoneFactor(line: string, i: number): { factor: number; nextIndex: number } {
+  // Only the fractional forms are microtones in ABC 2.1. A plain integer
+  // (^3) belongs to the duration parser, and is left alone by requiring the
+  // slash here. Repetitions are bounded so the match stays linear.
+  const match = line.slice(i).match(/^(\d{0,3})\/(\d{0,3})/);
+  if (!match) return { factor: 1, nextIndex: i };
+
+  const num = match[1] === '' ? 1 : parseInt(match[1], 10);
+  const den = match[2] === '' ? 2 : parseInt(match[2], 10);
+  if (den === 0) return { factor: 1, nextIndex: i };
+  return { factor: num / den, nextIndex: i + match[0].length };
 }
 
 function abcNoteToPitch(letter: string, accidental: number): Pitch {
@@ -1137,11 +1312,11 @@ function buildScore(header: AbcHeader, voiceTokensList: AbcToken[][], voiceIds: 
   const unitNote = parseUnitNoteLength(header.unitNoteLength, header.meter);
   const timeSignature = parseTimeSignature(header.meter || '4/4');
   const keySignature = parseKeySignature(header.key || 'C');
+  // A clef named on the K: field applies to every voice that declares none
+  const headerClef = header.clef ? parseAbcClefSpec(header.clef) : undefined;
 
-  const beatsNum = parseInt(timeSignature.beats, 10);
-  const beatType = timeSignature.beatType;
   // Duration of one full measure in divisions
-  const measureDuration = Math.round((beatsNum / beatType) * 4 * DIVISIONS);
+  const measureDuration = Math.round(timeSignatureWholeNotes(timeSignature) * 4 * DIVISIONS);
 
   const parts: Part[] = [];
   const partListEntries: Score['partList'] = [];
@@ -1272,10 +1447,15 @@ function buildScore(header: AbcHeader, voiceTokensList: AbcToken[][], voiceIds: 
       name: voiceName,
     });
 
-    const voiceClef = headerVoice
+    // A clef on the voice wins; otherwise fall back to the one on K:
+    const voiceClef = headerVoice?.clef
       ? abcClefToMusicXml(headerVoice.clef)
-      : undefined;
-    const buildResult = buildMeasures(tokens, unitNote, keySignature, timeSignature, measureDuration, voiceClef);
+      : headerClef;
+    const octaveShift = headerVoice?.octave ?? 0;
+    const buildResult = buildMeasures(tokens, unitNote, keySignature, timeSignature, measureDuration, voiceClef, octaveShift);
+    if (octaveShift !== 0) {
+      miscellaneous.push({ name: `abc-voice-octave-${voiceIndex}`, value: String(octaveShift) });
+    }
     parts.push({
       _id: generateId(),
       id: partId,
@@ -1301,15 +1481,23 @@ function buildScore(header: AbcHeader, voiceTokensList: AbcToken[][], voiceIds: 
       let lyricsAfterAll = true;
       let seenLyrics = false;
       const lyricLineCounts: number[] = []; // syllable count for each w: line
-      for (const token of tokens) {
+      const lyricLineVerses: number[] = []; // verse number for each w: line
+      let verse = 0;
+      for (let ti = 0; ti < tokens.length; ti++) {
+        const token = tokens[ti];
         if (token.type === 'lyrics') {
           hasLyrics = true;
           seenLyrics = true;
+          verse = ti > 0 && tokens[ti - 1].type === 'lyrics' ? verse + 1 : 1;
           lyricLineCounts.push(token.syllables?.length || 0);
+          lyricLineVerses.push(verse);
         } else if (seenLyrics && (token.type === 'note' || token.type === 'rest' || token.type === 'bar')) {
           // Music after lyrics means interleaved layout
           lyricsAfterAll = false;
         }
+      }
+      if (hasLyrics && lyricLineVerses.some(v => v > 1)) {
+        miscellaneous.push({ name: 'abc-lyrics-line-verses', value: JSON.stringify(lyricLineVerses) });
       }
       if (hasLyrics && lyricsAfterAll) {
         miscellaneous.push({ name: 'abc-lyrics-after-all', value: 'true' });
@@ -1359,16 +1547,19 @@ function buildScore(header: AbcHeader, voiceTokensList: AbcToken[][], voiceIds: 
 }
 
 function parseTempoToDirection(tempoStr: string): DirectionEntry | null {
-  // Match patterns like "1/4=120", "120", "Allegro 1/4=120"
-  const match = tempoStr.match(/(?:(\d+)\/(\d+)\s*=\s*)?(\d+)/);
-  if (!match) return null;
+  // "1/4=120" or "Allegro 1/4=120": a beat unit and a rate. Digit runs are
+  // bounded so searching an unanchored pattern stays linear.
+  const withUnit = tempoStr.match(/(\d{1,4})\/(\d{1,4})\s*=\s*(\d{1,6})/);
+  // Otherwise a bare rate, as in "120"
+  const rateOnly = withUnit ? null : tempoStr.match(/\d{1,6}/);
+  if (!withUnit && !rateOnly) return null;
 
-  const perMinute = parseInt(match[3], 10);
+  const perMinute = parseInt(withUnit ? withUnit[3] : rateOnly![0], 10);
   let beatUnit: NoteType = 'quarter';
 
-  if (match[1] && match[2]) {
-    const num = parseInt(match[1], 10);
-    const den = parseInt(match[2], 10);
+  if (withUnit) {
+    const num = parseInt(withUnit[1], 10);
+    const den = parseInt(withUnit[2], 10);
     const quarterNotes = (num / den) * 4;
     const found = NOTE_TYPE_MAP[quarterNotes];
     if (found) beatUnit = found;
@@ -1383,18 +1574,57 @@ function parseTempoToDirection(tempoStr: string): DirectionEntry | null {
   };
 }
 
+/** Base clef names accepted in K: and V: fields (ABC v2.1 §4.6). */
+const ABC_CLEF_NAMES: Record<string, Clef> = {
+  'treble': { sign: 'G', line: 2 },
+  'bass': { sign: 'F', line: 4 },
+  'bass3': { sign: 'F', line: 3 },
+  'alto': { sign: 'C', line: 3 },
+  'tenor': { sign: 'C', line: 4 },
+  'soprano': { sign: 'C', line: 1 },
+  'mezzo': { sign: 'C', line: 2 },
+  'mezzo-soprano': { sign: 'C', line: 2 },
+  'baritone': { sign: 'C', line: 5 },
+  'perc': { sign: 'percussion' },
+  'percussion': { sign: 'percussion' },
+  'none': { sign: 'G', line: 2 },
+};
+
 function abcClefToMusicXml(abcClef?: string): Clef {
   if (!abcClef) return { sign: 'G', line: 2 };
-  const c = abcClef.toLowerCase();
-  if (c === 'treble' || c === 'treble-8va' || c === 'treble+8') return { sign: 'G', line: 2 };
-  if (c === 'bass' || c === 'bass3') return { sign: 'F', line: 4 };
-  if (c === 'alto') return { sign: 'C', line: 3 };
-  if (c === 'tenor') return { sign: 'C', line: 4 };
-  if (c === 'soprano') return { sign: 'C', line: 1 };
-  if (c === 'mezzo' || c === 'mezzo-soprano') return { sign: 'C', line: 2 };
-  if (c === 'baritone') return { sign: 'C', line: 5 };
-  if (c === 'perc' || c === 'percussion') return { sign: 'percussion' };
-  return { sign: 'G', line: 2 };
+
+  // Split off an octave shift suffix: treble-8, bass+8, treble-8va, ...
+  const match = abcClef.trim().toLowerCase().match(/^([a-z-]*?)\s*([+-])?(8|15)(?:va|vb)?$/);
+  const baseName = match ? match[1] : abcClef.trim().toLowerCase();
+  const base = ABC_CLEF_NAMES[baseName] ?? ABC_CLEF_NAMES[abcClef.trim().toLowerCase()];
+  if (!base) return { sign: 'G', line: 2 };
+
+  const clef: Clef = { ...base };
+  if (match && match[3]) {
+    // -8 sounds an octave lower, +8 an octave higher; 15 is two octaves
+    const octaves = match[3] === '15' ? 2 : 1;
+    clef.clefOctaveChange = (match[2] === '+' ? octaves : -octaves);
+  }
+  return clef;
+}
+
+/**
+ * Clef specification carried by a K: or V: field, e.g. `clef=bass`,
+ * `clef=treble-8`, or the bare form `K:C bass` (ABC v2.1 §4.6).
+ *
+ * @returns The clef, or undefined when the field names none.
+ */
+function parseAbcClefSpec(fieldValue: string): Clef | undefined {
+  const explicit = fieldValue.match(/clef\s*=\s*(\S+)/i);
+  if (explicit) return abcClefToMusicXml(explicit[1]);
+
+  // Bare clef name, as in "K:C bass" or "V:1 treble-8"
+  for (const word of fieldValue.trim().split(/\s+/).slice(1)) {
+    if (word.includes('=')) continue;
+    const bare = word.toLowerCase().replace(/([+-]?(?:8|15)(?:va|vb)?)$/, '');
+    if (ABC_CLEF_NAMES[bare] && bare !== 'none') return abcClefToMusicXml(word);
+  }
+  return undefined;
 }
 
 function buildMeasures(
@@ -1404,6 +1634,7 @@ function buildMeasures(
   timeSignature: TimeSignature,
   measureDuration: number,
   clef?: Clef,
+  octaveShift: number = 0,
 ): { measures: Measure[]; lineBreaks: number[]; hasIndividualChordDurations: boolean } {
   const measures: Measure[] = [];
   let currentEntries: MeasureEntry[] = [];
@@ -1415,41 +1646,49 @@ function buildMeasures(
   let pendingTie = false;
   let slurDepth = 0;
   let pendingSlurStarts = 0;
+  // Line style for each pending slur start, in order (.( opens a dotted slur)
+  const pendingSlurDotted: boolean[] = [];
   let slurStartNotes: NoteEntry[] = [];
   let inGrace = false;
   let pendingBrokenRhythm: string | null = null;
   let tupletState: { p: number; q: number; remaining: number } | null = null;
-  // Queue to preserve original order of dynamics, decorations, and chord symbols
-  const pendingPreNoteItems: Array<{ kind: 'dynamic' | 'harmony' | 'decoration'; value: string }> = [];
+  // Queue preserving the original order of chord symbols, annotations and
+  // decorations that become <direction> entries ahead of the note they precede
+  const pendingPreNoteItems: MeasureEntry[] = [];
+  // Decorations that attach to the next note as <notations> children
+  let pendingNotations: Notation[] = [];
+  // Whether the grace group currently open is an acciaccatura ({/...})
+  let graceSlash = false;
   let pendingEndingNumber: string | null = null;
   let currentLyrics: string[] = [];
   let noteCountForLyrics = 0;
+  // Verse number and target notes of the w: line group being processed
+  let lyricVerse = 0;
+  let lyricTargets: NoteEntry[] = [];
   let inChord = false;
   let chordNotes: AbcToken[] = [];
   let chordNoteTies: boolean[] = []; // track ties per chord note
   let currentUnitNote = { ...unitNote };
   let pendingTupletStart = false;
   let pendingKeyChange: string | null = null;
+  let pendingTimeChange: TimeSignature | null = null;
   const lineBreaks: number[] = []; // measure numbers after which line breaks occur
+  // Bar count of a multi-measure rest (Zn) awaiting attachment to its measure
+  let pendingMultipleRest: number | null = null;
 
   function flushPendingPreNoteItems() {
     for (const item of pendingPreNoteItems) {
-      if (item.kind === 'harmony') {
-        const harmony = createHarmonyEntry(item.value);
-        if (harmony) currentEntries.push(harmony);
-      } else if (item.kind === 'dynamic') {
-        const dynDir = createDynamicsDirection(item.value);
-        if (dynDir) currentEntries.push(dynDir);
-      } else if (item.kind === 'decoration') {
-        const decoDir: DirectionEntry = {
-          _id: generateId(),
-          type: 'direction',
-          directionTypes: [{ kind: 'words', text: item.value }],
-        };
-        currentEntries.push(decoDir);
-      }
+      currentEntries.push(item);
     }
     pendingPreNoteItems.length = 0;
+  }
+
+  /** Attach decorations collected since the last note to `entry`. */
+  function attachPendingNotations(entry: NoteEntry) {
+    if (pendingNotations.length === 0) return;
+    if (!entry.notations) entry.notations = [];
+    entry.notations.push(...pendingNotations);
+    pendingNotations = [];
   }
 
   function finalizeMeasure(endBarType?: string) {
@@ -1471,6 +1710,15 @@ function buildMeasures(
       isFirstMeasure = false;
     }
 
+    // Mark the first measure of a multi-measure rest run
+    if (pendingMultipleRest !== null) {
+      if (!measure.attributes) {
+        measure.attributes = { _id: generateId() };
+      }
+      measure.attributes.measureStyle = [{ multipleRest: pendingMultipleRest }];
+      pendingMultipleRest = null;
+    }
+
     // Apply pending key change to this measure
     if (pendingKeyChange) {
       if (!measure.attributes) {
@@ -1479,6 +1727,15 @@ function buildMeasures(
       const kValue = pendingKeyChange.replace(/^K:\s*/, '');
       measure.attributes.key = parseKeySignature(kValue);
       pendingKeyChange = null;
+    }
+
+    // Apply pending inline meter change to this measure
+    if (pendingTimeChange) {
+      if (!measure.attributes) {
+        measure.attributes = { _id: generateId() };
+      }
+      measure.attributes.time = pendingTimeChange;
+      pendingTimeChange = null;
     }
 
     // Add barlines
@@ -1510,8 +1767,9 @@ function buildMeasures(
           break;
         }
 
-        const entry = createNoteEntry(token, currentUnitNote, pendingTie, inGrace, tupletState);
+        const entry = createNoteEntry(token, currentUnitNote, pendingTie, inGrace, tupletState, graceSlash, octaveShift);
         pendingTie = false;
+        attachPendingNotations(entry);
 
         // Apply broken rhythm to this note (second note of the pair)
         if (pendingBrokenRhythm) {
@@ -1541,7 +1799,7 @@ function buildMeasures(
         // Handle slur start: attach pending slur starts to this note
         while (pendingSlurStarts > 0) {
           if (!entry.notations) entry.notations = [];
-          entry.notations.push({ type: 'slur', slurType: 'start', number: slurDepth - pendingSlurStarts + 1 });
+          entry.notations.push(makeSlurStart(slurDepth - pendingSlurStarts + 1, pendingSlurDotted.shift() === true));
           slurStartNotes.push(entry);
           pendingSlurStarts--;
         }
@@ -1595,14 +1853,31 @@ function buildMeasures(
       }
 
       case 'rest': {
-        if (inChord) break;
+        if (inChord) {
+          chordNotes.push(token);
+          break;
+        }
         const restEntry = createRestEntry(token, currentUnitNote, tupletState, measureDuration);
 
         // Handle chord symbol and dynamics in original order
         flushPendingPreNoteItems();
+        attachPendingNotations(restEntry);
 
         currentEntries.push(restEntry);
         currentPosition += restEntry.duration;
+
+        // Zn spans several bars: emit one whole-measure rest per bar and mark
+        // the run with <measure-style><multiple-rest>, as MusicXML expects
+        const restMeasures = token.restMeasures || 1;
+        if (restMeasures > 1) {
+          pendingMultipleRest = restMeasures;
+          for (let extra = 1; extra < restMeasures; extra++) {
+            finalizeMeasure();
+            const filler = createRestEntry(token, currentUnitNote, null, measureDuration);
+            currentEntries.push(filler);
+            currentPosition += filler.duration;
+          }
+        }
 
         if (tupletState) {
           tupletState.remaining--;
@@ -1624,16 +1899,7 @@ function buildMeasures(
 
         if (chordNotes.length > 0) {
           // Handle chord symbol and dynamics in original order
-          for (const item of pendingPreNoteItems) {
-            if (item.kind === 'harmony') {
-              const harmony = createHarmonyEntry(item.value);
-              if (harmony) currentEntries.push(harmony);
-            } else if (item.kind === 'dynamic') {
-              const dynDir = createDynamicsDirection(item.value);
-              if (dynDir) currentEntries.push(dynDir);
-            }
-          }
-          pendingPreNoteItems.length = 0;
+          flushPendingPreNoteItems();
 
           // Use duration from the chord_end token (parsed after ']')
           // Falls back to 1/1 (default unit note length)
@@ -1659,17 +1925,20 @@ function buildMeasures(
               chordToken.durationDen = chordDurDen;
             }
 
-            const entry = createNoteEntry(chordToken, currentUnitNote, false, inGrace, tupletState);
+            const entry = chordToken.type === 'rest'
+              ? createRestEntry(chordToken, currentUnitNote, tupletState, measureDuration)
+              : createNoteEntry(chordToken, currentUnitNote, false, inGrace, tupletState, graceSlash, octaveShift);
 
             // Restore for any other processing
             chordToken.durationNum = originalNum;
             chordToken.durationDen = originalDen;
 
             if (ci === 0) {
+              attachPendingNotations(entry);
               // Handle slur start on first note of chord
               while (pendingSlurStarts > 0) {
                 if (!entry.notations) entry.notations = [];
-                entry.notations.push({ type: 'slur', slurType: 'start', number: slurDepth - pendingSlurStarts + 1 });
+                entry.notations.push(makeSlurStart(slurDepth - pendingSlurStarts + 1, pendingSlurDotted.shift() === true));
                 slurStartNotes.push(entry);
                 pendingSlurStarts--;
               }
@@ -1761,8 +2030,9 @@ function buildMeasures(
           },
         };
         // If preceding token was a regular barline that was ignored (no entries at start of measure),
-        // include a 'regular' barStyle so the | is preserved in roundtrip (e.g., || then |1 → |||1)
-        if (ti > 0 && tokens[ti - 1].type === 'bar' &&
+        // include a 'regular' barStyle so the | is preserved in roundtrip (e.g., || then |1 → |||1).
+        // Bracket endings ([1) keep no bar style so they are written back as brackets.
+        if (!token.bracket && ti > 0 && tokens[ti - 1].type === 'bar' &&
             (!tokens[ti - 1].barType || tokens[ti - 1].barType === 'regular') &&
             currentEntries.length === 0) {
           endingBarline.barStyle = 'regular';
@@ -1796,6 +2066,7 @@ function buildMeasures(
       case 'slur_start':
         slurDepth++;
         pendingSlurStarts++;
+        pendingSlurDotted.push(token.dotted === true);
         break;
 
       case 'slur_end':
@@ -1815,10 +2086,12 @@ function buildMeasures(
 
       case 'grace_start':
         inGrace = true;
+        graceSlash = token.slashGrace === true;
         break;
 
       case 'grace_end':
         inGrace = false;
+        graceSlash = false;
         break;
 
       case 'broken_rhythm': {
@@ -1855,28 +2128,55 @@ function buildMeasures(
         pendingTupletStart = true;
         break;
 
-      case 'chord_symbol':
-        pendingPreNoteItems.push({ kind: 'harmony', value: token.value });
+      case 'chord_symbol': {
+        const harmony = createHarmonyEntry(token.value);
+        if (harmony) pendingPreNoteItems.push(harmony);
+        break;
+      }
+
+      case 'annotation':
+        pendingPreNoteItems.push(
+          createAnnotationDirection(token.value, token.annotationPlacement || '@'),
+        );
         break;
 
-      case 'decoration':
-        if (DYNAMICS_VALUES.has(token.value)) {
-          pendingPreNoteItems.push({ kind: 'dynamic', value: token.value });
-        } else {
-          // Non-dynamic decorations: store as direction with words for round-trip
-          // Single-char shorthand decorations (v, u, T, M) are stored without !...!
-          const isShorthand = token.value.length === 1 && /^[vuTM]$/.test(token.value);
-          const decoText = isShorthand ? token.value : `!${token.value}!`;
-          // Add to pending queue to preserve order relative to dynamics/harmonies
-          pendingPreNoteItems.push({ kind: 'decoration', value: decoText });
-        }
+      case 'spacer':
+        // A spacer has no musical content; keep the ABC text for round-trip
+        pendingPreNoteItems.push(createRawWordsDirection(token.value));
         break;
+
+      case 'decoration': {
+        const target = lookupAbcDecoration(token.value);
+        if (!target) {
+          // No internal-model counterpart: preserve the ABC text verbatim
+          const isShorthand = token.value.length === 1 && ABC_SHORTHAND_DECORATIONS.has(token.value);
+          pendingPreNoteItems.push(
+            createRawWordsDirection(isShorthand ? token.value : `!${token.value}!`),
+          );
+          break;
+        }
+        const notation = decorationToNotation(target);
+        if (notation) {
+          pendingNotations.push(notation);
+          break;
+        }
+        const direction = decorationToDirection(target);
+        if (direction) pendingPreNoteItems.push(direction);
+        break;
+      }
 
       case 'lyrics': {
-        // In ABC, w: lines come AFTER the music lines they apply to.
-        // We need to retroactively apply lyrics to the notes already processed.
+        // In ABC, w: lines come AFTER the music line they apply to, and
+        // consecutive w: lines are successive verses of the same music.
         const syllables = token.syllables || [];
-        applyLyricsToExistingNotes(measures, currentEntries, syllables);
+        const previousWasLyrics = ti > 0 && tokens[ti - 1].type === 'lyrics';
+        if (previousWasLyrics) {
+          lyricVerse++;
+        } else {
+          lyricVerse = 1;
+          lyricTargets = collectUnlyricedNotes(measures, currentEntries);
+        }
+        applyLyricsToNotes(lyricTargets, syllables, lyricVerse);
         break;
       }
 
@@ -1895,22 +2195,42 @@ function buildMeasures(
       }
 
       case 'inline_field': {
-        // Handle inline field changes like [L:1/32], [M:3/4], [K:Am]
-        const lMatch = token.value.match(/^L:\s*(\d+)\/(\d+)/);
-        if (lMatch) {
-          currentUnitNote = { num: parseInt(lMatch[1], 10), den: parseInt(lMatch[2], 10) };
-          // Store inline L: as a direction with words, so it can survive MusicXML round-trip
-          const inlineEntry: DirectionEntry = {
-            _id: generateId(),
-            type: 'direction',
-            directionTypes: [{ kind: 'words', text: `[L:${lMatch[1]}/${lMatch[2]}]` }],
-          };
-          currentEntries.push(inlineEntry);
+        // Whole-line body fields (P:, s:, r:, ...) are carried through verbatim
+        if (token.value.startsWith(ABC_BODY_FIELD_MARKER)) {
+          currentEntries.push(createRawWordsDirection(token.value));
+          break;
         }
-        const kMatch = token.value.match(/^K:\s*(.*)/);
-        if (kMatch) {
-          // Store inline K: key change - will be attached to the next measure
-          pendingKeyChange = `K:${kMatch[1]}`;
+
+        const fieldMatch = token.value.match(/^([A-Za-z]):(.*)$/);
+        if (!fieldMatch) break;
+        const [, field, rawValue] = fieldMatch;
+        const value = rawValue.trim();
+
+        // Keep a marker so the field survives a MusicXML round-trip and is
+        // written back inline rather than as a stand-alone field line. Fields
+        // that already had their own line keep that layout instead.
+        if (!token.standalone) {
+          currentEntries.push(createRawWordsDirection(`[${field}:${value}]`));
+        }
+
+        // K: is a key change - attached to the measure it opens
+        if (field === 'K') {
+          pendingKeyChange = `K:${rawValue}`;
+          break;
+        }
+
+        if (field === 'L') {
+          const lMatch = value.match(/^(\d+)\/(\d+)/);
+          if (lMatch) {
+            currentUnitNote = { num: parseInt(lMatch[1], 10), den: parseInt(lMatch[2], 10) };
+          }
+        } else if (field === 'M') {
+          // Inline meter change applies from the next measure onwards
+          pendingTimeChange = parseTimeSignature(value);
+        } else if (field === 'Q') {
+          // Inline tempo change: also model it so MusicXML gets a real <sound>
+          const tempoDirection = parseTempoToDirection(value);
+          if (tempoDirection) currentEntries.push(tempoDirection);
         }
         break;
       }
@@ -1918,7 +2238,7 @@ function buildMeasures(
       case 'space':
         break;
 
-      case 'line_break':
+      case 'line_break': {
         // Flush pending items before recording line break position
         flushPendingPreNoteItems();
         // Store intra-measure line breaks as direction entries for round-trip
@@ -1931,8 +2251,13 @@ function buildMeasures(
           };
           currentEntries.push(lineBreakDir);
         }
+        // A break that only follows markers (a body field line, say) is fully
+        // described by the marker entry above; recording it again here would
+        // make the serializer emit a second newline.
+        const onlyMarkersSoFar = currentEntries.length > 0 &&
+          !currentEntries.some(e => e.type === 'note');
         // Record line break position: after the last finalized measure
-        if (measures.length > 0) {
+        if (measures.length > 0 && !onlyMarkersSoFar) {
           if (token.value === '\\\n') {
             // Line continuation: store as negative to distinguish from regular breaks
             lineBreaks.push(-(measures.length));
@@ -1941,6 +2266,7 @@ function buildMeasures(
           }
         }
         break;
+      }
 
       default:
         break;
@@ -1958,36 +2284,30 @@ function buildMeasures(
   return { measures, lineBreaks, hasIndividualChordDurations };
 }
 
-function applyLyricsToExistingNotes(
+/**
+ * The notes a `w:` line applies to: every pitched, non-grace note seen so far
+ * that has not yet been given a syllable.
+ */
+function collectUnlyricedNotes(
   finalizedMeasures: Measure[],
   currentEntries: MeasureEntry[],
-  syllables: string[],
-) {
-  // Gather all pitched, non-grace notes from the most recent music line
-  // The lyrics apply to the notes that were just before this w: line
-  const allNotes: NoteEntry[] = [];
-
-  // Collect notes from finalized measures and current entries
-  for (const measure of finalizedMeasures) {
-    for (const entry of measure.entries) {
-      if (entry.type === 'note' && !entry.rest && !entry.grace && !entry.chord) {
-        allNotes.push(entry);
+): NoteEntry[] {
+  const notes: NoteEntry[] = [];
+  const collect = (entries: MeasureEntry[]) => {
+    for (const entry of entries) {
+      if (entry.type === 'note' && !entry.rest && !entry.grace && !entry.chord &&
+        (!entry.lyrics || entry.lyrics.length === 0)) {
+        notes.push(entry);
       }
     }
-  }
-  for (const entry of currentEntries) {
-    if (entry.type === 'note' && !entry.rest && !entry.grace && !entry.chord) {
-      allNotes.push(entry);
-    }
-  }
+  };
+  for (const measure of finalizedMeasures) collect(measure.entries);
+  collect(currentEntries);
+  return notes;
+}
 
-  // Only apply to the most recent notes (notes without lyrics assigned yet)
-  // Find notes without lyrics
-  const unlyricedNotes = allNotes.filter(n => !n.lyrics || n.lyrics.length === 0);
-
-  // Apply syllables to the most recent unlyriced notes
-  const targetNotes = unlyricedNotes.slice(0, syllables.length);
-
+/** Assign one verse of syllables to the given notes, in order. */
+function applyLyricsToNotes(targetNotes: NoteEntry[], syllables: string[], verse: number) {
   for (let si = 0; si < syllables.length && si < targetNotes.length; si++) {
     const syllable = syllables[si];
     if (!syllable || syllable === '' || syllable === '*') continue;
@@ -2006,11 +2326,8 @@ function applyLyricsToExistingNotes(
       }
     }
 
-    note.lyrics = [{
-      number: 1,
-      text,
-      syllabic,
-    }];
+    if (!note.lyrics) note.lyrics = [];
+    note.lyrics.push({ number: verse, text, syllabic });
   }
 }
 
@@ -2059,6 +2376,8 @@ function createNoteEntry(
   _hasTieStop: boolean,
   isGrace: boolean,
   tupletState: { p: number; q: number; remaining: number } | null,
+  graceSlash: boolean = false,
+  octaveShift: number = 0,
 ): NoteEntry {
   const num = token.durationNum || 1;
   const den = token.durationDen || 1;
@@ -2076,10 +2395,15 @@ function createNoteEntry(
 
   const { noteType, dots } = durationToNoteType(isGrace ? lengthToDuration(num, den, unitNote) : duration);
 
+  // A voice's octave= shift moves every written pitch by whole octaves
+  const pitch = token.pitch && octaveShift !== 0
+    ? { ...token.pitch, octave: token.pitch.octave + octaveShift }
+    : token.pitch;
+
   const entry: NoteEntry = {
     _id: generateId(),
     type: 'note',
-    pitch: token.pitch,
+    pitch,
     duration,
     voice: '1',
     noteType,
@@ -2087,7 +2411,8 @@ function createNoteEntry(
   };
 
   if (isGrace) {
-    entry.grace = { slash: true };
+    // ABC {/g} is an acciaccatura (slashed stem); plain {g} is an appoggiatura
+    entry.grace = { slash: graceSlash };
     entry.noteType = 'eighth'; // Default grace note type
   }
 
@@ -2107,6 +2432,12 @@ function createNoteEntry(
       case 2: entry.accidental = { value: 'double-sharp' }; break;
       case -1: entry.accidental = { value: 'flat' }; break;
       case -2: entry.accidental = { value: 'double-flat' }; break;
+      default: {
+        // Microtone: use the named MusicXML accidental when one exists
+        const named = MICROTONE_ACCIDENTALS[String(token.accidental)];
+        if (named) entry.accidental = { value: named };
+        break;
+      }
     }
   }
 
@@ -2183,6 +2514,12 @@ function createBarline(barType: string, location: 'left' | 'right', endingNumber
     case 'thick-thin':
       barline.barStyle = 'heavy-light';
       break;
+    case 'invisible':
+      barline.barStyle = 'none';
+      break;
+    case 'dotted':
+      barline.barStyle = 'dotted';
+      break;
     default:
       return null; // regular barlines don't need explicit representation
   }
@@ -2245,6 +2582,103 @@ function createHarmonyEntry(chordStr: string): HarmonyEntry | null {
   return entry;
 }
 
+/** Build a slur-start notation, marking it dotted when opened with `.(`. */
+function makeSlurStart(number: number, dotted: boolean): Notation {
+  return dotted
+    ? { type: 'slur', slurType: 'start', number, lineType: 'dotted' }
+    : { type: 'slur', slurType: 'start', number };
+}
+
+/**
+ * Build the `<notations>` child for a decoration, or `null` when the
+ * decoration belongs in a `<direction>` instead.
+ */
+function decorationToNotation(target: AbcDecorationTarget): Notation | null {
+  switch (target.kind) {
+    case 'articulation':
+      return { type: 'articulation', articulation: target.articulation };
+    case 'ornament':
+      return { type: 'ornament', ornament: target.ornament };
+    case 'technical':
+      return { type: 'technical', technical: target.technical };
+    case 'fingering':
+      // <fingering> content lives in `text` for note-level technicals
+      return { type: 'technical', technical: 'fingering', text: target.fingering };
+    case 'fermata':
+      return target.inverted
+        ? { type: 'fermata', fermataType: 'inverted' }
+        : { type: 'fermata' };
+    case 'arpeggiate':
+      return { type: 'arpeggiate' };
+    case 'trill-line':
+      return { type: 'ornament', ornament: 'wavy-line', wavyLineType: target.wavyLineType };
+    default:
+      return null;
+  }
+}
+
+/**
+ * Build the `<direction>` for a decoration that is not attached to a note,
+ * or `null` when the decoration maps to a `<notations>` child instead.
+ */
+function decorationToDirection(target: AbcDecorationTarget): DirectionEntry | null {
+  switch (target.kind) {
+    case 'dynamics':
+      return createDynamicsDirection(target.value);
+    case 'wedge':
+      return {
+        _id: generateId(),
+        type: 'direction',
+        directionTypes: [{ kind: 'wedge', type: target.stop ? 'stop' : target.wedge }],
+        placement: 'below',
+      };
+    case 'segno':
+      return { _id: generateId(), type: 'direction', directionTypes: [{ kind: 'segno' }], placement: 'above' };
+    case 'coda':
+      return { _id: generateId(), type: 'direction', directionTypes: [{ kind: 'coda' }], placement: 'above' };
+    case 'words':
+      return {
+        _id: generateId(),
+        type: 'direction',
+        directionTypes: [{ kind: 'words', text: target.text }],
+        placement: 'above',
+      };
+    default:
+      return null;
+  }
+}
+
+/** ABC annotation placement character → MusicXML placement / horizontal alignment. */
+function annotationPlacement(marker: string): { placement?: 'above' | 'below'; halign?: string } {
+  switch (marker) {
+    case '^': return { placement: 'above' };
+    case '_': return { placement: 'below' };
+    case '<': return { halign: 'right' };
+    case '>': return { halign: 'left' };
+    default: return { halign: 'center' }; // '@' — free placement
+  }
+}
+
+/** Build a `<direction><words>` entry for an ABC text annotation ("^text"). */
+function createAnnotationDirection(text: string, marker: string): DirectionEntry {
+  const { placement, halign } = annotationPlacement(marker);
+  return {
+    _id: generateId(),
+    type: 'direction',
+    directionTypes: [{ kind: 'words', text, ...(halign ? { halign } : {}) }],
+    ...(placement ? { placement } : {}),
+  };
+}
+
+/** Build a `<direction><words>` entry that carries ABC text through verbatim. */
+function createRawWordsDirection(text: string): DirectionEntry {
+  return {
+    _id: generateId(),
+    type: 'direction',
+    directionTypes: [{ kind: 'words', text }],
+  };
+}
+
 function createDynamicsDirection(dynamic: string): DirectionEntry | null {
   if (!DYNAMICS_VALUES.has(dynamic)) return null;
 
@@ -2264,10 +2698,52 @@ function createDynamicsDirection(dynamic: string): DirectionEntry | null {
 // ============================================================
 
 /**
+ * Split an ABC file into its individual tunes.
+ *
+ * A new tune starts at every `X:` reference-number field; text before the
+ * first one is a file header shared by all tunes (ABC v2.1 §2.2).
+ */
+function splitTunes(lines: string[]): string[][] {
+  const tunes: string[][] = [];
+  let fileHeader: string[] = [];
+  let current: string[] | null = null;
+
+  for (const line of lines) {
+    if (/^X:/.test(line.trim())) {
+      if (current) tunes.push(current);
+      current = [...fileHeader, line];
+      fileHeader = [];
+      continue;
+    }
+    if (current) current.push(line);
+    else fileHeader.push(line);
+  }
+  if (current) tunes.push(current);
+  // No X: field at all: treat the whole input as a single tune
+  return tunes.length > 0 ? tunes : [lines];
+}
+
+/**
+ * Parse every tune in an ABC file.
+ *
+ * ABC files may hold any number of tunes, each introduced by an `X:` field.
+ * {@link parseAbc} returns only the first; use this to get them all.
+ */
+export function parseAbcTunes(abcString: string): Score[] {
+  return splitTunes(abcString.split('\n')).map(tuneLines => parseTune(tuneLines));
+}
+
+/**
  * Parse an ABC notation string into a Score object.
+ *
+ * When the input holds several tunes, only the first is returned — use
+ * {@link parseAbcTunes} to parse them all.
  */
 export function parseAbc(abcString: string): Score {
-  const lines = abcString.split('\n');
+  return parseTune(splitTunes(abcString.split('\n'))[0]);
+}
+
+function parseTune(lines: string[]): Score {
   const { header, bodyStartIndex, headerFieldOrder } = parseHeader(lines);
   const bodyLines = lines.slice(bodyStartIndex);
   const { tokens: voiceTokensList, voiceIds, inlineVoiceMarkers, voiceDeclarationLines, bodyComments, bodyDirectives, wFields, voiceInterleavePattern, groupBarCounts, voiceComments, preVoiceComments, trailingComments } = tokenizeBody(bodyLines);

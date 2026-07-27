@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
-import { parseAbc, serializeAbc, serialize, parse } from '../src';
+import { parseAbc, parseAbcTunes, serializeAbc, serializeAbcTunes, serialize, parse } from '../src';
 
 const fixturesPath = join(__dirname, 'fixtures', 'abc');
 
@@ -337,6 +337,324 @@ describe('ABC Parser', () => {
       ) as any[];
 
       expect(notesWithLyrics.length).toBeGreaterThan(0);
+    });
+  });
+});
+
+// ============================================================
+// ABC 2.1 Syntax Coverage
+// ============================================================
+
+describe('ABC 2.1 syntax coverage', () => {
+  /** All notations of a given type on the nth note of the first measure. */
+  function notationsOf(abc: string, noteIndex = 0): any[] {
+    const score = parseAbc(abc);
+    const notes = score.parts[0].measures[0].entries.filter(
+      e => e.type === 'note',
+    ) as any[];
+    return notes[noteIndex]?.notations ?? [];
+  }
+
+  function firstDirection(abc: string): any {
+    const score = parseAbc(abc);
+    return score.parts[0].measures[0].entries.find(e => e.type === 'direction');
+  }
+
+  function roundTrip(abc: string): string {
+    return serializeAbc(parseAbc(abc));
+  }
+
+  describe('Decorations', () => {
+    it('should map shorthand decorations to notations', () => {
+      expect(notationsOf('X:1\nK:C\n.C D|\n')).toContainEqual(
+        expect.objectContaining({ type: 'articulation', articulation: 'staccato' }),
+      );
+      expect(notationsOf('X:1\nK:C\nTC D|\n')).toContainEqual(
+        expect.objectContaining({ type: 'ornament', ornament: 'trill-mark' }),
+      );
+      expect(notationsOf('X:1\nK:C\nHC D|\n')).toContainEqual(
+        expect.objectContaining({ type: 'fermata' }),
+      );
+      expect(notationsOf('X:1\nK:C\nuC D|\n')).toContainEqual(
+        expect.objectContaining({ type: 'technical', technical: 'up-bow' }),
+      );
+    });
+
+    it('should map !name! decorations to the same notations as their shorthand', () => {
+      expect(notationsOf('X:1\nK:C\n!trill!C D|\n')).toContainEqual(
+        expect.objectContaining({ type: 'ornament', ornament: 'trill-mark' }),
+      );
+      expect(notationsOf('X:1\nK:C\n!accent!C D|\n')).toContainEqual(
+        expect.objectContaining({ type: 'articulation', articulation: 'accent' }),
+      );
+      expect(notationsOf('X:1\nK:C\n!downbow!C D|\n')).toContainEqual(
+        expect.objectContaining({ type: 'technical', technical: 'down-bow' }),
+      );
+    });
+
+    it('should accept the deprecated +name+ decoration form', () => {
+      expect(notationsOf('X:1\nK:C\n+trill+C D|\n')).toContainEqual(
+        expect.objectContaining({ type: 'ornament', ornament: 'trill-mark' }),
+      );
+    });
+
+    it('should normalize decoration aliases to a single spelling', () => {
+      expect(roundTrip('X:1\nK:C\n!trill!C D|\n')).toContain('TC');
+      expect(roundTrip('X:1\nK:C\n!>!C D|\n')).toContain('LC');
+      // Normalization is stable: serializing again changes nothing
+      const once = roundTrip('X:1\nK:C\n!trill!C !accent!D|\n');
+      expect(roundTrip(once)).toBe(once);
+    });
+
+    it('should map crescendo decorations to wedges', () => {
+      const score = parseAbc('X:1\nK:C\n!crescendo(!C D!crescendo)! E|\n');
+      const wedges = score.parts[0].measures[0].entries.filter(
+        e => e.type === 'direction' && e.directionTypes.some(dt => dt.kind === 'wedge'),
+      );
+      expect(wedges.length).toBe(2);
+      expect(roundTrip('X:1\nK:C\n!diminuendo(!C D!diminuendo)! E|\n'))
+        .toContain('!diminuendo)!');
+    });
+
+    it('should preserve decorations with no MusicXML counterpart', () => {
+      expect(roundTrip('X:1\nK:C\n~C D|\n')).toContain('~C');
+      expect(roundTrip('X:1\nK:C\n!roll!C D|\n')).toContain('!roll!');
+    });
+
+    it('should map fingerings', () => {
+      expect(notationsOf('X:1\nK:C\n!3!C D|\n')).toContainEqual(
+        expect.objectContaining({ type: 'technical', technical: 'fingering', text: '3' }),
+      );
+    });
+  });
+
+  describe('Text annotations', () => {
+    it('should map annotation placement characters', () => {
+      expect(firstDirection('X:1\nK:C\n"^above"C D|\n')).toMatchObject({
+        placement: 'above',
+        directionTypes: [{ kind: 'words', text: 'above' }],
+      });
+      expect(firstDirection('X:1\nK:C\n"_below"C D|\n')).toMatchObject({ placement: 'below' });
+    });
+
+    it('should not treat annotations as chord symbols', () => {
+      const score = parseAbc('X:1\nK:C\n"^text"C D|\n');
+      expect(score.parts[0].measures[0].entries.some(e => e.type === 'harmony')).toBe(false);
+    });
+
+    it('should round-trip every placement character', () => {
+      for (const marker of ['^', '_', '<', '>', '@']) {
+        const abc = `X:1\nK:C\n"${marker}note"C D|\n`;
+        expect(roundTrip(abc)).toContain(`"${marker}note"`);
+      }
+    });
+  });
+
+  describe('Accidentals', () => {
+    it('should parse microtonal accidentals', () => {
+      const score = parseAbc('X:1\nK:C\n^/C ^3/2D _/E|\n');
+      const notes = score.parts[0].measures[0].entries.filter(e => e.type === 'note') as any[];
+      expect(notes[0].pitch.alter).toBe(0.5);
+      expect(notes[1].pitch.alter).toBe(1.5);
+      expect(notes[2].pitch.alter).toBe(-0.5);
+      expect(notes[0].accidental?.value).toBe('quarter-sharp');
+      expect(notes[1].accidental?.value).toBe('three-quarters-sharp');
+    });
+
+    it('should serialize microtones as explicit fractions', () => {
+      expect(roundTrip('X:1\nK:C\n^/C D|\n')).toContain('^1/2C');
+    });
+
+    it('should not mistake note durations for microtones', () => {
+      const score = parseAbc('X:1\nK:C\n^C2 _D/2|\n');
+      const notes = score.parts[0].measures[0].entries.filter(e => e.type === 'note') as any[];
+      expect(notes[0].pitch.alter).toBe(1);
+      expect(notes[1].pitch.alter).toBe(-1);
+    });
+  });
+
+  describe('Rests and spacers', () => {
+    it('should expand Zn into one measure per bar', () => {
+      const score = parseAbc('X:1\nM:4/4\nL:1/8\nK:C\nCDEF GABc|Z3|CDEF GABc|\n');
+      expect(score.parts[0].measures.length).toBe(5);
+      expect(score.parts[0].measures[1].attributes?.measureStyle)
+        .toEqual([{ multipleRest: 3 }]);
+    });
+
+    it('should write multi-measure rests back as Zn', () => {
+      expect(roundTrip('X:1\nM:4/4\nL:1/8\nK:C\nCDEF GABc|Z3|CDEF GABc|\n'))
+        .toContain('Z3');
+    });
+
+    it('should preserve the y spacer', () => {
+      expect(roundTrip('X:1\nK:C\nC y D E|\n')).toContain('y');
+    });
+  });
+
+  describe('Grace notes', () => {
+    it('should distinguish acciaccatura from appoggiatura', () => {
+      const slashed = parseAbc('X:1\nK:C\n{/g}A B|\n');
+      const plain = parseAbc('X:1\nK:C\n{g}A B|\n');
+      const graceOf = (s: any) =>
+        (s.parts[0].measures[0].entries.find((e: any) => e.type === 'note' && e.grace) as any).grace;
+      expect(graceOf(slashed).slash).toBe(true);
+      expect(graceOf(plain).slash).toBe(false);
+      expect(roundTrip('X:1\nK:C\n{/g}A B|\n')).toContain('{/g}');
+    });
+
+    it('should keep chords inside grace groups', () => {
+      expect(roundTrip("X:1\nK:C\n{[ce]}g a|\n")).toContain('{[ce]}');
+    });
+  });
+
+  describe('Bar lines and repeats', () => {
+    it('should parse invisible and dotted bar lines', () => {
+      const invisible = parseAbc('X:1\nK:C\nCDEF[|]GABc|\n');
+      expect(invisible.parts[0].measures[0].barlines?.[0].barStyle).toBe('none');
+      const dotted = parseAbc('X:1\nK:C\nCDEF.|GABc|\n');
+      expect(dotted.parts[0].measures[0].barlines?.[0].barStyle).toBe('dotted');
+    });
+
+    it('should parse volta lists and ranges', () => {
+      const score = parseAbc('X:1\nK:C\n|:CDEF|[1,3 GABc:|[2 GAB2|]\n');
+      const endings = score.parts.flatMap(p =>
+        p.measures.flatMap(m => (m.barlines ?? []).map(b => b.ending?.number)),
+      );
+      expect(endings).toContain('1,3');
+    });
+  });
+
+  describe('Fields', () => {
+    it('should parse additive meters', () => {
+      const time = parseAbc('X:1\nM:(2+3+2)/8\nK:C\nCDE FGA Bc|\n')
+        .parts[0].measures[0].attributes?.time;
+      expect(time?.beats).toBe('2+3+2');
+      expect(time?.beatType).toBe(8);
+      expect(time?.beatsList).toEqual([2, 3, 2]);
+    });
+
+    it('should parse M:none as unmeasured', () => {
+      const time = parseAbc('X:1\nM:none\nK:C\nCDEF|\n')
+        .parts[0].measures[0].attributes?.time;
+      expect(time?.senzaMisura).toBe(true);
+    });
+
+    it('should apply +: field continuations', () => {
+      const score = parseAbc('X:1\nT:First part\n+: and second\nK:C\nCDEF|\n');
+      expect(score.metadata.movementTitle).toBe('First part and second');
+      expect(roundTrip('X:1\nT:First part\n+: and second\nK:C\nCDEF|\n'))
+        .toContain('+: and second');
+    });
+
+    it('should apply inline meter changes', () => {
+      const score = parseAbc('X:1\nM:4/4\nL:1/8\nK:C\nCDEF GABc|[M:3/4]CDE FGA|\n');
+      expect(score.parts[0].measures[1].attributes?.time?.beats).toBe('3');
+    });
+
+    it('should keep inline key changes inline', () => {
+      const out = roundTrip('X:1\nK:C\nCDEF|[K:G]GABc|\n');
+      expect(out).toContain('[K:G]');
+      expect(out).not.toMatch(/^K:G$/m);
+    });
+
+    it('should preserve body fields that have no model counterpart', () => {
+      const out = roundTrip('X:1\nP:AB\nK:C\nP:A\nCDEF|\nP:B\nGABc|\n');
+      expect(out).toContain('\nP:A\n');
+      expect(out).toContain('\nP:B\n');
+    });
+  });
+
+  describe('Lyrics', () => {
+    it('should number consecutive w: lines as verses', () => {
+      const score = parseAbc('X:1\nM:4/4\nL:1/4\nK:C\nC D E F|\nw:one two three four\nw:un deux trois quatre\n');
+      const firstNote = score.parts[0].measures[0].entries.find(e => e.type === 'note') as any;
+      expect(firstNote.lyrics).toEqual([
+        expect.objectContaining({ number: 1, text: 'one' }),
+        expect.objectContaining({ number: 2, text: 'un' }),
+      ]);
+    });
+
+    it('should write one w: line per verse', () => {
+      const out = roundTrip('X:1\nM:4/4\nL:1/4\nK:C\nC D E F|\nw:one two three four\nw:un deux trois quatre\n');
+      expect(out).toContain('w:one two three four');
+      expect(out).toContain('w:un deux trois quatre');
+    });
+  });
+
+  describe('Clefs and voice octaves', () => {
+    it('should apply a clef named on the K: field', () => {
+      const clef = parseAbc('X:1\nK:C clef=bass\nC,D,E,F,|\n')
+        .parts[0].measures[0].attributes?.clef?.[0];
+      expect(clef).toEqual({ sign: 'F', line: 4 });
+    });
+
+    it('should accept the bare clef form', () => {
+      const clef = parseAbc('X:1\nK:C bass\nC,D,E,F,|\n')
+        .parts[0].measures[0].attributes?.clef?.[0];
+      expect(clef).toEqual({ sign: 'F', line: 4 });
+    });
+
+    it('should parse octave-transposing clefs', () => {
+      const clef = parseAbc('X:1\nK:C clef=treble-8\nCDEF|\n')
+        .parts[0].measures[0].attributes?.clef?.[0];
+      expect(clef).toMatchObject({ sign: 'G', line: 2, clefOctaveChange: -1 });
+      expect(roundTrip('X:1\nK:C clef=treble-8\nCDEF|\n')).toContain('clef=treble-8');
+    });
+
+    it('should apply a voice octave= shift to its pitches', () => {
+      const score = parseAbc('X:1\nV:1 clef=bass octave=-2\nK:C\nCDEF|\n');
+      const note = score.parts[0].measures[0].entries.find(e => e.type === 'note') as any;
+      expect(note.pitch.octave).toBe(2);
+    });
+
+    it('should take the octave= shift back out when serializing', () => {
+      const abc = 'X:1\nV:1 clef=bass octave=-2\nK:C\nCDEF|\n';
+      expect(roundTrip(abc)).toContain('CDEF');
+    });
+  });
+
+  describe('Pathological input', () => {
+    it('should serialize an unterminated inline field marker in linear time', () => {
+      // A <words> direction carries arbitrary text from MusicXML, including
+      // text that opens an ABC inline field and never closes it. Matching that
+      // against a pattern whose whitespace run overlaps the value run costs
+      // ~4.4s here; keeping the two unambiguous makes it immeasurable.
+      const score = parseAbc('X:1\nK:C\nCDEF|\n');
+      score.parts[0].measures[0].entries.unshift({
+        _id: 'test-words',
+        type: 'direction',
+        directionTypes: [{ kind: 'words', text: `[A:${' '.repeat(64_000)}` }],
+      });
+
+      const start = performance.now();
+      serializeAbc(score);
+      expect(performance.now() - start).toBeLessThan(2000);
+    });
+  });
+
+  describe('Multi-tune files', () => {
+    const twoTunes = 'X:1\nT:One\nK:C\nCDEF|\n\nX:2\nT:Two\nK:G\nGABc|\n';
+
+    it('should parse every tune', () => {
+      const tunes = parseAbcTunes(twoTunes);
+      expect(tunes.length).toBe(2);
+      expect(tunes.map(t => t.metadata.movementTitle)).toEqual(['One', 'Two']);
+    });
+
+    it('should parse only the first tune with parseAbc', () => {
+      const score = parseAbc(twoTunes);
+      expect(score.metadata.movementTitle).toBe('One');
+      expect(score.parts[0].measures.length).toBe(1);
+    });
+
+    it('should round-trip a multi-tune file', () => {
+      expect(serializeAbcTunes(parseAbcTunes(twoTunes))).toBe(twoTunes);
+    });
+
+    it('should share a file header across tunes', () => {
+      const tunes = parseAbcTunes('%%scale 0.8\nX:1\nT:One\nK:C\nCDEF|\n\nX:2\nT:Two\nK:G\nGABc|\n');
+      expect(tunes.length).toBe(2);
+      expect(tunes[1].metadata.movementTitle).toBe('Two');
     });
   });
 });
