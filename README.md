@@ -90,10 +90,60 @@ const abc = serializeAbc(score, {
   includeLyrics: true,
 });
 
+// Files holding several tunes (repeated X: fields)
+import { parseAbcTunes, serializeAbcTunes } from 'musicxml-io';
+const tunes = parseAbcTunes(abcString);   // Score[]
+const book = serializeAbcTunes(tunes);
+
 // Auto-detect format (MusicXML, .mxl, or ABC)
 import { parseAuto } from 'musicxml-io';
 const score2 = parseAuto(input);
 ```
+
+`parseAbc` returns the first tune of a multi-tune file; use `parseAbcTunes`
+to get them all.
+
+#### Supported ABC syntax
+
+Targets the [ABC notation standard v2.1](https://abcnotation.com/wiki/abc:standard:v2.1).
+
+| Area | Support |
+|------|---------|
+| Header fields | `X T C M L Q K V P U W Z S O R N I F` and `+:` continuations |
+| Meters | `n/m`, `C`, `C\|`, additive `(2+3+2)/8`, `none` |
+| Keys | All majors, minors and modes; clef on `K:` (`clef=bass`, bare `K:C bass`) |
+| Clefs | treble, bass, bass3, alto, tenor, soprano, mezzo, baritone, perc, and octave-transposing forms (`treble-8`, `bass+15`) |
+| Notes | Pitch, octave, duration, broken rhythm (`>` `<`), ties |
+| Accidentals | `^ ^^ _ __ =` and microtones (`^/2`, `^3/2`, `_/4`) |
+| Rests | `z`, `x`, multi-measure `Zn`, spacer `y` |
+| Bar lines | `\| \|\| \|] [\| \|: :\| :: :\|: [\|]` and dotted `.\|` |
+| Repeats | Volta brackets, including lists and ranges (`[1,3`, `[1-3`) |
+| Chords | `[CEG]`, per-note durations and ties, rests inside chords |
+| Grace notes | `{...}` appoggiatura, `{/...}` acciaccatura, chords inside groups |
+| Tuplets | `(p`, `(p:q`, `(p:q:r` |
+| Decorations | Shorthand (`. ~ H L M O P S T u v`), `!name!`, legacy `+name+` |
+| Chord symbols | `"Am"`, `"G7/B"`, ... |
+| Annotations | `"^above"`, `"_below"`, `"<"`, `">"`, `"@"` |
+| Slurs | `(...)`, dotted `.(...)` |
+| Dynamics | `!p!` … `!ffff!`, hairpins `!crescendo(!` / `!diminuendo)!` |
+| Lyrics | `w:` with multiple verses, `W:` |
+| Voices | `V:` with `clef=`, `name=`, `octave=`; overlay `&` |
+| Inline fields | `[K:]`, `[M:]`, `[L:]`, `[Q:]`, `[V:]`, and others carried through |
+| Files | Multiple tunes per file, `%` comments, `%%` directives |
+
+Not yet interpreted, but carried through a round-trip unchanged:
+
+- `U:` user-defined symbol redefinitions (the default meanings are used)
+- `m:` macros (not expanded)
+- `K:` extras beyond the clef: explicit accidentals (`exp`), `transpose=`,
+  `middle=`, `K:HP`
+- `s:` symbol lines and body `P:` part markers (kept in place, not applied)
+- Spacing between notes, which ABC uses as a beaming hint, is treated as
+  formatting rather than musical content
+
+Where several ABC spellings mean the same thing — `!trill!` and `T`, or
+`!accent!`, `!emphasis!` and `!>!` — serialization settles on one of them.
+The choice is stable, so serializing twice yields the same text.
 
 ⚠️ **Warning**: This library's API is not yet stable and may change between versions.
 
@@ -233,12 +283,14 @@ const { valid, errors } = validate(score);
 | `parse(xml)` | Parse MusicXML string |
 | `parseFile(path)` | Parse from file |
 | `parseCompressed(buffer)` | Parse .mxl |
-| `parseAbc(abc)` | Parse ABC notation string |
+| `parseAbc(abc)` | Parse ABC notation string (first tune) |
+| `parseAbcTunes(abc)` | Parse every tune in an ABC file → `Score[]` |
 | `parseAuto(data)` | Auto-detect format (MusicXML / .mxl / ABC) |
 | `serialize(score)` | To MusicXML string |
 | `serializeToFile(score, path)` | To file |
 | `serializeCompressed(score)` | To .mxl |
 | `serializeAbc(score, options?)` | To ABC notation string |
+| `serializeAbcTunes(scores, options?)` | Several Scores → one multi-tune ABC file |
 | `exportMidi(score)` | To MIDI |
 | `exportMidiWithTimingMap(score)` | To MIDI + a MIDI↔(measure, beat) timing sidecar for audio alignment |
 
@@ -433,7 +485,7 @@ This feature enables:
 
 | Path | Fidelity |
 |------|----------|
-| ABC → Score → ABC | High (42 fixtures passing) |
+| ABC → Score → ABC | High (49 fixtures passing) |
 | ABC → MusicXML → ABC | Musical content preserved |
 
 ## Contributing

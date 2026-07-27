@@ -3,6 +3,18 @@
 ## [Unreleased]
 
 ### Added
+- Much broader ABC notation coverage, targeting the ABC standard v2.1. Newly supported:
+  - **Decorations** — the single-character shorthand set (`. ~ H L M O P S T u v`), the `!name!` long form and the deprecated `+name+` form now map onto real MusicXML articulations, ornaments, technicals, fermatas, hairpins and navigation marks instead of being carried as opaque `<words>`. Decorations with no MusicXML counterpart keep their ABC text.
+  - **Text annotations** — `"^above"`, `"_below"`, `"<"`, `">"` and `"@"` become `<direction><words>` with the matching placement. They were previously dropped, and mistaken for chord symbols.
+  - **Microtonal accidentals** — `^/2`, `^3/2`, `_/4` and friends. Previously the accidental was lost entirely.
+  - **Multiple lyric verses** — consecutive `w:` lines become numbered `<lyric>` elements; only the first verse used to survive.
+  - **Multi-tune files** — `parseAbcTunes` / `serializeAbcTunes` handle files with several `X:` fields. `parseAbc` returns the first tune instead of merging the rest into it.
+  - **Clefs** — the clef named on a `K:` field (`clef=bass`, or the bare `K:C bass`) now reaches the model, as do octave-transposing clefs (`treble-8`, `bass+15`). Previously every tune imported as treble.
+  - **Voice `octave=`** — folded into the pitches on import and taken back out on serialization. Parts declaring an octave shift previously imported in the wrong register.
+  - **Meters** — additive meters (`M:(2+3+2)/8`) and `M:none`, which used to fall back to 4/4.
+  - **Inline fields** — `[M:]` and `[Q:]` are applied; other inline fields are carried through in place.
+  - Multi-measure rests (`Zn`) via `<measure-style><multiple-rest>`, spacers (`y`), acciaccaturas (`{/g}`), dotted slurs (`.(`), chords and rests inside chords and grace groups, invisible (`[|]`) and dotted (`.|`) bar lines, volta lists and ranges (`[1,3`, `[1-3`), and `+:` field continuations.
+  - Body field lines with no model counterpart (`P:`, `s:`, `r:`) survive a round-trip instead of being dropped.
 - `<credit-image>` support: credit images are now parsed into `credit.creditImage` and serialized back to MusicXML. The `CreditImage` type covers the full MusicXML image attribute set (`source`, `type`, `height`, `width`, `default-x/y`, `relative-x/y`, `halign`, `valign`). Previously the field existed on the `Credit` type but was silently dropped on both parse and serialize. `CreditImage` and `CreditWords` are now exported from the package root.
 
 ### Performance
@@ -10,6 +22,7 @@
 - Bundle size: importing only `parse` now costs ~47 KB minified / ~13 KB gzipped (was ~49 KB / ~14 KB); the txml dependency is gone.
 
 ### Fixed
+- ABC fingering decorations (`!0!` … `!5!`) kept their digits through a MusicXML round-trip. The value was written to the wrong field, so `<fingering>` came out empty.
 - Whitespace-significant text is no longer lost when parsing: whitespace-only `<words>`/`<credit-words>` content (including `xml:space="preserve"`), and whitespace-only lyric `<text>` such as the ideographic space `　` used in Japanese lyrics, are now preserved. The previous XML parser silently trimmed or dropped them.
 - Astral-plane numeric character references (e.g. `&#x1D11E;` MUSICAL SYMBOL G CLEF, used by SMuFL text) now decode correctly. The previous entity decoder used `String.fromCharCode`, which corrupted code points above U+FFFF.
 
