@@ -131,14 +131,6 @@ function isXmlWhitespace(code: number): boolean {
   return code === 32 || code === 10 || code === 9 || code === 13;
 }
 
-/** True if the string contains only XML whitespace characters */
-function isWhitespaceOnly(s: string): boolean {
-  for (let i = 0; i < s.length; i++) {
-    if (!isXmlWhitespace(s.charCodeAt(i))) return false;
-  }
-  return true;
-}
-
 /**
  * Minimal, fast, lenient XML parser specialized for MusicXML.
  *
@@ -166,17 +158,25 @@ function parseXml(xml: string): XmlChild[] {
     if (lt === -1) break; // trailing text outside the root element is formatting only
 
     if (lt > pos) {
-      // Text run between pos and lt
-      let text = xml.slice(pos, lt);
-      if (!isWhitespaceOnly(text)) {
-        text = decodeXmlEntities(text);
-        children.push(
-          INVALID_XML_CHARS_TEST.test(text) ? text.replace(INVALID_XML_CHARS_RE, '') : text
-        );
+      // Text run between pos and lt. Pretty-printed XML puts an indentation
+      // run between almost every pair of tags, so test for whitespace in
+      // place and only allocate a substring for runs we actually keep.
+      let whitespaceOnly = true;
+      for (let i = pos; i < lt; i++) {
+        if (!isXmlWhitespace(xml.charCodeAt(i))) {
+          whitespaceOnly = false;
+          break;
+        }
+      }
+      if (!whitespaceOnly) {
+        // parse() already stripped forbidden characters from the whole
+        // document, and decodeXmlEntities re-checks anything it decoded, so
+        // no further scan is needed here.
+        children.push(decodeXmlEntities(xml.slice(pos, lt)));
       } else if (children.length === 0 && xml.charCodeAt(lt + 1) === SLASH) {
         // Whitespace-only text that is the sole content of an element
         // (e.g. <text> </text>) is meaningful \u2014 keep it.
-        children.push(text);
+        children.push(xml.slice(pos, lt));
       }
     }
 
@@ -209,9 +209,8 @@ function parseXml(xml: string): XmlChild[] {
       } else if (xml.startsWith('<![CDATA[', lt)) {
         // CDATA: literal text, no entity decoding
         const end = xml.indexOf(']]>', lt + 9);
-        let text = xml.slice(lt + 9, end === -1 ? len : end);
-        if (INVALID_XML_CHARS_TEST.test(text)) text = text.replace(INVALID_XML_CHARS_RE, '');
-        children.push(text);
+        // Already stripped document-wide by parse(); CDATA is not decoded
+        children.push(xml.slice(lt + 9, end === -1 ? len : end));
         pos = end === -1 ? len : end + 3;
       } else {
         // DOCTYPE (may contain an internal subset in brackets): skip
