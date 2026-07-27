@@ -3,19 +3,19 @@
  * Parses ABC notation format into the Score internal model.
  *
  * Supports ABC standard v2.1 core features:
- * - Header fields (X, T, C, M, L, Q, K, V, w)
- * - Notes with pitch, duration, accidentals, octave modifiers
- * - Rests (z, Z)
- * - Bar lines (|, ||, |], [|, |:, :|, ::)
- * - Repeats and volta endings ([1, [2)
- * - Chords (simultaneous notes: [CEG])
- * - Chord symbols ("Am", "G7", etc.)
- * - Ties (-) and slurs ((...))
- * - Grace notes ({...})
+ * - Header fields (X, T, C, M, L, Q, K, V, P, U, w, W, and `+:` continuations)
+ * - Notes with pitch, duration, accidentals (including microtones), octaves
+ * - Rests (z, Z, multi-measure Zn), invisible rests (x, Xn) and spacers (y)
+ * - Bar lines (|, ||, |], [|, |:, :|, ::, [|], .|)
+ * - Repeats and volta endings, including lists and ranges ([1,3, [1-3)
+ * - Chords (simultaneous notes: [CEG]) with rests and per-note durations
+ * - Chord symbols ("Am", "G7") and text annotations ("^above", "_below", ...)
+ * - Ties (-), slurs ((...)) and dotted slurs (.(...))
+ * - Grace notes ({...}) and acciaccaturas ({/...})
  * - Tuplets ((3..., (p:q:r...)
- * - Dynamics (!p!, !f!, etc.)
- * - Lyrics (w: field)
- * - Multi-voice (V: field)
+ * - Decorations: shorthand (. ~ H L M O P S T u v), !name! and legacy +name+
+ * - Lyrics (w: field, multiple verses) and symbol lines (s:)
+ * - Multi-voice (V: field) and multi-tune files (repeated X: fields)
  */
 
 import type {
@@ -33,8 +33,16 @@ import type {
   Barline,
   Clef,
   DynamicsValue,
+  Notation,
+  Accidental,
 } from '../types';
 import { generateId } from '../id';
+import {
+  ABC_DYNAMICS,
+  ABC_SHORTHAND_DECORATIONS,
+  lookupAbcDecoration,
+  type AbcDecorationTarget,
+} from '../abc-decorations';
 
 // ============================================================
 // Types
@@ -71,6 +79,7 @@ interface AbcToken {
   | 'chord_start'
   | 'chord_end'
   | 'chord_symbol'
+  | 'annotation'
   | 'tie'
   | 'slur_start'
   | 'slur_end'
@@ -78,6 +87,7 @@ interface AbcToken {
   | 'grace_end'
   | 'tuplet'
   | 'decoration'
+  | 'spacer'
   | 'voice'
   | 'inline_field'
   | 'ending'
@@ -92,9 +102,18 @@ interface AbcToken {
   duration?: number; // in units of default note length
   durationNum?: number;
   durationDen?: number;
-  accidental?: number; // -2, -1, 0, 1, 2
+  /** Accidental in semitones; fractional for microtones (e.g. 0.5 for ^/2). */
+  accidental?: number;
+  // Rest-specific: measure count for multi-measure rests (Zn / Xn)
+  restMeasures?: number;
   // Bar-specific
   barType?: string;
+  /** Grace-specific: true for an acciaccatura ({/...}). */
+  slashGrace?: boolean;
+  /** Slur-specific: true for a dotted slur (.(). */
+  dotted?: boolean;
+  /** Annotation-specific: the ABC placement character (^, _, <, >, @). */
+  annotationPlacement?: string;
   // Ending-specific: true when ending uses bracket notation [1 vs number-after-barline 1
   bracket?: boolean;
   // Tuplet-specific
@@ -155,12 +174,21 @@ const MODE_NAME: Record<string, KeySignature['mode']> = {
   'locrian': 'locrian', 'loc': 'locrian',
 };
 
-const DYNAMICS_VALUES = new Set([
-  'pppppp', 'ppppp', 'pppp', 'ppp', 'pp', 'p',
-  'mp', 'mf',
-  'f', 'ff', 'fff', 'ffff', 'fffff', 'ffffff',
-  'sf', 'sfz', 'sffz', 'sfp', 'sfpp', 'fp', 'rf', 'rfz', 'fz', 'pf',
-]);
+const DYNAMICS_VALUES = ABC_DYNAMICS;
+
+/**
+ * Volta ending specification: a number, or a comma/dash separated list of them
+ * (`1`, `1,3`, `1-3`). Matched against the text following a bar line or `[`.
+ */
+const ENDING_SPEC = /^(\d+(?:[,-]\d+)*)/;
+
+/** Microtonal accidental values (in semitones) that MusicXML can name. */
+const MICROTONE_ACCIDENTALS: Record<string, Accidental> = {
+  '0.5': 'quarter-sharp',
+  '-0.5': 'quarter-flat',
+  '1.5': 'three-quarters-sharp',
+  '-1.5': 'three-quarters-flat',
+};
 
 // ============================================================
 // Header Parsing
@@ -750,19 +778,29 @@ function tokenizeMusicLine(line: string): AbcToken[] {
     // Comment
     if (ch === '%') break;
 
-    // Chord symbol "..."
+    // Chord symbol "Am" or text annotation "^above" / "_below" / "<" / ">" / "@"
     if (ch === '"') {
       const end = line.indexOf('"', i + 1);
       if (end !== -1) {
-        tokens.push({ type: 'chord_symbol', value: line.slice(i + 1, end) });
+        const text = line.slice(i + 1, end);
+        if (/^[\^_<>@]/.test(text)) {
+          tokens.push({
+            type: 'annotation',
+            value: text.slice(1),
+            annotationPlacement: text[0],
+          });
+        } else {
+          tokens.push({ type: 'chord_symbol', value: text });
+        }
         i = end + 1;
         continue;
       }
     }
 
-    // Decoration !...!
-    if (ch === '!') {
-      const end = line.indexOf('!', i + 1);
+    // Decoration !...! (and the deprecated +...+ form)
+    if (ch === '!' || ch === '+') {
+      const end = line.indexOf(ch, i + 1);
+      // A lone '!' at end of line is a (deprecated) line-break marker, not a decoration
       if (end !== -1) {
         tokens.push({ type: 'decoration', value: line.slice(i + 1, end) });
         i = end + 1;
@@ -770,16 +808,36 @@ function tokenizeMusicLine(line: string): AbcToken[] {
       }
     }
 
-    // Grace notes {
+    // Grace notes { or acciaccatura {/
     if (ch === '{') {
-      tokens.push({ type: 'grace_start', value: '{' });
-      i++;
+      const isSlash = i + 1 < line.length && line[i + 1] === '/';
+      tokens.push({ type: 'grace_start', value: isSlash ? '{/' : '{', slashGrace: isSlash });
+      i += isSlash ? 2 : 1;
       continue;
     }
     if (ch === '}') {
       tokens.push({ type: 'grace_end', value: '}' });
       i++;
       continue;
+    }
+
+    // '.' introduces a dotted slur (.(), a dotted bar line (.|) or a staccato mark
+    if (ch === '.') {
+      const next = i + 1 < line.length ? line[i + 1] : '';
+      if (next === '(') {
+        tokens.push({ type: 'slur_start', value: '.(', dotted: true });
+        i += 2;
+        continue;
+      }
+      if (next === '|') {
+        const dottedBar = parseBarLine(line, i + 1);
+        if (dottedBar) {
+          tokens.push({ type: 'bar', value: '.' + dottedBar.token.value, barType: 'dotted' });
+          i = dottedBar.nextIndex;
+          continue;
+        }
+      }
+      // Otherwise fall through to the shorthand decoration handling below
     }
 
     // Slur
@@ -816,9 +874,9 @@ function tokenizeMusicLine(line: string): AbcToken[] {
       if (barResult) {
         tokens.push(barResult.token);
         i = barResult.nextIndex;
-        // Check for ending number directly after barline (e.g., ||1, :|2)
+        // Check for ending number directly after barline (e.g., ||1, :|2, |1,3)
         if (i < line.length && /\d/.test(line[i])) {
-          const numMatch = line.slice(i).match(/^(\d+)/);
+          const numMatch = line.slice(i).match(ENDING_SPEC);
           if (numMatch) {
             tokens.push({ type: 'ending', value: numMatch[1] });
             i += numMatch[1].length;
@@ -829,9 +887,9 @@ function tokenizeMusicLine(line: string): AbcToken[] {
       }
     }
 
-    // Ending markers [1, [2 (standalone bracket notation)
+    // Ending markers [1, [2, [1,3, [1-3 (standalone bracket notation)
     if (ch === '[' && i + 1 < line.length && /\d/.test(line[i + 1])) {
-      const numMatch = line.slice(i + 1).match(/^(\d+)/);
+      const numMatch = line.slice(i + 1).match(ENDING_SPEC);
       if (numMatch) {
         tokens.push({ type: 'ending', value: numMatch[1], bracket: true });
         i += 1 + numMatch[1].length;
@@ -890,19 +948,30 @@ function tokenizeMusicLine(line: string): AbcToken[] {
       continue;
     }
 
-    // ABC shorthand decorations: v (down-bow), u (up-bow), T (trill), M (mordent)
-    // These appear as standalone characters before a note (or another decoration)
-    if ((ch === 'v' || ch === 'u' || ch === 'T' || ch === 'M') && i + 1 < line.length) {
+    // ABC shorthand decorations (. ~ H J L M O P R S T u v)
+    // These appear as standalone characters before the note they decorate
+    if (ABC_SHORTHAND_DECORATIONS.has(ch) && i + 1 < line.length) {
       const nextCh = line[i + 1];
-      // Treat as decoration if followed by a note, chord, rest, another decoration,
-      // slur start, !...! decoration, or chord symbol
-      if (isNoteStart(nextCh) || nextCh === '[' || nextCh === 'z' || nextCh === 'x' ||
-        nextCh === 'v' || nextCh === 'u' || nextCh === 'T' || nextCh === 'M' ||
-        nextCh === '(' || nextCh === '!' || nextCh === '"') {
+      // Treat as decoration if followed by a note, chord, rest, grace group,
+      // another decoration, slur start, !...! decoration, or chord symbol
+      if (isNoteStart(nextCh) || nextCh === '[' || nextCh === '{' ||
+        nextCh === 'z' || nextCh === 'Z' || nextCh === 'x' || nextCh === 'X' || nextCh === 'y' ||
+        ABC_SHORTHAND_DECORATIONS.has(nextCh) ||
+        nextCh === '(' || nextCh === '!' || nextCh === '+' || nextCh === '"') {
         tokens.push({ type: 'decoration', value: ch });
         i++;
         continue;
       }
+    }
+
+    // Spacer y (invisible rest with no duration; a pure typesetting hint)
+    if (ch === 'y') {
+      const start = i;
+      i++;
+      const dur = parseDuration(line, i);
+      i = dur.nextIndex;
+      tokens.push({ type: 'spacer', value: line.slice(start, i) });
+      continue;
     }
 
     // Note or rest (including x/X invisible rests)
@@ -966,11 +1035,13 @@ function parseTuplet(line: string, i: number): { token: AbcToken; nextIndex: num
 function parseBarLine(line: string, i: number): { token: AbcToken; nextIndex: number } | null {
   // Order matters - try longest matches first
   const patterns: [string, string][] = [
+    ['[|]', 'invisible'],
     [':|]', 'end-repeat-final'],
     [':||:', 'double-repeat'],
     ['::', 'double-repeat'],
     [':|:', 'double-repeat'],
     ['|>|', 'thick-thin'],
+    ['[|:', 'start-repeat'],
     ['|:', 'start-repeat'],
     [':|', 'end-repeat'],
     ['||', 'double'],
@@ -1004,21 +1075,26 @@ function parseNoteToken(line: string, i: number): { token: AbcToken; nextIndex: 
 
   // Rest (z/Z = visible rest, x/X = invisible rest / spacer)
   if (line[i] === 'z' || line[i] === 'Z' || line[i] === 'x' || line[i] === 'X') {
+    const restLetter = line[i];
     i++;
     const dur = parseDuration(line, i);
     i = dur.nextIndex;
+    // For Z the number counts whole measures rather than note lengths.
+    // X is left alone: real-world files use it interchangeably with x.
+    const isMultiMeasure = restLetter === 'Z';
     return {
       token: {
         type: 'rest',
         value: line.slice(start, i),
-        durationNum: dur.num,
-        durationDen: dur.den,
+        durationNum: isMultiMeasure ? 1 : dur.num,
+        durationDen: isMultiMeasure ? 1 : dur.den,
+        restMeasures: isMultiMeasure ? Math.max(1, dur.num) : undefined,
       },
       nextIndex: i,
     };
   }
 
-  // Accidental
+  // Accidental, including microtones (^/2 = quarter sharp, _3/2 = 3/4 flat)
   let accidental = 0;
   let explicitNatural = false;
   if (line[i] === '^') {
@@ -1028,6 +1104,9 @@ function parseNoteToken(line: string, i: number): { token: AbcToken; nextIndex: 
       accidental = 2;
       i++;
     }
+    const micro = parseMicrotoneFactor(line, i);
+    accidental *= micro.factor;
+    i = micro.nextIndex;
   } else if (line[i] === '_') {
     accidental = -1;
     i++;
@@ -1035,6 +1114,9 @@ function parseNoteToken(line: string, i: number): { token: AbcToken; nextIndex: 
       accidental = -2;
       i++;
     }
+    const micro = parseMicrotoneFactor(line, i);
+    accidental *= micro.factor;
+    i = micro.nextIndex;
   } else if (line[i] === '=') {
     accidental = 0; // natural (explicit)
     explicitNatural = true;
@@ -1083,6 +1165,26 @@ function parseNoteToken(line: string, i: number): { token: AbcToken; nextIndex: 
     token,
     nextIndex: i,
   };
+}
+
+/**
+ * Parse the optional fraction that follows an accidental to express a
+ * microtone: `^/2` (half a sharp), `^3/2`, `_/4`. A bare `/` means `/2`.
+ *
+ * @returns The multiplier to apply to the accidental, and the index after it.
+ */
+function parseMicrotoneFactor(line: string, i: number): { factor: number; nextIndex: number } {
+  const match = line.slice(i).match(/^(\d*)\/(\d*)|^(\d+)(?![\d/])/);
+  if (!match) return { factor: 1, nextIndex: i };
+
+  // Plain integer with no slash (e.g. ^3) is not valid microtone syntax in
+  // ABC 2.1 — only the fractional forms are. Leave it for the duration parser.
+  if (match[3] !== undefined) return { factor: 1, nextIndex: i };
+
+  const num = match[1] === '' ? 1 : parseInt(match[1], 10);
+  const den = match[2] === '' ? 2 : parseInt(match[2], 10);
+  if (den === 0) return { factor: 1, nextIndex: i };
+  return { factor: num / den, nextIndex: i + match[0].length };
 }
 
 function abcNoteToPitch(letter: string, accidental: number): Pitch {
@@ -1415,12 +1517,19 @@ function buildMeasures(
   let pendingTie = false;
   let slurDepth = 0;
   let pendingSlurStarts = 0;
+  // Line style for each pending slur start, in order (.( opens a dotted slur)
+  const pendingSlurDotted: boolean[] = [];
   let slurStartNotes: NoteEntry[] = [];
   let inGrace = false;
   let pendingBrokenRhythm: string | null = null;
   let tupletState: { p: number; q: number; remaining: number } | null = null;
-  // Queue to preserve original order of dynamics, decorations, and chord symbols
-  const pendingPreNoteItems: Array<{ kind: 'dynamic' | 'harmony' | 'decoration'; value: string }> = [];
+  // Queue preserving the original order of chord symbols, annotations and
+  // decorations that become <direction> entries ahead of the note they precede
+  const pendingPreNoteItems: MeasureEntry[] = [];
+  // Decorations that attach to the next note as <notations> children
+  let pendingNotations: Notation[] = [];
+  // Whether the grace group currently open is an acciaccatura ({/...})
+  let graceSlash = false;
   let pendingEndingNumber: string | null = null;
   let currentLyrics: string[] = [];
   let noteCountForLyrics = 0;
@@ -1431,25 +1540,22 @@ function buildMeasures(
   let pendingTupletStart = false;
   let pendingKeyChange: string | null = null;
   const lineBreaks: number[] = []; // measure numbers after which line breaks occur
+  // Bar count of a multi-measure rest (Zn) awaiting attachment to its measure
+  let pendingMultipleRest: number | null = null;
 
   function flushPendingPreNoteItems() {
     for (const item of pendingPreNoteItems) {
-      if (item.kind === 'harmony') {
-        const harmony = createHarmonyEntry(item.value);
-        if (harmony) currentEntries.push(harmony);
-      } else if (item.kind === 'dynamic') {
-        const dynDir = createDynamicsDirection(item.value);
-        if (dynDir) currentEntries.push(dynDir);
-      } else if (item.kind === 'decoration') {
-        const decoDir: DirectionEntry = {
-          _id: generateId(),
-          type: 'direction',
-          directionTypes: [{ kind: 'words', text: item.value }],
-        };
-        currentEntries.push(decoDir);
-      }
+      currentEntries.push(item);
     }
     pendingPreNoteItems.length = 0;
+  }
+
+  /** Attach decorations collected since the last note to `entry`. */
+  function attachPendingNotations(entry: NoteEntry) {
+    if (pendingNotations.length === 0) return;
+    if (!entry.notations) entry.notations = [];
+    entry.notations.push(...pendingNotations);
+    pendingNotations = [];
   }
 
   function finalizeMeasure(endBarType?: string) {
@@ -1469,6 +1575,15 @@ function buildMeasures(
         clef: [clef || { sign: 'G', line: 2 }],
       };
       isFirstMeasure = false;
+    }
+
+    // Mark the first measure of a multi-measure rest run
+    if (pendingMultipleRest !== null) {
+      if (!measure.attributes) {
+        measure.attributes = { _id: generateId() };
+      }
+      measure.attributes.measureStyle = [{ multipleRest: pendingMultipleRest }];
+      pendingMultipleRest = null;
     }
 
     // Apply pending key change to this measure
@@ -1510,8 +1625,9 @@ function buildMeasures(
           break;
         }
 
-        const entry = createNoteEntry(token, currentUnitNote, pendingTie, inGrace, tupletState);
+        const entry = createNoteEntry(token, currentUnitNote, pendingTie, inGrace, tupletState, graceSlash);
         pendingTie = false;
+        attachPendingNotations(entry);
 
         // Apply broken rhythm to this note (second note of the pair)
         if (pendingBrokenRhythm) {
@@ -1541,7 +1657,7 @@ function buildMeasures(
         // Handle slur start: attach pending slur starts to this note
         while (pendingSlurStarts > 0) {
           if (!entry.notations) entry.notations = [];
-          entry.notations.push({ type: 'slur', slurType: 'start', number: slurDepth - pendingSlurStarts + 1 });
+          entry.notations.push(makeSlurStart(slurDepth - pendingSlurStarts + 1, pendingSlurDotted.shift() === true));
           slurStartNotes.push(entry);
           pendingSlurStarts--;
         }
@@ -1595,14 +1711,31 @@ function buildMeasures(
       }
 
       case 'rest': {
-        if (inChord) break;
+        if (inChord) {
+          chordNotes.push(token);
+          break;
+        }
         const restEntry = createRestEntry(token, currentUnitNote, tupletState, measureDuration);
 
         // Handle chord symbol and dynamics in original order
         flushPendingPreNoteItems();
+        attachPendingNotations(restEntry);
 
         currentEntries.push(restEntry);
         currentPosition += restEntry.duration;
+
+        // Zn spans several bars: emit one whole-measure rest per bar and mark
+        // the run with <measure-style><multiple-rest>, as MusicXML expects
+        const restMeasures = token.restMeasures || 1;
+        if (restMeasures > 1) {
+          pendingMultipleRest = restMeasures;
+          for (let extra = 1; extra < restMeasures; extra++) {
+            finalizeMeasure();
+            const filler = createRestEntry(token, currentUnitNote, null, measureDuration);
+            currentEntries.push(filler);
+            currentPosition += filler.duration;
+          }
+        }
 
         if (tupletState) {
           tupletState.remaining--;
@@ -1624,16 +1757,7 @@ function buildMeasures(
 
         if (chordNotes.length > 0) {
           // Handle chord symbol and dynamics in original order
-          for (const item of pendingPreNoteItems) {
-            if (item.kind === 'harmony') {
-              const harmony = createHarmonyEntry(item.value);
-              if (harmony) currentEntries.push(harmony);
-            } else if (item.kind === 'dynamic') {
-              const dynDir = createDynamicsDirection(item.value);
-              if (dynDir) currentEntries.push(dynDir);
-            }
-          }
-          pendingPreNoteItems.length = 0;
+          flushPendingPreNoteItems();
 
           // Use duration from the chord_end token (parsed after ']')
           // Falls back to 1/1 (default unit note length)
@@ -1659,17 +1783,20 @@ function buildMeasures(
               chordToken.durationDen = chordDurDen;
             }
 
-            const entry = createNoteEntry(chordToken, currentUnitNote, false, inGrace, tupletState);
+            const entry = chordToken.type === 'rest'
+              ? createRestEntry(chordToken, currentUnitNote, tupletState, measureDuration)
+              : createNoteEntry(chordToken, currentUnitNote, false, inGrace, tupletState, graceSlash);
 
             // Restore for any other processing
             chordToken.durationNum = originalNum;
             chordToken.durationDen = originalDen;
 
             if (ci === 0) {
+              attachPendingNotations(entry);
               // Handle slur start on first note of chord
               while (pendingSlurStarts > 0) {
                 if (!entry.notations) entry.notations = [];
-                entry.notations.push({ type: 'slur', slurType: 'start', number: slurDepth - pendingSlurStarts + 1 });
+                entry.notations.push(makeSlurStart(slurDepth - pendingSlurStarts + 1, pendingSlurDotted.shift() === true));
                 slurStartNotes.push(entry);
                 pendingSlurStarts--;
               }
@@ -1796,6 +1923,7 @@ function buildMeasures(
       case 'slur_start':
         slurDepth++;
         pendingSlurStarts++;
+        pendingSlurDotted.push(token.dotted === true);
         break;
 
       case 'slur_end':
@@ -1815,10 +1943,12 @@ function buildMeasures(
 
       case 'grace_start':
         inGrace = true;
+        graceSlash = token.slashGrace === true;
         break;
 
       case 'grace_end':
         inGrace = false;
+        graceSlash = false;
         break;
 
       case 'broken_rhythm': {
@@ -1855,22 +1985,42 @@ function buildMeasures(
         pendingTupletStart = true;
         break;
 
-      case 'chord_symbol':
-        pendingPreNoteItems.push({ kind: 'harmony', value: token.value });
+      case 'chord_symbol': {
+        const harmony = createHarmonyEntry(token.value);
+        if (harmony) pendingPreNoteItems.push(harmony);
+        break;
+      }
+
+      case 'annotation':
+        pendingPreNoteItems.push(
+          createAnnotationDirection(token.value, token.annotationPlacement || '@'),
+        );
         break;
 
-      case 'decoration':
-        if (DYNAMICS_VALUES.has(token.value)) {
-          pendingPreNoteItems.push({ kind: 'dynamic', value: token.value });
-        } else {
-          // Non-dynamic decorations: store as direction with words for round-trip
-          // Single-char shorthand decorations (v, u, T, M) are stored without !...!
-          const isShorthand = token.value.length === 1 && /^[vuTM]$/.test(token.value);
-          const decoText = isShorthand ? token.value : `!${token.value}!`;
-          // Add to pending queue to preserve order relative to dynamics/harmonies
-          pendingPreNoteItems.push({ kind: 'decoration', value: decoText });
-        }
+      case 'spacer':
+        // A spacer has no musical content; keep the ABC text for round-trip
+        pendingPreNoteItems.push(createRawWordsDirection(token.value));
         break;
+
+      case 'decoration': {
+        const target = lookupAbcDecoration(token.value);
+        if (!target) {
+          // No internal-model counterpart: preserve the ABC text verbatim
+          const isShorthand = token.value.length === 1 && ABC_SHORTHAND_DECORATIONS.has(token.value);
+          pendingPreNoteItems.push(
+            createRawWordsDirection(isShorthand ? token.value : `!${token.value}!`),
+          );
+          break;
+        }
+        const notation = decorationToNotation(target);
+        if (notation) {
+          pendingNotations.push(notation);
+          break;
+        }
+        const direction = decorationToDirection(target);
+        if (direction) pendingPreNoteItems.push(direction);
+        break;
+      }
 
       case 'lyrics': {
         // In ABC, w: lines come AFTER the music lines they apply to.
@@ -2059,6 +2209,7 @@ function createNoteEntry(
   _hasTieStop: boolean,
   isGrace: boolean,
   tupletState: { p: number; q: number; remaining: number } | null,
+  graceSlash: boolean = false,
 ): NoteEntry {
   const num = token.durationNum || 1;
   const den = token.durationDen || 1;
@@ -2087,7 +2238,8 @@ function createNoteEntry(
   };
 
   if (isGrace) {
-    entry.grace = { slash: true };
+    // ABC {/g} is an acciaccatura (slashed stem); plain {g} is an appoggiatura
+    entry.grace = { slash: graceSlash };
     entry.noteType = 'eighth'; // Default grace note type
   }
 
@@ -2107,6 +2259,12 @@ function createNoteEntry(
       case 2: entry.accidental = { value: 'double-sharp' }; break;
       case -1: entry.accidental = { value: 'flat' }; break;
       case -2: entry.accidental = { value: 'double-flat' }; break;
+      default: {
+        // Microtone: use the named MusicXML accidental when one exists
+        const named = MICROTONE_ACCIDENTALS[String(token.accidental)];
+        if (named) entry.accidental = { value: named };
+        break;
+      }
     }
   }
 
@@ -2183,6 +2341,12 @@ function createBarline(barType: string, location: 'left' | 'right', endingNumber
     case 'thick-thin':
       barline.barStyle = 'heavy-light';
       break;
+    case 'invisible':
+      barline.barStyle = 'none';
+      break;
+    case 'dotted':
+      barline.barStyle = 'dotted';
+      break;
     default:
       return null; // regular barlines don't need explicit representation
   }
@@ -2243,6 +2407,102 @@ function createHarmonyEntry(chordStr: string): HarmonyEntry | null {
   }
 
   return entry;
+}
+
+/** Build a slur-start notation, marking it dotted when opened with `.(`. */
+function makeSlurStart(number: number, dotted: boolean): Notation {
+  return dotted
+    ? { type: 'slur', slurType: 'start', number, lineType: 'dotted' }
+    : { type: 'slur', slurType: 'start', number };
+}
+
+/**
+ * Build the `<notations>` child for a decoration, or `null` when the
+ * decoration belongs in a `<direction>` instead.
+ */
+function decorationToNotation(target: AbcDecorationTarget): Notation | null {
+  switch (target.kind) {
+    case 'articulation':
+      return { type: 'articulation', articulation: target.articulation };
+    case 'ornament':
+      return { type: 'ornament', ornament: target.ornament };
+    case 'technical':
+      return { type: 'technical', technical: target.technical };
+    case 'fingering':
+      return { type: 'technical', technical: 'fingering', fingering: target.fingering };
+    case 'fermata':
+      return target.inverted
+        ? { type: 'fermata', fermataType: 'inverted' }
+        : { type: 'fermata' };
+    case 'arpeggiate':
+      return { type: 'arpeggiate' };
+    case 'trill-line':
+      return { type: 'ornament', ornament: 'wavy-line', wavyLineType: target.wavyLineType };
+    default:
+      return null;
+  }
+}
+
+/**
+ * Build the `<direction>` for a decoration that is not attached to a note,
+ * or `null` when the decoration maps to a `<notations>` child instead.
+ */
+function decorationToDirection(target: AbcDecorationTarget): DirectionEntry | null {
+  switch (target.kind) {
+    case 'dynamics':
+      return createDynamicsDirection(target.value);
+    case 'wedge':
+      return {
+        _id: generateId(),
+        type: 'direction',
+        directionTypes: [{ kind: 'wedge', type: target.stop ? 'stop' : target.wedge }],
+        placement: 'below',
+      };
+    case 'segno':
+      return { _id: generateId(), type: 'direction', directionTypes: [{ kind: 'segno' }], placement: 'above' };
+    case 'coda':
+      return { _id: generateId(), type: 'direction', directionTypes: [{ kind: 'coda' }], placement: 'above' };
+    case 'words':
+      return {
+        _id: generateId(),
+        type: 'direction',
+        directionTypes: [{ kind: 'words', text: target.text }],
+        placement: 'above',
+      };
+    default:
+      return null;
+  }
+}
+
+/** ABC annotation placement character → MusicXML placement / horizontal alignment. */
+function annotationPlacement(marker: string): { placement?: 'above' | 'below'; halign?: string } {
+  switch (marker) {
+    case '^': return { placement: 'above' };
+    case '_': return { placement: 'below' };
+    case '<': return { halign: 'right' };
+    case '>': return { halign: 'left' };
+    default: return { halign: 'center' }; // '@' — free placement
+  }
+}
+
+/** Build a `<direction><words>` entry for an ABC text annotation ("^text"). */
+function createAnnotationDirection(text: string, marker: string): DirectionEntry {
+  const { placement, halign } = annotationPlacement(marker);
+  return {
+    _id: generateId(),
+    type: 'direction',
+    directionTypes: [{ kind: 'words', text, ...(halign ? { halign } : {}) }],
+    ...(placement ? { placement } : {}),
+  };
+}
+
+/** Build a `<direction><words>` entry that carries ABC text through verbatim. */
+function createRawWordsDirection(text: string): DirectionEntry {
+  return {
+    _id: generateId(),
+    type: 'direction',
+    directionTypes: [{ kind: 'words', text }],
+  };
 }
 
 function createDynamicsDirection(dynamic: string): DirectionEntry | null {
