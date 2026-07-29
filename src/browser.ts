@@ -1,5 +1,6 @@
 // Core types
 export type {
+  Color,
   Score,
   ScoreMetadata,
   PartInfo,
@@ -17,12 +18,21 @@ export type {
   NoteType,
   Accidental,
   AccidentalInfo,
+  AccidentalMarkInfo,
+  NoteheadInfo,
+  StemInfo,
   TieInfo,
   BeamInfo,
   Notation,
   DirectionType,
   DynamicsValue,
   Lyric,
+  LyricTextElement,
+  HarmonyEntry,
+  HarmonyFrame,
+  FiguredBassEntry,
+  MeasureStyle,
+  DisplayText,
   TimeSignature,
   KeySignature,
   Clef,
@@ -319,6 +329,10 @@ export {
   // Caesura operations
   addCaesura,
   removeCaesura,
+  // Color operations
+  setColor,
+  clearColors,
+  ALL_COLOR_TARGETS,
 } from './operations';
 
 // Operation types
@@ -445,6 +459,9 @@ export type {
   CaesuraValue,
   AddCaesuraOptions,
   RemoveCaesuraOptions,
+  // Color operation options
+  ColorTarget,
+  SetColorOptions,
 } from './operations';
 
 // Utils (shared pitch and position utilities)

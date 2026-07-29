@@ -280,6 +280,97 @@ Piano Roll style note manipulation.
 
 ---
 
+## Color Operations
+
+Unlike the operations above, these return a `Score` directly rather than an
+`OperationResult<Score>` — a colour change cannot make a score musically
+invalid, so there is nothing to fail on. Like every operation, they leave the
+input score untouched.
+
+| Operation | Description |
+|-----------|-------------|
+| `setColor` | Set (or clear, with `color: null`) the colour of selected score elements |
+| `clearColors` | Remove every colour in the score |
+
+### `setColor(score, options)`
+
+```typescript
+interface SetColorOptions {
+  color: Color | null;          // '#RRGGBB' / '#AARRGGBB', or null to remove
+  targets?: ColorTarget[];      // default: ['note']
+  partIndices?: number[];       // default: every part
+  partIds?: string[];           // default: every part
+  measureNumbers?: (string | number)[];  // default: every measure
+  noteFilter?: (note: NoteEntry) => boolean;
+}
+```
+
+`ColorTarget` is one of:
+
+| Target | MusicXML element |
+|--------|------------------|
+| `note` | `<note>` — the whole note (head, stem, flags, dots) |
+| `notehead` | `<notehead>` |
+| `stem` | `<stem>` |
+| `beam` | `<beam>` |
+| `accidental` | `<accidental>` |
+| `dot` | `<dot>` |
+| `noteType` | `<type>` |
+| `notation` | every element inside `<notations>` except `<tuplet>` |
+| `lyric` | `<lyric>` and its `<text>` elements |
+| `direction` | every `<direction-type>` child except `<image>` and `<swing>` |
+| `harmony` | `<harmony>`, `<kind>`, `<frame>` |
+| `figuredBass` | `<figured-bass>` |
+| `clef` | `<clef>` |
+| `key` | `<key>` |
+| `time` | `<time>` |
+| `barline` | `<bar-style>` and `<ending>` |
+
+`ALL_COLOR_TARGETS` is exported for "colour everything" cases. The
+finer-grained note targets colour a single child element, which overrides the
+`note` colour for that part of the note only.
+
+`noteFilter` applies to the note targets (`note`, `notehead`, `stem`, `beam`,
+`accidental`, `dot`, `noteType`, `notation`, `lyric`); the other targets are
+unaffected by it.
+
+```typescript
+import { setColor, clearColors, ALL_COLOR_TARGETS } from 'musicxml-io';
+
+// Every note in measures 5-6 of the first part, red
+const marked = setColor(score, {
+  color: '#FF0000',
+  partIndices: [0],
+  measureNumbers: [5, 6],
+});
+
+// One note plus its stem and beams
+const highlighted = setColor(score, {
+  color: '#0000FF',
+  targets: ['note', 'stem', 'beam'],
+  noteFilter: (n) => n._id === noteId,
+});
+
+// Colour everything, then take it all back off
+const rainbow = setColor(score, { color: '#008000', targets: [...ALL_COLOR_TARGETS] });
+const plain = clearColors(rainbow);
+```
+
+`clearColors` reaches further than `setColor(score, { color: null, ... })`: it
+also strips colours the targets do not cover, such as part names, group names,
+credit words and `<display-text>`.
+
+Elements not covered by a `ColorTarget` still round-trip their colour and can
+be set by writing the field directly — colour is an ordinary property on the
+Score model:
+
+```typescript
+score.partList[0].nameColor = '#FF0000';        // <part-name color="...">
+score.credits![0].creditWords![0].color = '#FF0000';
+```
+
+---
+
 ## Copy / Paste Operations
 
 | Operation | Description |

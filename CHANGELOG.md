@@ -3,6 +3,18 @@
 ## [Unreleased]
 
 ### Added
+- **Full MusicXML `color` support.** The `color` attribute now round-trips on every element the `Score` model represents, not just `<accidental>` and `<words>`. Newly carried through:
+  - Notes and their parts — `<note>`, `<type>`, `<dot>`, `<stem>`, `<notehead>`, `<beam>`.
+  - Every `<notations>` child — ties, slurs, articulations, ornaments (including `<accidental-mark>`, `<wavy-line>`, `<tremolo>`), technicals, dynamics, fermatas, arpeggios, glissandi and slides. `<tuplet>` is the one notation element with no `color` attribute in the MusicXML schema, so a colour set there is not written out.
+  - Lyrics — `<lyric>`, each `<text>` (including across elisions), and `<extend>`.
+  - Every `<direction-type>` child that has a `color` attribute: dynamics, wedges, metronome, rehearsal, segno, coda, pedal, octave-shift, bracket, dashes, accordion-registration, eyeglasses, damp, damp-all, scordatura, harp-pedals and other-direction. `<image>` and `<swing>` have none.
+  - `<harmony>`, `<kind>`, `<frame>` and `<figured-bass>` (with its `<extend>`).
+  - `<key>`, `<time>`, `<clef>`, `<measure-style>`, `<bar-style>` and `<ending>`.
+  - `<part-name>`, `<part-abbreviation>`, `<group-name>`, `<group-abbreviation>`, `<group-symbol>`, `<display-text>` and `<credit-words>`.
+
+  Colours were previously dropped on parse and never emitted on serialize, so a coloured score came back monochrome.
+- `setColor(score, options)` and `clearColors(score)` operations for changing colours. `setColor` selects by part index or ID, measure number, a note predicate, and a list of element kinds (`ColorTarget`, with `ALL_COLOR_TARGETS` exported for "everything"); passing `color: null` removes a colour. `clearColors` strips every colour in a score, including the part-list and credit colours `setColor`'s targets do not cover. Both return a new `Score` and leave the input untouched. See [OPERATIONS.md](OPERATIONS.md#color-operations).
+- New exported type `Color` (the MusicXML `#RRGGBB` / `#AARRGGBB` string), plus `NoteheadInfo`, `StemInfo`, `AccidentalMarkInfo`, `LyricTextElement`, `DisplayText`, `HarmonyEntry`, `HarmonyFrame`, `FiguredBassEntry` and `MeasureStyle`, which colour-editing code needs to name.
 - Much broader ABC notation coverage, targeting the ABC standard v2.1. Newly supported:
   - **Decorations** — the single-character shorthand set (`. ~ H L M O P S T u v`), the `!name!` long form and the deprecated `+name+` form now map onto real MusicXML articulations, ornaments, technicals, fermatas, hairpins and navigation marks instead of being carried as opaque `<words>`. Decorations with no MusicXML counterpart keep their ABC text.
   - **Text annotations** — `"^above"`, `"_below"`, `"<"`, `">"` and `"@"` become `<direction><words>` with the matching placement. They were previously dropped, and mistaken for chord symbols.

@@ -1,8 +1,10 @@
 import type {
   Score,
   Measure,
+  MeasureAttributes,
   MeasureEntry,
   NoteEntry,
+  Color,
   Pitch,
   KeySignature,
   TimeSignature,
@@ -6560,6 +6562,245 @@ export function removeCaesura(
   }
 
   return success(result);
+}
+
+// ============================================================
+// Color Operations
+// ============================================================
+
+/**
+ * Kinds of score element `setColor` can paint.
+ *
+ * `'note'` colours the `<note>` element itself, which notation programs treat
+ * as the colour of the whole note. The finer-grained targets below it colour
+ * an individual child element, which overrides the note colour for that part
+ * of the note only.
+ */
+export type ColorTarget =
+  | 'note'
+  | 'notehead'
+  | 'stem'
+  | 'beam'
+  | 'accidental'
+  | 'dot'
+  | 'noteType'
+  | 'notation'
+  | 'lyric'
+  | 'direction'
+  | 'harmony'
+  | 'figuredBass'
+  | 'clef'
+  | 'key'
+  | 'time'
+  | 'barline';
+
+/** Every `ColorTarget`, in a stable order. */
+export const ALL_COLOR_TARGETS: readonly ColorTarget[] = [
+  'note', 'notehead', 'stem', 'beam', 'accidental', 'dot', 'noteType',
+  'notation', 'lyric', 'direction', 'harmony', 'figuredBass',
+  'clef', 'key', 'time', 'barline',
+];
+
+export interface SetColorOptions {
+  /** Colour to apply (e.g. `"#FF0000"`), or `null` to remove it. */
+  color: Color | null;
+  /** Element kinds to paint. Defaults to `['note']`. */
+  targets?: ColorTarget[];
+  /** Restrict to these part indices. Defaults to every part. */
+  partIndices?: number[];
+  /** Restrict to these part IDs (e.g. `'P1'`). Defaults to every part. */
+  partIds?: string[];
+  /** Restrict to these measure numbers. Defaults to every measure. */
+  measureNumbers?: (string | number)[];
+  /**
+   * Only paint notes for which this returns true. Applies to the note targets
+   * (`note`, `notehead`, `stem`, `beam`, `accidental`, `dot`, `noteType`,
+   * `notation`, `lyric`); other targets are unaffected by it.
+   */
+  noteFilter?: (note: NoteEntry) => boolean;
+}
+
+/** Property names that hold a colour somewhere in the Score model. */
+const COLOR_PROPERTY_NAMES = new Set([
+  'color',
+  'nameColor',
+  'abbreviationColor',
+  'groupNameColor',
+  'groupAbbreviationColor',
+  'groupSymbolColor',
+  'noteTypeColor',
+  'dotColor',
+  'textColor',
+  'kindColor',
+  'barStyleColor',
+]);
+
+/** Direction-types with no `color` attribute in the MusicXML schema. */
+const UNCOLORABLE_DIRECTION_KINDS = new Set<DirectionType['kind']>(['image', 'swing']);
+
+function applyColor(target: object | undefined, key: string, color: Color | null): void {
+  if (!target) return;
+  if (color === null) delete (target as Record<string, unknown>)[key];
+  else (target as Record<string, unknown>)[key] = color;
+}
+
+function applyColorToNote(note: NoteEntry, targets: Set<ColorTarget>, color: Color | null): void {
+  if (targets.has('note')) applyColor(note, 'color', color);
+  if (targets.has('noteType') && note.noteType) applyColor(note, 'noteTypeColor', color);
+  if (targets.has('dot') && note.dots) applyColor(note, 'dotColor', color);
+  if (targets.has('notehead')) applyColor(note.notehead, 'color', color);
+  if (targets.has('stem')) applyColor(note.stem, 'color', color);
+  if (targets.has('accidental')) applyColor(note.accidental, 'color', color);
+  if (targets.has('beam') && note.beam) {
+    for (const beam of note.beam) applyColor(beam, 'color', color);
+  }
+  if (targets.has('notation') && note.notations) {
+    // <tuplet> is the one notation element without a color attribute.
+    for (const notation of note.notations) {
+      if (notation.type === 'tuplet') continue;
+      applyColor(notation, 'color', color);
+    }
+  }
+  if (targets.has('lyric') && note.lyrics) {
+    for (const lyric of note.lyrics) {
+      applyColor(lyric, 'color', color);
+      applyColor(lyric, 'textColor', color);
+      if (lyric.textElements) {
+        for (const te of lyric.textElements) applyColor(te, 'color', color);
+      }
+    }
+  }
+}
+
+function applyColorToAttributes(attrs: MeasureAttributes, targets: Set<ColorTarget>, color: Color | null): void {
+  if (targets.has('clef') && attrs.clef) {
+    for (const clef of attrs.clef) applyColor(clef, 'color', color);
+  }
+  if (targets.has('key')) {
+    applyColor(attrs.key, 'color', color);
+    if (attrs.keys) for (const key of attrs.keys) applyColor(key, 'color', color);
+  }
+  if (targets.has('time')) {
+    applyColor(attrs.time, 'color', color);
+    if (attrs.times) for (const time of attrs.times) applyColor(time, 'color', color);
+  }
+}
+
+/**
+ * Set (or clear) the colour of score elements.
+ *
+ * Returns a new Score; the input is left untouched. With no `targets` it
+ * paints the `<note>` elements, which is what "colour these notes" usually
+ * means.
+ *
+ * ```typescript
+ * // every note in measures 5-6 of the first part, red
+ * const marked = setColor(score, {
+ *   color: '#FF0000',
+ *   partIndices: [0],
+ *   measureNumbers: [5, 6],
+ * });
+ *
+ * // a single note found earlier, plus its stem and beams
+ * const one = setColor(score, {
+ *   color: '#0000FF',
+ *   targets: ['note', 'stem', 'beam'],
+ *   noteFilter: (n) => n._id === noteId,
+ * });
+ * ```
+ */
+export function setColor(score: Score, options: SetColorOptions): Score {
+  const { color, targets = ['note'], noteFilter } = options;
+  const targetSet = new Set<ColorTarget>(targets);
+  const partIndexSet = options.partIndices ? new Set(options.partIndices) : undefined;
+  const partIdSet = options.partIds ? new Set(options.partIds) : undefined;
+  const measureNumberSet = options.measureNumbers
+    ? new Set(options.measureNumbers.map(String))
+    : undefined;
+
+  const result = cloneScore(score);
+
+  for (let partIndex = 0; partIndex < result.parts.length; partIndex++) {
+    const part = result.parts[partIndex];
+    if (partIndexSet && !partIndexSet.has(partIndex)) continue;
+    if (partIdSet && !partIdSet.has(part.id)) continue;
+
+    for (const measure of part.measures) {
+      if (measureNumberSet && !measureNumberSet.has(measure.number)) continue;
+
+      if (measure.attributes) {
+        applyColorToAttributes(measure.attributes, targetSet, color);
+      }
+
+      for (const entry of measure.entries) {
+        switch (entry.type) {
+          case 'note':
+            if (!noteFilter || noteFilter(entry)) {
+              applyColorToNote(entry, targetSet, color);
+            }
+            break;
+          case 'attributes':
+            applyColorToAttributes(entry.attributes, targetSet, color);
+            break;
+          case 'direction':
+            if (targetSet.has('direction')) {
+              for (const dirType of entry.directionTypes) {
+                if (UNCOLORABLE_DIRECTION_KINDS.has(dirType.kind)) continue;
+                applyColor(dirType, 'color', color);
+              }
+            }
+            break;
+          case 'harmony':
+            if (targetSet.has('harmony')) {
+              applyColor(entry, 'color', color);
+              applyColor(entry, 'kindColor', color);
+              applyColor(entry.frame, 'color', color);
+            }
+            break;
+          case 'figured-bass':
+            if (targetSet.has('figuredBass')) applyColor(entry, 'color', color);
+            break;
+          default:
+            break;
+        }
+      }
+
+      if (targetSet.has('barline') && measure.barlines) {
+        for (const barline of measure.barlines) {
+          if (barline.barStyle) applyColor(barline, 'barStyleColor', color);
+          applyColor(barline.ending, 'color', color);
+        }
+      }
+    }
+  }
+
+  return result;
+}
+
+function stripColors<T>(value: T): T {
+  if (value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) {
+    return value.map(item => stripColors(item)) as unknown as T;
+  }
+  const out: Record<string, unknown> = {};
+  const record = value as Record<string, unknown>;
+  for (const key in record) {
+    const v = record[key];
+    if (v === undefined) continue;
+    if (COLOR_PROPERTY_NAMES.has(key) && typeof v === 'string') continue;
+    out[key] = stripColors(v);
+  }
+  return out as T;
+}
+
+/**
+ * Remove every colour from a score — including the ones this library's
+ * targeted operations do not reach, such as part names and credit words.
+ *
+ * Returns a new Score; the input is left untouched.
+ */
+export function clearColors(score: Score): Score {
+  return stripColors(score);
 }
 
 // ============================================================
