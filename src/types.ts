@@ -1,4 +1,17 @@
 // ============================================================
+// Color
+// ============================================================
+/**
+ * MusicXML `%color` attribute value.
+ *
+ * The spec defines it as an sRGB hex value with an optional leading alpha
+ * channel: `#RRGGBB` or `#AARRGGBB` (e.g. `"#FF0000"`, `"#80FF0000"`).
+ * The value is carried through parse/serialize verbatim, so any string a
+ * producer wrote survives a round-trip.
+ */
+export type Color = string;
+
+// ============================================================
 // Score (ルート)
 // ============================================================
 export interface Score {
@@ -150,6 +163,8 @@ export interface CreditWords {
   letterSpacing?: string;
   xmlLang?: string;
   xmlSpace?: string;
+  /** MusicXML `color` attribute on `<credit-words>`. */
+  color?: Color;
 }
 
 // PartListEntry is either a PartInfo (score-part) or PartGroup
@@ -161,9 +176,13 @@ export interface PartInfo {
   id: string;
   name?: string;
   namePrintObject?: boolean;
+  /** MusicXML `color` attribute on `<part-name>`. */
+  nameColor?: Color;
   partNameDisplay?: DisplayText[];
   abbreviation?: string;
   abbreviationPrintObject?: boolean;
+  /** MusicXML `color` attribute on `<part-abbreviation>`. */
+  abbreviationColor?: Color;
   partAbbreviationDisplay?: DisplayText[];
   scoreInstruments?: ScoreInstrument[];
   midiDevices?: MidiDevice[];
@@ -178,6 +197,8 @@ export interface DisplayText {
   fontStyle?: string;
   fontWeight?: string;
   xmlSpace?: string;
+  /** MusicXML `color` attribute on `<display-text>`. */
+  color?: Color;
 }
 
 export interface ScoreInstrument {
@@ -212,11 +233,17 @@ export interface PartGroup {
   groupType: 'start' | 'stop';
   number?: number;
   groupName?: string;
+  /** MusicXML `color` attribute on `<group-name>`. */
+  groupNameColor?: Color;
   groupNameDisplay?: DisplayText[];
   groupAbbreviation?: string;
+  /** MusicXML `color` attribute on `<group-abbreviation>`. */
+  groupAbbreviationColor?: Color;
   groupAbbreviationDisplay?: DisplayText[];
   groupSymbol?: 'none' | 'brace' | 'line' | 'bracket' | 'square';
   groupSymbolDefaultX?: number;
+  /** MusicXML `color` attribute on `<group-symbol>`. */
+  groupSymbolColor?: Color;
   groupBarline?: 'yes' | 'no' | 'Mensurstrich';
 }
 
@@ -301,6 +328,8 @@ export interface MeasureStyle {
   measureRepeat?: { type: 'start' | 'stop'; slashes?: number };
   beatRepeat?: { type: 'start' | 'stop'; slashes?: number };
   slash?: { type: 'start' | 'stop'; useDots?: boolean; useStems?: boolean };
+  /** MusicXML `color` attribute on `<measure-style>`. */
+  color?: Color;
 }
 
 export interface TimeSignature {
@@ -313,6 +342,8 @@ export interface TimeSignature {
   symbol?: 'common' | 'cut' | 'single-number' | 'note' | 'dotted-note' | 'normal';
   printObject?: boolean;
   senzaMisura?: boolean; // For unmeasured time
+  /** MusicXML `color` attribute on `<time>`. */
+  color?: Color;
 }
 
 export interface KeySignature {
@@ -322,6 +353,8 @@ export interface KeySignature {
   cancelLocation?: 'left' | 'right' | 'before-barline';
   number?: number; // Staff number for multi-staff keys
   printObject?: boolean;
+  /** MusicXML `color` attribute on `<key>`. */
+  color?: Color;
   // Non-traditional key signatures
   keySteps?: string[];
   keyAlters?: number[];
@@ -341,6 +374,8 @@ export interface Clef {
   clefOctaveChange?: number;
   printObject?: boolean;
   afterBarline?: boolean;
+  /** MusicXML `color` attribute on `<clef>`. */
+  color?: Color;
 }
 
 export interface Transpose {
@@ -353,6 +388,11 @@ export interface Barline {
   _id: string;
   location: 'left' | 'right' | 'middle';
   barStyle?: 'regular' | 'dotted' | 'dashed' | 'heavy' | 'light-light' | 'light-heavy' | 'heavy-light' | 'heavy-heavy' | 'tick' | 'short' | 'none';
+  /**
+   * MusicXML `color` attribute on `<bar-style>`. `<barline>` itself has no
+   * color attribute, so this is only written when `barStyle` is set.
+   */
+  barStyleColor?: Color;
   repeat?: {
     direction: 'forward' | 'backward';
     times?: number;
@@ -364,6 +404,8 @@ export interface Barline {
     text?: string;
     defaultY?: number;
     endLength?: number;
+    /** MusicXML `color` attribute on `<ending>`. */
+    color?: Color;
   };
 }
 
@@ -395,6 +437,13 @@ export interface NoteEntry {
   printSpacing?: boolean;
   printDot?: boolean;
 
+  /**
+   * MusicXML `color` attribute on `<note>`. Notation programs treat this as
+   * the colour of the whole note (head, stem, flags, dots) unless a child
+   * element overrides it.
+   */
+  color?: Color;
+
   // Layout attributes
   defaultX?: number;
   defaultY?: number;
@@ -404,7 +453,15 @@ export interface NoteEntry {
   // Note details
   noteType?: NoteType;
   noteTypeSize?: string;
+  /** MusicXML `color` attribute on the `<type>` element. */
+  noteTypeColor?: Color;
   dots?: number;
+  /**
+   * MusicXML `color` attribute on the `<dot>` elements. Dots are modelled as a
+   * count rather than individually, so this is written to every dot; on parse
+   * it takes the first dot's colour.
+   */
+  dotColor?: Color;
   accidental?: AccidentalInfo;
   stem?: StemInfo;
   notehead?: NoteheadInfo;
@@ -529,6 +586,10 @@ export interface HarmonyEntry {
   defaultY?: number;
   fontSize?: string;
   halign?: string;
+  /** MusicXML `color` attribute on `<harmony>`. */
+  color?: Color;
+  /** MusicXML `color` attribute on the `<kind>` element. */
+  kindColor?: Color;
 }
 
 export interface HarmonyDegree {
@@ -544,6 +605,8 @@ export interface HarmonyFrame {
   firstFretText?: string;
   firstFretLocation?: 'left' | 'right';
   frameNotes?: FrameNote[];
+  /** MusicXML `color` attribute on `<frame>`. */
+  color?: Color;
 }
 
 export interface FrameNote {
@@ -559,13 +622,15 @@ export interface FiguredBassEntry {
   figures: Figure[];
   duration?: number;
   parentheses?: boolean;
+  /** MusicXML `color` attribute on `<figured-bass>`. */
+  color?: Color;
 }
 
 export interface Figure {
   figureNumber?: string;
   prefix?: string;
   suffix?: string;
-  extend?: boolean | { type?: 'start' | 'stop' | 'continue' };
+  extend?: boolean | { type?: 'start' | 'stop' | 'continue'; color?: Color };
 }
 
 // ============================================================
@@ -610,7 +675,8 @@ export interface AccidentalInfo {
   // Positioning attributes
   relativeX?: number;
   relativeY?: number;
-  color?: string;
+  /** MusicXML `color` attribute on `<accidental>`. */
+  color?: Color;
   size?: string;
   fontSize?: string;
 }
@@ -619,12 +685,16 @@ export interface NoteheadInfo {
   value: NoteheadValue;
   filled?: boolean;
   parentheses?: boolean;
+  /** MusicXML `color` attribute on `<notehead>`. */
+  color?: Color;
 }
 
 export interface StemInfo {
   value: 'up' | 'down' | 'none' | 'double';
   defaultX?: number;
   defaultY?: number;
+  /** MusicXML `color` attribute on `<stem>`. */
+  color?: Color;
 }
 
 export type NoteheadValue =
@@ -642,6 +712,8 @@ export interface BeamInfo {
   type: 'begin' | 'continue' | 'end' | 'forward hook' | 'backward hook';
   /** MusicXML <beam> fan attribute, used for feathered beams (羽根状連桁). */
   fan?: 'accel' | 'rit' | 'none';
+  /** MusicXML `color` attribute on `<beam>`. */
+  color?: Color;
 }
 
 // ============================================================
@@ -665,6 +737,14 @@ export type Notation =
 
 export interface BaseNotation {
   placement?: 'above' | 'below';
+  /**
+   * MusicXML `color` attribute on the notation's own element (`<slur>`,
+   * `<staccato>`, `<trill-mark>`, `<fermata>`, ...).
+   *
+   * `<tuplet>` is the one notation without a `color` attribute in the
+   * MusicXML schema, so a colour set on a tuplet notation is not serialized.
+   */
+  color?: Color;
   // For roundtrip: track which <notations> element this came from
   notationsIndex?: number;
   // For roundtrip: track which <articulations> element within <notations>
@@ -690,6 +770,8 @@ export type ArticulationType =
 export interface AccidentalMarkInfo {
   value: Accidental;
   placement?: 'above' | 'below';
+  /** MusicXML `color` attribute on `<accidental-mark>`. */
+  color?: Color;
 }
 
 export interface OrnamentNotation extends BaseNotation {
@@ -845,27 +927,31 @@ export interface OtherNotation extends BaseNotation {
 // ============================================================
 // Direction (強弱、テンポ、etc)
 // ============================================================
+/**
+ * `<image>` and `<swing>` are the only direction-types without a `color`
+ * attribute in the MusicXML schema; every other member below accepts one.
+ */
 export type DirectionType =
-  | { kind: 'dynamics'; value?: DynamicsValue; otherDynamics?: string; defaultX?: number; defaultY?: number; relativeX?: number; halign?: string }
-  | { kind: 'wedge'; type: 'crescendo' | 'diminuendo' | 'stop'; spread?: number; defaultY?: number; relativeX?: number }
-  | { kind: 'metronome'; beatUnit: NoteType; perMinute?: number | string; beatUnitDot?: boolean; beatUnit2?: NoteType; beatUnitDot2?: boolean; parentheses?: boolean; printObject?: boolean; defaultY?: number; fontFamily?: string; fontSize?: string }
-  | { kind: 'words'; text: string; defaultX?: number; defaultY?: number; relativeX?: number; relativeY?: number; fontFamily?: string; fontSize?: string; fontStyle?: string; fontWeight?: string; xmlLang?: string; justify?: string; color?: string; xmlSpace?: string; halign?: string }
-  | { kind: 'rehearsal'; text: string; enclosure?: string; defaultX?: number; defaultY?: number; fontSize?: string; fontWeight?: string }
-  | { kind: 'segno' }
-  | { kind: 'coda' }
-  | { kind: 'pedal'; type: 'start' | 'stop' | 'change' | 'continue'; line?: boolean; defaultY?: number; relativeX?: number; halign?: string }
-  | { kind: 'octave-shift'; type: 'up' | 'down' | 'stop'; size?: number }
-  | { kind: 'bracket'; type: 'start' | 'stop' | 'continue'; number?: number; lineEnd?: 'up' | 'down' | 'both' | 'arrow' | 'none'; lineType?: 'solid' | 'dashed' | 'dotted' | 'wavy'; defaultY?: number; relativeX?: number }
-  | { kind: 'dashes'; type: 'start' | 'stop' | 'continue'; number?: number; dashLength?: number; defaultY?: number; spaceLength?: number }
-  | { kind: 'accordion-registration'; high?: boolean; middle?: number | string; middlePresent?: boolean; low?: boolean }
+  | { kind: 'dynamics'; value?: DynamicsValue; otherDynamics?: string; defaultX?: number; defaultY?: number; relativeX?: number; halign?: string; color?: Color }
+  | { kind: 'wedge'; type: 'crescendo' | 'diminuendo' | 'stop'; spread?: number; defaultY?: number; relativeX?: number; color?: Color }
+  | { kind: 'metronome'; beatUnit: NoteType; perMinute?: number | string; beatUnitDot?: boolean; beatUnit2?: NoteType; beatUnitDot2?: boolean; parentheses?: boolean; printObject?: boolean; defaultY?: number; fontFamily?: string; fontSize?: string; color?: Color }
+  | { kind: 'words'; text: string; defaultX?: number; defaultY?: number; relativeX?: number; relativeY?: number; fontFamily?: string; fontSize?: string; fontStyle?: string; fontWeight?: string; xmlLang?: string; justify?: string; color?: Color; xmlSpace?: string; halign?: string }
+  | { kind: 'rehearsal'; text: string; enclosure?: string; defaultX?: number; defaultY?: number; fontSize?: string; fontWeight?: string; color?: Color }
+  | { kind: 'segno'; color?: Color }
+  | { kind: 'coda'; color?: Color }
+  | { kind: 'pedal'; type: 'start' | 'stop' | 'change' | 'continue'; line?: boolean; defaultY?: number; relativeX?: number; halign?: string; color?: Color }
+  | { kind: 'octave-shift'; type: 'up' | 'down' | 'stop'; size?: number; color?: Color }
+  | { kind: 'bracket'; type: 'start' | 'stop' | 'continue'; number?: number; lineEnd?: 'up' | 'down' | 'both' | 'arrow' | 'none'; lineType?: 'solid' | 'dashed' | 'dotted' | 'wavy'; defaultY?: number; relativeX?: number; color?: Color }
+  | { kind: 'dashes'; type: 'start' | 'stop' | 'continue'; number?: number; dashLength?: number; defaultY?: number; spaceLength?: number; color?: Color }
+  | { kind: 'accordion-registration'; high?: boolean; middle?: number | string; middlePresent?: boolean; low?: boolean; color?: Color }
   | { kind: 'swing'; straight?: boolean; first?: number; second?: number; swingType?: NoteType }
-  | { kind: 'eyeglasses' }
-  | { kind: 'damp' }
-  | { kind: 'damp-all' }
-  | { kind: 'scordatura'; accords?: Accord[] }
-  | { kind: 'harp-pedals'; pedalTunings?: PedalTuning[] }
+  | { kind: 'eyeglasses'; color?: Color }
+  | { kind: 'damp'; color?: Color }
+  | { kind: 'damp-all'; color?: Color }
+  | { kind: 'scordatura'; accords?: Accord[]; color?: Color }
+  | { kind: 'harp-pedals'; pedalTunings?: PedalTuning[]; color?: Color }
   | { kind: 'image'; source?: string; type?: string }
-  | { kind: 'other-direction'; text: string; defaultX?: number; defaultY?: number; halign?: string; printObject?: boolean };
+  | { kind: 'other-direction'; text: string; defaultX?: number; defaultY?: number; halign?: string; printObject?: boolean; color?: Color };
 
 export interface Accord {
   string: number;
@@ -891,6 +977,8 @@ export type DynamicsValue =
 export interface LyricTextElement {
   text: string;
   syllabic?: 'single' | 'begin' | 'middle' | 'end';
+  /** MusicXML `color` attribute on this `<text>` element. */
+  color?: Color;
 }
 
 export interface Lyric {
@@ -900,13 +988,21 @@ export interface Lyric {
   text: string;
   textElements?: LyricTextElement[]; // For multiple text/elision pairs
   elision?: boolean; // Simple flag for single elision
-  extend?: boolean | { type?: 'start' | 'stop' | 'continue' };
+  extend?: boolean | { type?: 'start' | 'stop' | 'continue'; color?: Color };
   endLine?: boolean;
   endParagraph?: boolean;
   defaultY?: number;
   relativeX?: number;
   justify?: string;
   placement?: 'above' | 'below';
+  /** MusicXML `color` attribute on `<lyric>`. */
+  color?: Color;
+  /**
+   * MusicXML `color` attribute on the `<text>` element. When a lyric holds
+   * several text elements (elisions), each one's colour lives on
+   * `textElements[i].color` and this is the first element's colour.
+   */
+  textColor?: Color;
 }
 
 // ============================================================

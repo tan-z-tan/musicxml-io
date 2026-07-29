@@ -1,0 +1,170 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 4.0 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">
+<!--
+  Hand-written fixture exercising the MusicXML `color` attribute across every
+  element kind the Score model represents. Colors use both the #RRGGBB and the
+  #AARRGGBB (alpha) spellings.
+-->
+<score-partwise version="4.0">
+  <work>
+    <work-title>Colored elements</work-title>
+  </work>
+  <credit page="1">
+    <credit-words default-x="600" default-y="1500" font-size="24" color="#FF0000">Colored elements</credit-words>
+  </credit>
+  <part-list>
+    <part-group type="start" number="1">
+      <group-name color="#FF0000">Group</group-name>
+      <group-abbreviation color="#00FF00">Grp.</group-abbreviation>
+      <group-symbol color="#0000FF">bracket</group-symbol>
+    </part-group>
+    <score-part id="P1">
+      <part-name color="#008000">Colored</part-name>
+      <part-name-display>
+        <display-text color="#800080">Colored</display-text>
+      </part-name-display>
+      <part-abbreviation color="#808000">Col.</part-abbreviation>
+    </score-part>
+    <part-group type="stop" number="1"/>
+  </part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes>
+        <divisions>2</divisions>
+        <key color="#FF0000">
+          <fifths>1</fifths>
+          <mode>major</mode>
+        </key>
+        <time color="#00AA00">
+          <beats>4</beats>
+          <beat-type>4</beat-type>
+        </time>
+        <clef color="#0000FF">
+          <sign>G</sign>
+          <line>2</line>
+        </clef>
+      </attributes>
+      <direction placement="above">
+        <direction-type>
+          <words color="#FF8000">dolce</words>
+        </direction-type>
+      </direction>
+      <direction placement="below">
+        <direction-type>
+          <dynamics color="#FF0000">
+            <p/>
+          </dynamics>
+        </direction-type>
+      </direction>
+      <direction placement="below">
+        <direction-type>
+          <wedge type="crescendo" color="#80FF0000"/>
+        </direction-type>
+      </direction>
+      <direction placement="above">
+        <direction-type>
+          <metronome color="#123456">
+            <beat-unit>quarter</beat-unit>
+            <per-minute>96</per-minute>
+          </metronome>
+        </direction-type>
+      </direction>
+      <direction placement="above">
+        <direction-type>
+          <rehearsal color="#0000FF">A</rehearsal>
+        </direction-type>
+      </direction>
+      <direction placement="above">
+        <direction-type>
+          <segno color="#FF00FF"/>
+        </direction-type>
+      </direction>
+      <harmony color="#FF0000">
+        <root>
+          <root-step>G</root-step>
+        </root>
+        <kind color="#00FF00">dominant</kind>
+        <frame color="#0000FF">
+          <frame-strings>6</frame-strings>
+          <frame-frets>4</frame-frets>
+        </frame>
+      </harmony>
+      <note color="#FF0000">
+        <pitch>
+          <step>C</step>
+          <alter>1</alter>
+          <octave>5</octave>
+        </pitch>
+        <duration>1</duration>
+        <voice>1</voice>
+        <type color="#00FF00">eighth</type>
+        <accidental color="#0000FF">sharp</accidental>
+        <stem color="#FF00FF">up</stem>
+        <notehead color="#00FFFF">diamond</notehead>
+        <beam number="1" color="#FFFF00">begin</beam>
+        <notations>
+          <tied type="start" color="#FF0000"/>
+          <slur number="1" type="start" color="#00FF00"/>
+          <articulations>
+            <staccato color="#0000FF"/>
+            <accent color="#FF00FF"/>
+          </articulations>
+          <ornaments>
+            <trill-mark color="#00FFFF"/>
+            <accidental-mark color="#FFFF00">sharp</accidental-mark>
+          </ornaments>
+          <technical>
+            <fingering color="#FF0000">3</fingering>
+          </technical>
+          <fermata color="#00FF00">normal</fermata>
+          <arpeggiate color="#0000FF"/>
+        </notations>
+        <lyric number="1" color="#FF0000">
+          <syllabic>begin</syllabic>
+          <text color="#00FF00">co</text>
+          <extend type="start" color="#0000FF"/>
+        </lyric>
+      </note>
+      <note color="#80000080">
+        <pitch>
+          <step>D</step>
+          <octave>5</octave>
+        </pitch>
+        <duration>1</duration>
+        <voice>1</voice>
+        <type>eighth</type>
+        <beam number="1" color="#FFFF00">end</beam>
+        <notations>
+          <tied type="stop" color="#FF0000"/>
+          <slur number="1" type="stop" color="#00FF00"/>
+          <glissando type="start" color="#123456"/>
+        </notations>
+        <lyric number="1">
+          <syllabic>end</syllabic>
+          <text color="#00AA00">lor</text>
+        </lyric>
+      </note>
+      <figured-bass color="#FF0000">
+        <figure>
+          <figure-number>6</figure-number>
+          <extend type="start" color="#0000FF"/>
+        </figure>
+      </figured-bass>
+      <note>
+        <pitch>
+          <step>E</step>
+          <octave>5</octave>
+        </pitch>
+        <duration>3</duration>
+        <voice>1</voice>
+        <type color="#008080">half</type>
+        <dot color="#008080"/>
+        <stem color="#008080">up</stem>
+      </note>
+      <barline location="right">
+        <bar-style color="#FF0000">light-heavy</bar-style>
+        <ending number="1" type="stop" color="#0000FF"/>
+      </barline>
+    </measure>
+  </part>
+</score-partwise>

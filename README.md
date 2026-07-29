@@ -221,6 +221,64 @@ for (const entry of measure.entries) {
 }
 ```
 
+### Color
+
+MusicXML's `color` attribute is supported on every element the `Score` model
+represents. Colours survive a parse → serialize round-trip, and can be read or
+written as an ordinary property:
+
+```typescript
+import { parse, setColor, clearColors, ALL_COLOR_TARGETS } from 'musicxml-io';
+
+const score = parse(xmlString);
+
+// Every note of measures 5-6 in the first part, red
+const marked = setColor(score, {
+  color: '#FF0000',
+  partIndices: [0],
+  measureNumbers: [5, 6],
+});
+
+// A single note, plus its stem and beams
+const highlighted = setColor(score, {
+  color: '#0000FF',
+  targets: ['note', 'stem', 'beam'],
+  noteFilter: (n) => n._id === noteId,
+});
+
+// Strip every colour in the score
+const plain = clearColors(marked);
+```
+
+Values are the MusicXML `#RRGGBB` or `#AARRGGBB` (alpha-first) form, carried
+through verbatim.
+
+| Where | Property | MusicXML element |
+|-------|----------|------------------|
+| Note | `note.color` | `<note>` — the whole note |
+| | `note.noteTypeColor`, `note.dotColor` | `<type>`, `<dot>` |
+| | `note.notehead.color`, `note.stem.color`, `note.accidental.color` | `<notehead>`, `<stem>`, `<accidental>` |
+| | `note.beam[i].color` | `<beam>` |
+| Notations | `notation.color` | every `<notations>` child except `<tuplet>`, which has no `color` attribute in the schema |
+| Lyrics | `lyric.color`, `lyric.textColor`, `lyric.textElements[i].color` | `<lyric>`, `<text>` |
+| Directions | `directionType.color` | every `<direction-type>` child except `<image>` and `<swing>`, which have no `color` attribute |
+| Harmony | `harmony.color`, `harmony.kindColor`, `harmony.frame.color` | `<harmony>`, `<kind>`, `<frame>` |
+| Figured bass | `figuredBass.color` | `<figured-bass>` |
+| Attributes | `key.color`, `time.color`, `clef.color`, `measureStyle.color` | `<key>`, `<time>`, `<clef>`, `<measure-style>` |
+| Barlines | `barline.barStyleColor`, `barline.ending.color` | `<bar-style>`, `<ending>` |
+| Part list | `partInfo.nameColor`, `partInfo.abbreviationColor` | `<part-name>`, `<part-abbreviation>` |
+| | `partGroup.groupNameColor`, `groupAbbreviationColor`, `groupSymbolColor` | `<group-name>`, `<group-abbreviation>`, `<group-symbol>` |
+| | `displayText.color` | `<display-text>` |
+| Credits | `creditWords.color` | `<credit-words>` |
+
+`setColor` covers the note, notation, lyric, direction, harmony, figured-bass,
+attribute and barline rows; the part-list and credit colours are set by
+assigning the field. See [OPERATIONS.md](OPERATIONS.md#color-operations) for
+the full target list.
+
+Colour is presentation only — it does not affect MIDI export, playback
+timelines, or ABC serialization.
+
 ### MIDI Export
 
 ```typescript
@@ -333,6 +391,8 @@ const { valid, errors } = validate(score);
 | `addWedge(score, options)` | Add crescendo/diminuendo |
 | `addPedal(score, options)` | Add pedal marking |
 | `addGraceNote(score, options)` | Add grace note |
+| `setColor(score, options)` | Set/clear the colour of score elements |
+| `clearColors(score)` | Remove every colour in the score |
 
 See [OPERATIONS.md](OPERATIONS.md) for the complete list.
 
