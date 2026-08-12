@@ -229,8 +229,16 @@ function buildMidiTracks(
     let program = 1;
     if (partEntry && partEntry.midiInstruments?.[0]) {
       const midiInst = partEntry.midiInstruments[0];
-      channel = midiInst.channel ?? channel;
-      program = midiInst.program ?? program;
+      // midi-channel is 1-based (1-16) per the MusicXML spec; convert to the
+      // 0-based channel used in raw MIDI status bytes, clamping defensively
+      // in case a writer emits an out-of-spec value (e.g. 0).
+      if (midiInst.channel !== undefined) {
+        channel = Math.min(16, Math.max(1, midiInst.channel)) - 1;
+      }
+      // midi-program is 1-based (1-128) per the MusicXML spec, but MuseScore 3.x
+      // exports write 0 for piano; without the clamp that wraps to 127 (Gunshot)
+      // at the 0-based conversion in createPartTrack.
+      program = Math.min(128, Math.max(1, midiInst.program ?? program));
     }
 
     const trackData = createPartTrack(
