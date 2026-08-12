@@ -524,4 +524,109 @@ describe('MIDI Exporter', () => {
       }
     });
   });
+
+  function scoreXmlWithMidiInstrument(channel: number, program: number): string {
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="4.0">
+  <part-list>
+    <score-part id="P1">
+      <part-name>Piano</part-name>
+      <score-instrument id="P1-I1">
+        <instrument-name>Piano</instrument-name>
+      </score-instrument>
+      <midi-instrument id="P1-I1">
+        <midi-channel>${channel}</midi-channel>
+        <midi-program>${program}</midi-program>
+      </midi-instrument>
+    </score-part>
+  </part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes>
+        <divisions>1</divisions>
+        <time><beats>4</beats><beat-type>4</beat-type></time>
+        <clef><sign>G</sign><line>2</line></clef>
+      </attributes>
+      <note>
+        <pitch><step>C</step><octave>4</octave></pitch>
+        <duration>4</duration>
+        <type>whole</type>
+      </note>
+    </measure>
+  </part>
+</score-partwise>`;
+  }
+
+  /** Locate the program-change status byte position in the first part track (second MTrk). */
+  function firstProgramChangePos(midiData: Uint8Array): number {
+    let i = 14; // skip MThd
+    let trackCount = 0;
+    while (i < midiData.length) {
+      if (midiData[i] === 0x4d && midiData[i+1] === 0x54 &&
+          midiData[i+2] === 0x72 && midiData[i+3] === 0x6b) {
+        const trackLength = (midiData[i+4] << 24) | (midiData[i+5] << 16) |
+                            (midiData[i+6] << 8) | midiData[i+7];
+        if (trackCount === 1) {
+          // Program change is the first event of a part track: delta 0, 0xCn, program.
+          let pos = i + 8;
+          let byte = midiData[pos++];
+          while (byte & 0x80) byte = midiData[pos++]; // skip delta VLQ
+          expect(midiData[pos] & 0xf0).toBe(0xc0);
+          return pos;
+        }
+        i += 8 + trackLength;
+        trackCount++;
+      } else {
+        i++;
+      }
+    }
+    throw new Error('part track not found');
+  }
+
+  /** Read the program-change data byte from the first part track (second MTrk). */
+  function firstProgramChange(midiData: Uint8Array): number {
+    return midiData[firstProgramChangePos(midiData) + 1];
+  }
+
+  /** Read the program-change status byte's channel nibble from the first part track (second MTrk). */
+  function firstProgramChangeChannel(midiData: Uint8Array): number {
+    return midiData[firstProgramChangePos(midiData)] & 0x0f;
+  }
+
+  describe('midi-program sanitization', () => {
+    function scoreXmlWithMidiProgram(program: number): string {
+      return scoreXmlWithMidiInstrument(1, program);
+    }
+
+    it('converts the 1-based midi-program to a 0-based data byte', () => {
+      const score = parse(scoreXmlWithMidiProgram(41)); // GM 41 = Violin
+      expect(firstProgramChange(exportMidi(score))).toBe(40);
+    });
+
+    it('clamps out-of-spec midi-program 0 (MuseScore 3.x piano) instead of wrapping to 127', () => {
+      const score = parse(scoreXmlWithMidiProgram(0));
+      expect(firstProgramChange(exportMidi(score))).toBe(0); // piano, not Gunshot
+    });
+  });
+
+  describe('midi-channel sanitization', () => {
+    function scoreXmlWithMidiChannel(channel: number): string {
+      return scoreXmlWithMidiInstrument(channel, 1);
+    }
+
+    it('converts the 1-based midi-channel to a 0-based channel nibble', () => {
+      const score = parse(scoreXmlWithMidiChannel(10)); // percussion convention
+      expect(firstProgramChangeChannel(exportMidi(score))).toBe(9);
+    });
+
+    it('maps the maximum midi-channel 16 to 0-based channel 15', () => {
+      const score = parse(scoreXmlWithMidiChannel(16));
+      expect(firstProgramChangeChannel(exportMidi(score))).toBe(15);
+    });
+
+    it('clamps out-of-spec midi-channel 0 instead of wrapping to channel 15', () => {
+      const score = parse(scoreXmlWithMidiChannel(0));
+      expect(firstProgramChangeChannel(exportMidi(score))).toBe(0);
+    });
+  });
 });
