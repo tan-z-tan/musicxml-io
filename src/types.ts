@@ -1045,7 +1045,23 @@ export interface LyricTextElement {
 }
 
 export interface Lyric {
+  /**
+   * Numeric reading of the MusicXML `number` attribute, set only when the
+   * attribute is a plain integer.
+   *
+   * The spec types `number` as an NMTOKEN, not a number: Sibelius writes verse
+   * ids like `"part1verse2"`. This is `undefined` for those, so read
+   * {@link Lyric.numberText} for the value the producer actually wrote.
+   */
   number?: number;
+  /**
+   * The MusicXML `number` attribute verbatim — `"1"`, `"part1verse2"`, ... —
+   * so a non-numeric verse id survives a round-trip.
+   *
+   * Serialization prefers this over {@link Lyric.number} when both are set, so
+   * clear it if you change `number` on a lyric that was parsed from a file.
+   */
+  numberText?: string;
   name?: string;
   syllabic?: 'single' | 'begin' | 'middle' | 'end';
   text: string;

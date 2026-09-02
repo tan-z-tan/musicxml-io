@@ -1482,7 +1482,9 @@ function serializeTechnicalGroup(technicals: Notation[], indent: string, out: st
 
 function serializeLyric(lyric: Lyric, indent: string, out: string[]): void {
   let attrs = '';
-  if (lyric.number) attrs += ` number="${lyric.number}"`;
+  // `numberText` holds the producer's raw NMTOKEN and wins when both are set.
+  const number = lyric.numberText ?? (lyric.number !== undefined ? String(lyric.number) : undefined);
+  if (number !== undefined) attrs += ` number="${escapeXml(number)}"`;
   if (lyric.name) attrs += ` name="${escapeXml(lyric.name)}"`;
   attrs += positionAttrs(lyric);
   if (lyric.justify) attrs += ` justify="${escapeXml(lyric.justify)}"`;
