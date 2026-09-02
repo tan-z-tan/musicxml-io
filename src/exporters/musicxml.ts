@@ -16,6 +16,7 @@ import type {
   Pitch,
   BeamInfo,
   Notation,
+  AccidentalMarkInfo,
   Lyric,
   TimeSignature,
   KeySignature,
@@ -1028,6 +1029,8 @@ function serializeNote(note: NoteEntry, indent: string, out: string[]): void {
       'editorial': note.accidental.editorial || undefined,
       'parentheses': note.accidental.parentheses || undefined,
       'bracket': note.accidental.bracket || undefined,
+      'default-x': note.accidental.defaultX,
+      'default-y': note.accidental.defaultY,
       'relative-x': note.accidental.relativeX,
       'relative-y': note.accidental.relativeY,
       'color': note.accidental.color,
@@ -1203,6 +1206,8 @@ function serializeStandaloneNotation(notation: Notation, indent: string, out: st
     let attrs = ` type="${notation.tiedType}"`;
     if (notation.number !== undefined) attrs += ` number="${notation.number}"`;
     if (notation.orientation) attrs += ` orientation="${notation.orientation}"`;
+    attrs += positionAttrs(notation);
+    attrs += bezierAttrs(notation);
     attrs += colorAttr(notation.color);
     out.push(`${indent}  <tied${attrs}/>`);
   } else if (notation.type === 'slur') {
@@ -1211,12 +1216,8 @@ function serializeStandaloneNotation(notation: Notation, indent: string, out: st
     attrs += ` type="${notation.slurType}"`;
     if (notation.lineType) attrs += ` line-type="${notation.lineType}"`;
     if (notation.orientation) attrs += ` orientation="${notation.orientation}"`;
-    if (notation.defaultX !== undefined) attrs += ` default-x="${notation.defaultX}"`;
-    if (notation.defaultY !== undefined) attrs += ` default-y="${notation.defaultY}"`;
-    if (notation.bezierX !== undefined) attrs += ` bezier-x="${notation.bezierX}"`;
-    if (notation.bezierY !== undefined) attrs += ` bezier-y="${notation.bezierY}"`;
-    if (notation.bezierX2 !== undefined) attrs += ` bezier-x2="${notation.bezierX2}"`;
-    if (notation.bezierY2 !== undefined) attrs += ` bezier-y2="${notation.bezierY2}"`;
+    attrs += positionAttrs(notation);
+    attrs += bezierAttrs(notation);
     if (notation.placement) attrs += ` placement="${notation.placement}"`;
     attrs += colorAttr(notation.color);
     out.push(`${indent}  <slur${attrs}/>`);
@@ -1228,6 +1229,7 @@ function serializeStandaloneNotation(notation: Notation, indent: string, out: st
     if (notation.showType) attrs += ` show-type="${notation.showType}"`;
     if (notation.lineShape) attrs += ` line-shape="${notation.lineShape}"`;
     if (notation.placement) attrs += ` placement="${notation.placement}"`;
+    attrs += positionAttrs(notation);
 
     const tup = notation as TupletNotation;
     if (tup.tupletActual || tup.tupletNormal) {
@@ -1280,8 +1282,7 @@ function serializeStandaloneNotation(notation: Notation, indent: string, out: st
     let attrs = '';
     if (notation.fermataType) attrs += ` type="${notation.fermataType}"`;
     if (notation.placement) attrs += ` placement="${notation.placement}"`;
-    if (notation.defaultX !== undefined) attrs += ` default-x="${notation.defaultX}"`;
-    if (notation.defaultY !== undefined) attrs += ` default-y="${notation.defaultY}"`;
+    attrs += positionAttrs(notation);
     attrs += colorAttr(notation.color);
     if (notation.shape) {
       out.push(`${indent}  <fermata${attrs}>${notation.shape}</fermata>`);
@@ -1292,8 +1293,7 @@ function serializeStandaloneNotation(notation: Notation, indent: string, out: st
     let attrs = '';
     if (notation.direction) attrs += ` direction="${notation.direction}"`;
     if (notation.number !== undefined) attrs += ` number="${notation.number}"`;
-    if (notation.defaultX !== undefined) attrs += ` default-x="${notation.defaultX}"`;
-    if (notation.defaultY !== undefined) attrs += ` default-y="${notation.defaultY}"`;
+    attrs += positionAttrs(notation);
     attrs += colorAttr(notation.color);
     out.push(`${indent}  <arpeggiate${attrs}/>`);
   } else if (notation.type === 'non-arpeggiate') {
@@ -1305,6 +1305,7 @@ function serializeStandaloneNotation(notation: Notation, indent: string, out: st
   } else if (notation.type === 'accidental-mark') {
     let attrs = '';
     if (notation.placement) attrs += ` placement="${notation.placement}"`;
+    attrs += positionAttrs(notation);
     attrs += colorAttr(notation.color);
     out.push(`${indent}  <accidental-mark${attrs}>${escapeXml(notation.value)}</accidental-mark>`);
   } else if (notation.type === 'glissando') {
@@ -1340,8 +1341,7 @@ function serializeArticulationsGroup(artGroup: Notation[], indent: string, out: 
         artAttrs += ` type="${art.strongAccentType}"`;
       }
       // Handle positioning attributes
-      if (art.defaultX !== undefined) artAttrs += ` default-x="${art.defaultX}"`;
-      if (art.defaultY !== undefined) artAttrs += ` default-y="${art.defaultY}"`;
+      artAttrs += positionAttrs(art);
       artAttrs += colorAttr(art.color);
       out.push(`${indent}    <${art.articulation}${artAttrs}/>`);
     }
@@ -1357,7 +1357,7 @@ function serializeOrnamentsGroup(ornaments: Notation[], indent: string, out: str
   } else {
     out.push(`${indent}  <ornaments>`);
     // Collect all accidental-marks from ornaments for serialization after ornaments
-    const allAccidentalMarks: { value: string; placement?: 'above' | 'below'; color?: string }[] = [];
+    const allAccidentalMarks: AccidentalMarkInfo[] = [];
     for (const orn of ornaments) {
       if (orn.type === 'ornament') {
         // Skip empty markers when outputting with other ornaments
@@ -1368,15 +1368,14 @@ function serializeOrnamentsGroup(ornaments: Notation[], indent: string, out: str
         if (orn.wavyLineType) wlAttrs += ` type="${orn.wavyLineType}"`;
         if (orn.number !== undefined) wlAttrs += ` number="${orn.number}"`;
         wlAttrs += placementAttr;
-        if (orn.defaultY !== undefined) wlAttrs += ` default-y="${orn.defaultY}"`;
+        wlAttrs += positionAttrs(orn);
         wlAttrs += colorAttr(orn.color);
         out.push(`${indent}    <wavy-line${wlAttrs}/>`);
       } else if (orn.ornament === 'tremolo') {
         let tremAttrs = '';
         if (orn.tremoloType) tremAttrs += ` type="${orn.tremoloType}"`;
         tremAttrs += placementAttr;
-        if (orn.defaultX !== undefined) tremAttrs += ` default-x="${orn.defaultX}"`;
-        if (orn.defaultY !== undefined) tremAttrs += ` default-y="${orn.defaultY}"`;
+        tremAttrs += positionAttrs(orn);
         tremAttrs += colorAttr(orn.color);
         if (orn.tremoloMarks !== undefined) {
           out.push(`${indent}    <tremolo${tremAttrs}>${orn.tremoloMarks}</tremolo>`);
@@ -1385,7 +1384,7 @@ function serializeOrnamentsGroup(ornaments: Notation[], indent: string, out: str
         }
       } else {
         let ornAttrs = placementAttr;
-        if (orn.defaultY !== undefined) ornAttrs += ` default-y="${orn.defaultY}"`;
+        ornAttrs += positionAttrs(orn);
         ornAttrs += colorAttr(orn.color);
         out.push(`${indent}    <${orn.ornament}${ornAttrs}/>`);
       }
@@ -1397,7 +1396,7 @@ function serializeOrnamentsGroup(ornaments: Notation[], indent: string, out: str
     }
     // Serialize accidental-marks after other ornaments
     for (const am of allAccidentalMarks) {
-      const amAttrs = (am.placement ? ` placement="${am.placement}"` : '') + colorAttr(am.color);
+      const amAttrs = (am.placement ? ` placement="${am.placement}"` : '') + positionAttrs(am) + colorAttr(am.color);
       out.push(`${indent}    <accidental-mark${amAttrs}>${am.value}</accidental-mark>`);
     }
     out.push(`${indent}  </ornaments>`);
@@ -1410,8 +1409,7 @@ function serializeTechnicalGroup(technicals: Notation[], indent: string, out: st
     if (tech.type === 'technical') {
       let placementAttr = tech.placement ? ` placement="${tech.placement}"` : '';
       const techNotation = tech as TechnicalNotation;
-      if (techNotation.defaultX !== undefined) placementAttr += ` default-x="${techNotation.defaultX}"`;
-      if (techNotation.defaultY !== undefined) placementAttr += ` default-y="${techNotation.defaultY}"`;
+      placementAttr += positionAttrs(techNotation);
       if (techNotation.fontSize !== undefined) placementAttr += ` font-size="${techNotation.fontSize}"`;
       placementAttr += colorAttr(techNotation.color);
       if (tech.technical === 'bend' && (techNotation.bendAlter !== undefined || techNotation.preBend || techNotation.release)) {
@@ -1486,8 +1484,7 @@ function serializeLyric(lyric: Lyric, indent: string, out: string[]): void {
   let attrs = '';
   if (lyric.number) attrs += ` number="${lyric.number}"`;
   if (lyric.name) attrs += ` name="${escapeXml(lyric.name)}"`;
-  if (lyric.defaultY !== undefined) attrs += ` default-y="${lyric.defaultY}"`;
-  if (lyric.relativeX !== undefined) attrs += ` relative-x="${lyric.relativeX}"`;
+  attrs += positionAttrs(lyric);
   if (lyric.justify) attrs += ` justify="${escapeXml(lyric.justify)}"`;
   if (lyric.placement) attrs += ` placement="${lyric.placement}"`;
   attrs += colorAttr(lyric.color);
@@ -1628,10 +1625,7 @@ function serializeDirectionType(dirType: DirectionType, indent: string, out: str
 
   switch (dirType.kind) {
     case 'dynamics': {
-      let dynAttrs = '';
-      if (dirType.defaultX !== undefined) dynAttrs += ` default-x="${dirType.defaultX}"`;
-      if (dirType.defaultY !== undefined) dynAttrs += ` default-y="${dirType.defaultY}"`;
-      if (dirType.relativeX !== undefined) dynAttrs += ` relative-x="${dirType.relativeX}"`;
+      let dynAttrs = positionAttrs(dirType);
       if (dirType.halign) dynAttrs += ` halign="${dirType.halign}"`;
       dynAttrs += colorAttr(dirType.color);
       out.push(`${indent}  <dynamics${dynAttrs}>`);
@@ -1648,8 +1642,7 @@ function serializeDirectionType(dirType: DirectionType, indent: string, out: str
     case 'wedge': {
       let wedgeAttrs = ` type="${dirType.type}"`;
       if (dirType.spread !== undefined) wedgeAttrs += ` spread="${dirType.spread}"`;
-      if (dirType.defaultY !== undefined) wedgeAttrs += ` default-y="${dirType.defaultY}"`;
-      if (dirType.relativeX !== undefined) wedgeAttrs += ` relative-x="${dirType.relativeX}"`;
+      wedgeAttrs += positionAttrs(dirType);
       wedgeAttrs += colorAttr(dirType.color);
       out.push(`${indent}  <wedge${wedgeAttrs}/>`);
       break;
@@ -1659,7 +1652,7 @@ function serializeDirectionType(dirType: DirectionType, indent: string, out: str
       let metAttrs = '';
       if (dirType.printObject === false) metAttrs += ' print-object="no"';
       if (dirType.parentheses) metAttrs += ' parentheses="yes"';
-      if (dirType.defaultY !== undefined) metAttrs += ` default-y="${dirType.defaultY}"`;
+      metAttrs += positionAttrs(dirType);
       if (dirType.fontFamily) metAttrs += ` font-family="${escapeXml(dirType.fontFamily)}"`;
       if (dirType.fontSize) metAttrs += ` font-size="${escapeXml(dirType.fontSize)}"`;
       metAttrs += colorAttr(dirType.color);
@@ -1682,11 +1675,7 @@ function serializeDirectionType(dirType: DirectionType, indent: string, out: str
     }
 
     case 'words': {
-      let wordAttrs = '';
-      if (dirType.defaultX !== undefined) wordAttrs += ` default-x="${dirType.defaultX}"`;
-      if (dirType.defaultY !== undefined) wordAttrs += ` default-y="${dirType.defaultY}"`;
-      if (dirType.relativeX !== undefined) wordAttrs += ` relative-x="${dirType.relativeX}"`;
-      if (dirType.relativeY !== undefined) wordAttrs += ` relative-y="${dirType.relativeY}"`;
+      let wordAttrs = positionAttrs(dirType);
       if (dirType.fontFamily) wordAttrs += ` font-family="${escapeXml(dirType.fontFamily)}"`;
       if (dirType.fontSize) wordAttrs += ` font-size="${escapeXml(dirType.fontSize)}"`;
       if (dirType.fontStyle) wordAttrs += ` font-style="${escapeXml(dirType.fontStyle)}"`;
@@ -1703,8 +1692,7 @@ function serializeDirectionType(dirType: DirectionType, indent: string, out: str
     case 'rehearsal': {
       let rehAttrs = '';
       if (dirType.enclosure) rehAttrs += ` enclosure="${escapeXml(dirType.enclosure)}"`;
-      if (dirType.defaultX !== undefined) rehAttrs += ` default-x="${dirType.defaultX}"`;
-      if (dirType.defaultY !== undefined) rehAttrs += ` default-y="${dirType.defaultY}"`;
+      rehAttrs += positionAttrs(dirType);
       if (dirType.fontSize) rehAttrs += ` font-size="${escapeXml(dirType.fontSize)}"`;
       if (dirType.fontWeight) rehAttrs += ` font-weight="${escapeXml(dirType.fontWeight)}"`;
       rehAttrs += colorAttr(dirType.color);
@@ -1717,8 +1705,7 @@ function serializeDirectionType(dirType: DirectionType, indent: string, out: str
       if (dirType.number !== undefined) bracketAttrs += ` number="${dirType.number}"`;
       if (dirType.lineEnd) bracketAttrs += ` line-end="${dirType.lineEnd}"`;
       if (dirType.lineType) bracketAttrs += ` line-type="${dirType.lineType}"`;
-      if (dirType.defaultY !== undefined) bracketAttrs += ` default-y="${dirType.defaultY}"`;
-      if (dirType.relativeX !== undefined) bracketAttrs += ` relative-x="${dirType.relativeX}"`;
+      bracketAttrs += positionAttrs(dirType);
       bracketAttrs += colorAttr(dirType.color);
       out.push(`${indent}  <bracket${bracketAttrs}/>`);
       break;
@@ -1728,15 +1715,15 @@ function serializeDirectionType(dirType: DirectionType, indent: string, out: str
       let dashAttrs = ` type="${dirType.type}"`;
       if (dirType.number !== undefined) dashAttrs += ` number="${dirType.number}"`;
       if (dirType.dashLength !== undefined) dashAttrs += ` dash-length="${dirType.dashLength}"`;
-      if (dirType.defaultY !== undefined) dashAttrs += ` default-y="${dirType.defaultY}"`;
       if (dirType.spaceLength !== undefined) dashAttrs += ` space-length="${dirType.spaceLength}"`;
+      dashAttrs += positionAttrs(dirType);
       dashAttrs += colorAttr(dirType.color);
       out.push(`${indent}  <dashes${dashAttrs}/>`);
       break;
     }
 
     case 'accordion-registration':
-      out.push(`${indent}  <accordion-registration${colorAttr(dirType.color)}>`);
+      out.push(`${indent}  <accordion-registration${positionAttrs(dirType)}${colorAttr(dirType.color)}>`);
       if (dirType.high) {
         out.push(`${indent}    <accordion-high/>`);
       }
@@ -1755,9 +1742,7 @@ function serializeDirectionType(dirType: DirectionType, indent: string, out: str
       break;
 
     case 'other-direction': {
-      let otherAttrs = '';
-      if (dirType.defaultX !== undefined) otherAttrs += ` default-x="${dirType.defaultX}"`;
-      if (dirType.defaultY !== undefined) otherAttrs += ` default-y="${dirType.defaultY}"`;
+      let otherAttrs = positionAttrs(dirType);
       if (dirType.halign) otherAttrs += ` halign="${escapeXml(dirType.halign)}"`;
       if (dirType.printObject === false) otherAttrs += ' print-object="no"';
       otherAttrs += colorAttr(dirType.color);
@@ -1766,23 +1751,23 @@ function serializeDirectionType(dirType: DirectionType, indent: string, out: str
       break;
 
     case 'segno':
-      out.push(`${indent}  <segno${colorAttr(dirType.color)}/>`);
+      out.push(`${indent}  <segno${positionAttrs(dirType)}${colorAttr(dirType.color)}/>`);
       break;
 
     case 'coda':
-      out.push(`${indent}  <coda${colorAttr(dirType.color)}/>`);
+      out.push(`${indent}  <coda${positionAttrs(dirType)}${colorAttr(dirType.color)}/>`);
       break;
 
     case 'eyeglasses':
-      out.push(`${indent}  <eyeglasses${colorAttr(dirType.color)}/>`);
+      out.push(`${indent}  <eyeglasses${positionAttrs(dirType)}${colorAttr(dirType.color)}/>`);
       break;
 
     case 'damp':
-      out.push(`${indent}  <damp${colorAttr(dirType.color)}/>`);
+      out.push(`${indent}  <damp${positionAttrs(dirType)}${colorAttr(dirType.color)}/>`);
       break;
 
     case 'damp-all':
-      out.push(`${indent}  <damp-all${colorAttr(dirType.color)}/>`);
+      out.push(`${indent}  <damp-all${positionAttrs(dirType)}${colorAttr(dirType.color)}/>`);
       break;
 
     case 'scordatura':
@@ -1805,7 +1790,7 @@ function serializeDirectionType(dirType: DirectionType, indent: string, out: str
 
     case 'harp-pedals':
       if (dirType.pedalTunings && dirType.pedalTunings.length > 0) {
-        out.push(`${indent}  <harp-pedals${colorAttr(dirType.color)}>`);
+        out.push(`${indent}  <harp-pedals${positionAttrs(dirType)}${colorAttr(dirType.color)}>`);
         for (const pt of dirType.pedalTunings) {
           out.push(`${indent}    <pedal-tuning>`);
           out.push(`${indent}      <pedal-step>${pt.pedalStep}</pedal-step>`);
@@ -1814,7 +1799,7 @@ function serializeDirectionType(dirType: DirectionType, indent: string, out: str
         }
         out.push(`${indent}  </harp-pedals>`);
       } else {
-        out.push(`${indent}  <harp-pedals${colorAttr(dirType.color)}/>`);
+        out.push(`${indent}  <harp-pedals${positionAttrs(dirType)}${colorAttr(dirType.color)}/>`);
       }
       break;
 
@@ -1822,14 +1807,14 @@ function serializeDirectionType(dirType: DirectionType, indent: string, out: str
       let imgAttrs = '';
       if (dirType.source) imgAttrs += ` source="${escapeXml(dirType.source)}"`;
       if (dirType.type) imgAttrs += ` type="${escapeXml(dirType.type)}"`;
+      imgAttrs += positionAttrs(dirType);
       out.push(`${indent}  <image${imgAttrs}/>`);
       break;
 
     case 'pedal': {
       let pedalAttrs = ` type="${dirType.type}"`;
       if (dirType.line !== undefined) pedalAttrs += ` line="${dirType.line ? 'yes' : 'no'}"`;
-      if (dirType.defaultY !== undefined) pedalAttrs += ` default-y="${dirType.defaultY}"`;
-      if (dirType.relativeX !== undefined) pedalAttrs += ` relative-x="${dirType.relativeX}"`;
+      pedalAttrs += positionAttrs(dirType);
       if (dirType.halign) pedalAttrs += ` halign="${dirType.halign}"`;
       pedalAttrs += colorAttr(dirType.color);
       out.push(`${indent}  <pedal${pedalAttrs}/>`);
@@ -1838,7 +1823,7 @@ function serializeDirectionType(dirType: DirectionType, indent: string, out: str
 
     case 'octave-shift': {
       const sizeAttr = dirType.size !== undefined ? ` size="${dirType.size}"` : '';
-      out.push(`${indent}  <octave-shift type="${dirType.type}"${sizeAttr}${colorAttr(dirType.color)}/>`);
+      out.push(`${indent}  <octave-shift type="${dirType.type}"${sizeAttr}${positionAttrs(dirType)}${colorAttr(dirType.color)}/>`);
       break;
     }
 
@@ -1875,7 +1860,7 @@ function serializeBarline(barline: Barline, indent: string, out: string[]): void
 
   if (barline.ending) {
     let endingAttrs = ` number="${barline.ending.number}" type="${barline.ending.type}"`;
-    if (barline.ending.defaultY !== undefined) endingAttrs += ` default-y="${barline.ending.defaultY}"`;
+    endingAttrs += positionAttrs(barline.ending);
     if (barline.ending.endLength !== undefined) endingAttrs += ` end-length="${barline.ending.endLength}"`;
     endingAttrs += colorAttr(barline.ending.color);
     if (barline.ending.text) {
@@ -1919,6 +1904,45 @@ function escapeXml(str: string): string {
  */
 function colorAttr(color: string | undefined): string {
   return color ? ` color="${escapeXml(color)}"` : '';
+}
+
+/**
+ * Render the MusicXML `%position` attribute group, omitting unset values.
+ * The numbers are written back as the raw tenths that were parsed.
+ */
+function positionAttrs(p: {
+  defaultX?: number;
+  defaultY?: number;
+  relativeX?: number;
+  relativeY?: number;
+}): string {
+  return buildAttrs({
+    'default-x': p.defaultX,
+    'default-y': p.defaultY,
+    'relative-x': p.relativeX,
+    'relative-y': p.relativeY,
+  });
+}
+
+/**
+ * Render the MusicXML `%bezier` attribute group of `<slur>` / `<tied>`.
+ */
+function bezierAttrs(b: {
+  bezierX?: number;
+  bezierY?: number;
+  bezierX2?: number;
+  bezierY2?: number;
+  bezierOffset?: number;
+  bezierOffset2?: number;
+}): string {
+  return buildAttrs({
+    'bezier-x': b.bezierX,
+    'bezier-y': b.bezierY,
+    'bezier-x2': b.bezierX2,
+    'bezier-y2': b.bezierY2,
+    'bezier-offset': b.bezierOffset,
+    'bezier-offset2': b.bezierOffset2,
+  });
 }
 
 /**
@@ -2025,7 +2049,10 @@ function serializeHarmony(harmony: HarmonyEntry, indent: string, out: string[]):
     id: harmony._id,
     placement: harmony.placement,
     'print-frame': harmony.printFrame,
+    'default-x': harmony.defaultX,
     'default-y': harmony.defaultY,
+    'relative-x': harmony.relativeX,
+    'relative-y': harmony.relativeY,
     halign: harmony.halign,
     'font-size': harmony.fontSize,
     color: harmony.color,

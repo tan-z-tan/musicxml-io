@@ -402,7 +402,10 @@ export interface Barline {
     number: string;
     type: 'start' | 'stop' | 'discontinue';
     text?: string;
+    defaultX?: number;
     defaultY?: number;
+    relativeX?: number;
+    relativeY?: number;
     endLength?: number;
     /** MusicXML `color` attribute on `<ending>`. */
     color?: Color;
@@ -583,7 +586,10 @@ export interface HarmonyEntry {
   offset?: number;
   printFrame?: boolean;
   // Positioning attributes
+  defaultX?: number;
   defaultY?: number;
+  relativeX?: number;
+  relativeY?: number;
   fontSize?: string;
   halign?: string;
   /** MusicXML `color` attribute on `<harmony>`. */
@@ -673,6 +679,8 @@ export interface AccidentalInfo {
   parentheses?: boolean;
   bracket?: boolean;
   // Positioning attributes
+  defaultX?: number;
+  defaultY?: number;
   relativeX?: number;
   relativeY?: number;
   /** MusicXML `color` attribute on `<accidental>`. */
@@ -759,6 +767,8 @@ export interface ArticulationNotation extends BaseNotation {
   // Positioning
   defaultX?: number;
   defaultY?: number;
+  relativeX?: number;
+  relativeY?: number;
 }
 
 export type ArticulationType =
@@ -772,6 +782,11 @@ export interface AccidentalMarkInfo {
   placement?: 'above' | 'below';
   /** MusicXML `color` attribute on `<accidental-mark>`. */
   color?: Color;
+  // Positioning
+  defaultX?: number;
+  defaultY?: number;
+  relativeX?: number;
+  relativeY?: number;
 }
 
 export interface OrnamentNotation extends BaseNotation {
@@ -788,6 +803,8 @@ export interface OrnamentNotation extends BaseNotation {
   // Positioning
   defaultX?: number;
   defaultY?: number;
+  relativeX?: number;
+  relativeY?: number;
 }
 
 export type OrnamentType =
@@ -823,6 +840,8 @@ export interface TechnicalNotation extends BaseNotation {
   // Positioning
   defaultX?: number;
   defaultY?: number;
+  relativeX?: number;
+  relativeY?: number;
   // Print style
   fontSize?: string;
 }
@@ -843,10 +862,16 @@ export interface SlurNotation extends BaseNotation {
   orientation?: 'over' | 'under';
   defaultX?: number;
   defaultY?: number;
+  relativeX?: number;
+  relativeY?: number;
   bezierX?: number;
   bezierY?: number;
   bezierX2?: number;
   bezierY2?: number;
+  /** MusicXML `bezier-offset` — horizontal control-point offset, in divisions. */
+  bezierOffset?: number;
+  /** MusicXML `bezier-offset2` — horizontal offset of the second control point, in divisions. */
+  bezierOffset2?: number;
 }
 
 export interface TiedNotation extends BaseNotation {
@@ -854,6 +879,18 @@ export interface TiedNotation extends BaseNotation {
   tiedType: 'start' | 'stop' | 'continue' | 'let-ring';
   number?: number;
   orientation?: 'over' | 'under';
+  defaultX?: number;
+  defaultY?: number;
+  relativeX?: number;
+  relativeY?: number;
+  bezierX?: number;
+  bezierY?: number;
+  bezierX2?: number;
+  bezierY2?: number;
+  /** MusicXML `bezier-offset` — horizontal control-point offset, in divisions. */
+  bezierOffset?: number;
+  /** MusicXML `bezier-offset2` — horizontal offset of the second control point, in divisions. */
+  bezierOffset2?: number;
 }
 
 export interface TupletNotation extends BaseNotation {
@@ -864,6 +901,11 @@ export interface TupletNotation extends BaseNotation {
   showNumber?: 'actual' | 'both' | 'none';
   showType?: 'actual' | 'both' | 'none';
   lineShape?: 'straight' | 'curved';
+  // Positioning of the tuplet number / bracket
+  defaultX?: number;
+  defaultY?: number;
+  relativeX?: number;
+  relativeY?: number;
   tupletActual?: { tupletNumber?: number; tupletType?: NoteType; tupletDots?: number };
   tupletNormal?: { tupletNumber?: number; tupletType?: NoteType; tupletDots?: number };
 }
@@ -881,6 +923,8 @@ export interface FermataNotation extends BaseNotation {
   // Positioning
   defaultX?: number;
   defaultY?: number;
+  relativeX?: number;
+  relativeY?: number;
 }
 
 export interface ArpeggiateNotation extends BaseNotation {
@@ -889,6 +933,8 @@ export interface ArpeggiateNotation extends BaseNotation {
   number?: number;
   defaultX?: number;
   defaultY?: number;
+  relativeX?: number;
+  relativeY?: number;
 }
 
 export interface NonArpeggiateNotation extends BaseNotation {
@@ -900,6 +946,11 @@ export interface NonArpeggiateNotation extends BaseNotation {
 export interface AccidentalMarkNotation extends BaseNotation {
   type: 'accidental-mark';
   value: string;
+  // Positioning
+  defaultX?: number;
+  defaultY?: number;
+  relativeX?: number;
+  relativeY?: number;
 }
 
 export interface GlissandoNotation extends BaseNotation {
@@ -930,28 +981,40 @@ export interface OtherNotation extends BaseNotation {
 /**
  * `<image>` and `<swing>` are the only direction-types without a `color`
  * attribute in the MusicXML schema; every other member below accepts one.
+ *
+ * Every direction-type but `<swing>` and `<scordatura>` carries the `%position`
+ * attribute group (`default-x`, `default-y`, `relative-x`, `relative-y`), so
+ * those members expose it as `defaultX` / `defaultY` / `relativeX` /
+ * `relativeY`. The values are the raw tenths the producer wrote — `default-*`
+ * is the engraver's computed position and `relative-*` the user's offset from
+ * it — and are carried through parse/serialize unchanged.
+ *
+ * `<swing>` and `<scordatura>` declare the same four keys as `undefined` so a
+ * consumer can read `dirType.defaultX` off the union without narrowing first,
+ * while the type still refuses a value on the two elements the schema gives no
+ * position to.
  */
 export type DirectionType =
-  | { kind: 'dynamics'; value?: DynamicsValue; otherDynamics?: string; defaultX?: number; defaultY?: number; relativeX?: number; halign?: string; color?: Color }
-  | { kind: 'wedge'; type: 'crescendo' | 'diminuendo' | 'stop'; spread?: number; defaultY?: number; relativeX?: number; color?: Color }
-  | { kind: 'metronome'; beatUnit: NoteType; perMinute?: number | string; beatUnitDot?: boolean; beatUnit2?: NoteType; beatUnitDot2?: boolean; parentheses?: boolean; printObject?: boolean; defaultY?: number; fontFamily?: string; fontSize?: string; color?: Color }
+  | { kind: 'dynamics'; value?: DynamicsValue; otherDynamics?: string; defaultX?: number; defaultY?: number; relativeX?: number; relativeY?: number; halign?: string; color?: Color }
+  | { kind: 'wedge'; type: 'crescendo' | 'diminuendo' | 'stop'; spread?: number; defaultX?: number; defaultY?: number; relativeX?: number; relativeY?: number; color?: Color }
+  | { kind: 'metronome'; beatUnit: NoteType; perMinute?: number | string; beatUnitDot?: boolean; beatUnit2?: NoteType; beatUnitDot2?: boolean; parentheses?: boolean; printObject?: boolean; defaultX?: number; defaultY?: number; relativeX?: number; relativeY?: number; fontFamily?: string; fontSize?: string; color?: Color }
   | { kind: 'words'; text: string; defaultX?: number; defaultY?: number; relativeX?: number; relativeY?: number; fontFamily?: string; fontSize?: string; fontStyle?: string; fontWeight?: string; xmlLang?: string; justify?: string; color?: Color; xmlSpace?: string; halign?: string }
-  | { kind: 'rehearsal'; text: string; enclosure?: string; defaultX?: number; defaultY?: number; fontSize?: string; fontWeight?: string; color?: Color }
-  | { kind: 'segno'; color?: Color }
-  | { kind: 'coda'; color?: Color }
-  | { kind: 'pedal'; type: 'start' | 'stop' | 'change' | 'continue'; line?: boolean; defaultY?: number; relativeX?: number; halign?: string; color?: Color }
-  | { kind: 'octave-shift'; type: 'up' | 'down' | 'stop'; size?: number; color?: Color }
-  | { kind: 'bracket'; type: 'start' | 'stop' | 'continue'; number?: number; lineEnd?: 'up' | 'down' | 'both' | 'arrow' | 'none'; lineType?: 'solid' | 'dashed' | 'dotted' | 'wavy'; defaultY?: number; relativeX?: number; color?: Color }
-  | { kind: 'dashes'; type: 'start' | 'stop' | 'continue'; number?: number; dashLength?: number; defaultY?: number; spaceLength?: number; color?: Color }
-  | { kind: 'accordion-registration'; high?: boolean; middle?: number | string; middlePresent?: boolean; low?: boolean; color?: Color }
-  | { kind: 'swing'; straight?: boolean; first?: number; second?: number; swingType?: NoteType }
-  | { kind: 'eyeglasses'; color?: Color }
-  | { kind: 'damp'; color?: Color }
-  | { kind: 'damp-all'; color?: Color }
-  | { kind: 'scordatura'; accords?: Accord[]; color?: Color }
-  | { kind: 'harp-pedals'; pedalTunings?: PedalTuning[]; color?: Color }
-  | { kind: 'image'; source?: string; type?: string }
-  | { kind: 'other-direction'; text: string; defaultX?: number; defaultY?: number; halign?: string; printObject?: boolean; color?: Color };
+  | { kind: 'rehearsal'; text: string; enclosure?: string; defaultX?: number; defaultY?: number; relativeX?: number; relativeY?: number; fontSize?: string; fontWeight?: string; color?: Color }
+  | { kind: 'segno'; defaultX?: number; defaultY?: number; relativeX?: number; relativeY?: number; color?: Color }
+  | { kind: 'coda'; defaultX?: number; defaultY?: number; relativeX?: number; relativeY?: number; color?: Color }
+  | { kind: 'pedal'; type: 'start' | 'stop' | 'change' | 'continue'; line?: boolean; defaultX?: number; defaultY?: number; relativeX?: number; relativeY?: number; halign?: string; color?: Color }
+  | { kind: 'octave-shift'; type: 'up' | 'down' | 'stop'; size?: number; defaultX?: number; defaultY?: number; relativeX?: number; relativeY?: number; color?: Color }
+  | { kind: 'bracket'; type: 'start' | 'stop' | 'continue'; number?: number; lineEnd?: 'up' | 'down' | 'both' | 'arrow' | 'none'; lineType?: 'solid' | 'dashed' | 'dotted' | 'wavy'; defaultX?: number; defaultY?: number; relativeX?: number; relativeY?: number; color?: Color }
+  | { kind: 'dashes'; type: 'start' | 'stop' | 'continue'; number?: number; dashLength?: number; spaceLength?: number; defaultX?: number; defaultY?: number; relativeX?: number; relativeY?: number; color?: Color }
+  | { kind: 'accordion-registration'; high?: boolean; middle?: number | string; middlePresent?: boolean; low?: boolean; defaultX?: number; defaultY?: number; relativeX?: number; relativeY?: number; color?: Color }
+  | { kind: 'swing'; straight?: boolean; first?: number; second?: number; swingType?: NoteType; defaultX?: undefined; defaultY?: undefined; relativeX?: undefined; relativeY?: undefined }
+  | { kind: 'eyeglasses'; defaultX?: number; defaultY?: number; relativeX?: number; relativeY?: number; color?: Color }
+  | { kind: 'damp'; defaultX?: number; defaultY?: number; relativeX?: number; relativeY?: number; color?: Color }
+  | { kind: 'damp-all'; defaultX?: number; defaultY?: number; relativeX?: number; relativeY?: number; color?: Color }
+  | { kind: 'scordatura'; accords?: Accord[]; color?: Color; defaultX?: undefined; defaultY?: undefined; relativeX?: undefined; relativeY?: undefined }
+  | { kind: 'harp-pedals'; pedalTunings?: PedalTuning[]; defaultX?: number; defaultY?: number; relativeX?: number; relativeY?: number; color?: Color }
+  | { kind: 'image'; source?: string; type?: string; defaultX?: number; defaultY?: number; relativeX?: number; relativeY?: number }
+  | { kind: 'other-direction'; text: string; defaultX?: number; defaultY?: number; relativeX?: number; relativeY?: number; halign?: string; printObject?: boolean; color?: Color };
 
 export interface Accord {
   string: number;
@@ -991,8 +1054,10 @@ export interface Lyric {
   extend?: boolean | { type?: 'start' | 'stop' | 'continue'; color?: Color };
   endLine?: boolean;
   endParagraph?: boolean;
+  defaultX?: number;
   defaultY?: number;
   relativeX?: number;
+  relativeY?: number;
   justify?: string;
   placement?: 'above' | 'below';
   /** MusicXML `color` attribute on `<lyric>`. */
