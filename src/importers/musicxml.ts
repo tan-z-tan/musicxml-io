@@ -2153,8 +2153,14 @@ function parseLyric(elements: XmlChild[], attrs: Record<string, string>): Lyric 
     text: textElements.length > 0 ? textElements[0].text : '',
   };
 
-  if (attrs['number']) {
-    lyric.number = parseInt(attrs['number'], 10);
+  if (attrs['number'] !== undefined) {
+    // MusicXML types this as an NMTOKEN, so keep the producer's value verbatim
+    // and give `number` a reading only when it is a plain integer. Sibelius
+    // writes verse ids like "part1verse2", which used to land here as NaN.
+    lyric.numberText = attrs['number'];
+    if (/^\d+$/.test(attrs['number'])) {
+      lyric.number = parseInt(attrs['number'], 10);
+    }
   }
 
   assignPosition(lyric, attrs);
