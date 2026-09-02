@@ -65,6 +65,11 @@ import type {
   DynamicsNotation,
   GroupingEntry,
   SlideNotation,
+  SlurNotation,
+  FermataNotation,
+  ArpeggiateNotation,
+  AccidentalMarkInfo,
+  AccidentalMarkNotation,
 } from '../types';
 
 // XML tree node shape (same shape the previous txml-based parser produced)
@@ -459,6 +464,70 @@ function parseFirstElement<T>(
  */
 function hasElement(elements: XmlChild[], tagName: string): boolean {
   return elements.some(el => typeof el !== 'string' && el.tagName === tagName);
+}
+
+/**
+ * Fields written by {@link assignPosition} / {@link assignBezier}.
+ */
+interface PositionTarget {
+  defaultX?: number;
+  defaultY?: number;
+  relativeX?: number;
+  relativeY?: number;
+}
+
+interface BezierTarget {
+  bezierX?: number;
+  bezierY?: number;
+  bezierX2?: number;
+  bezierY2?: number;
+  bezierOffset?: number;
+  bezierOffset2?: number;
+}
+
+/**
+ * Parse a numeric layout attribute. Unlike a plain truthiness check this keeps
+ * `"0"`, which is a meaningful offset, and drops values that are not numbers.
+ */
+function parseNumericAttr(value: string | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  const n = parseFloat(value);
+  return Number.isNaN(n) ? undefined : n;
+}
+
+/**
+ * Copy the MusicXML `%position` attribute group (`default-x`, `default-y`,
+ * `relative-x`, `relative-y`) onto `target`, keeping the producer's raw tenths.
+ */
+function assignPosition(target: PositionTarget, attrs: Record<string, string>): void {
+  const defaultX = parseNumericAttr(attrs['default-x']);
+  if (defaultX !== undefined) target.defaultX = defaultX;
+  const defaultY = parseNumericAttr(attrs['default-y']);
+  if (defaultY !== undefined) target.defaultY = defaultY;
+  const relativeX = parseNumericAttr(attrs['relative-x']);
+  if (relativeX !== undefined) target.relativeX = relativeX;
+  const relativeY = parseNumericAttr(attrs['relative-y']);
+  if (relativeY !== undefined) target.relativeY = relativeY;
+}
+
+/**
+ * Copy the MusicXML `%bezier` attribute group of `<slur>` / `<tied>` onto
+ * `target`. The `bezier-x*` / `bezier-y*` values are tenths; the
+ * `bezier-offset*` values are divisions.
+ */
+function assignBezier(target: BezierTarget, attrs: Record<string, string>): void {
+  const bezierX = parseNumericAttr(attrs['bezier-x']);
+  if (bezierX !== undefined) target.bezierX = bezierX;
+  const bezierY = parseNumericAttr(attrs['bezier-y']);
+  if (bezierY !== undefined) target.bezierY = bezierY;
+  const bezierX2 = parseNumericAttr(attrs['bezier-x2']);
+  if (bezierX2 !== undefined) target.bezierX2 = bezierX2;
+  const bezierY2 = parseNumericAttr(attrs['bezier-y2']);
+  if (bezierY2 !== undefined) target.bezierY2 = bezierY2;
+  const bezierOffset = parseNumericAttr(attrs['bezier-offset']);
+  if (bezierOffset !== undefined) target.bezierOffset = bezierOffset;
+  const bezierOffset2 = parseNumericAttr(attrs['bezier-offset2']);
+  if (bezierOffset2 !== undefined) target.bezierOffset2 = bezierOffset2;
 }
 
 function parseScorePartwise(elements: XmlChild[]): Score {
@@ -1392,10 +1461,7 @@ function parseNote(elements: XmlChild[], attrs: Record<string, string>): NoteEnt
   };
 
   // Layout attributes (from attrs, not children - no loop needed)
-  if (attrs['default-x']) note.defaultX = parseFloat(attrs['default-x']);
-  if (attrs['default-y']) note.defaultY = parseFloat(attrs['default-y']);
-  if (attrs['relative-x']) note.relativeX = parseFloat(attrs['relative-x']);
-  if (attrs['relative-y']) note.relativeY = parseFloat(attrs['relative-y']);
+  assignPosition(note, attrs);
   if (attrs['dynamics']) note.dynamics = parseFloat(attrs['dynamics']);
   if (attrs['print-object'] === 'no') note.printObject = false;
   if (attrs['print-dot'] === 'no') note.printDot = false;
@@ -1485,8 +1551,7 @@ function parseNote(elements: XmlChild[], attrs: Record<string, string>): NoteEnt
           if (elAttrs['editorial'] === 'yes') accInfo.editorial = true;
           if (elAttrs['parentheses'] === 'yes') accInfo.parentheses = true;
           if (elAttrs['bracket'] === 'yes') accInfo.bracket = true;
-          if (elAttrs['relative-x']) accInfo.relativeX = parseFloat(elAttrs['relative-x']);
-          if (elAttrs['relative-y']) accInfo.relativeY = parseFloat(elAttrs['relative-y']);
+          assignPosition(accInfo, elAttrs);
           if (elAttrs['color']) accInfo.color = elAttrs['color'];
           if (elAttrs['size']) accInfo.size = elAttrs['size'];
           if (elAttrs['font-size']) accInfo.fontSize = elAttrs['font-size'];
@@ -1638,25 +1703,23 @@ function parseNotations(elements: XmlChild[], notationsIndex: number = 0): Notat
         color: attrs['color'],
         notationsIndex,
       };
+      assignPosition(tied, attrs);
+      assignBezier(tied, attrs);
       notations.push(tied);
     } else if (el.tagName === 'slur') {
       const attrs = el.attributes as Record<string, string>;
-      const slur: Notation = {
+      const slur: SlurNotation = {
         type: 'slur',
         slurType: (attrs['type'] as 'start' | 'stop' | 'continue') || 'start',
         number: attrs['number'] ? parseInt(attrs['number'], 10) : undefined,
         lineType: attrs['line-type'] as 'solid' | 'dashed' | 'dotted' | 'wavy' | undefined,
         orientation: attrs['orientation'] as 'over' | 'under' | undefined,
-        defaultX: attrs['default-x'] ? parseFloat(attrs['default-x']) : undefined,
-        defaultY: attrs['default-y'] ? parseFloat(attrs['default-y']) : undefined,
-        bezierX: attrs['bezier-x'] ? parseFloat(attrs['bezier-x']) : undefined,
-        bezierY: attrs['bezier-y'] ? parseFloat(attrs['bezier-y']) : undefined,
-        bezierX2: attrs['bezier-x2'] ? parseFloat(attrs['bezier-x2']) : undefined,
-        bezierY2: attrs['bezier-y2'] ? parseFloat(attrs['bezier-y2']) : undefined,
         placement: attrs['placement'] as 'above' | 'below' | undefined,
         color: attrs['color'],
         notationsIndex,
       };
+      assignPosition(slur, attrs);
+      assignBezier(slur, attrs);
       notations.push(slur);
     } else if (el.tagName === 'tuplet') {
       const attrs = el.attributes as Record<string, string>;
@@ -1672,6 +1735,7 @@ function parseNotations(elements: XmlChild[], notationsIndex: number = 0): Notat
         placement: attrs['placement'] as 'above' | 'below' | undefined,
         notationsIndex,
       };
+      assignPosition(tuplet, attrs);
 
       // Parse tuplet-actual and tuplet-normal
       for (const tc of tupletContent) {
@@ -1735,12 +1799,7 @@ function parseNotations(elements: XmlChild[], notationsIndex: number = 0): Notat
               }
             }
             // Handle positioning attributes
-            if (artAttrs['default-x']) {
-              artNotation.defaultX = parseFloat(artAttrs['default-x']);
-            }
-            if (artAttrs['default-y']) {
-              artNotation.defaultY = parseFloat(artAttrs['default-y']);
-            }
+            assignPosition(artNotation, artAttrs);
             if (artAttrs['color']) artNotation.color = artAttrs['color'];
             notations.push(artNotation);
           }
@@ -1757,13 +1816,14 @@ function parseNotations(elements: XmlChild[], notationsIndex: number = 0): Notat
       // Collect accidental-marks for the ornaments group
       const accidentalMarks = collectElements(ornContent, 'accidental-mark', (c, a) => {
         const value = extractText(c);
-        return isValidAccidental(value)
-          ? {
-            value: value as Accidental,
-            placement: a['placement'] as 'above' | 'below' | undefined,
-            color: a['color'],
-          }
-          : null;
+        if (!isValidAccidental(value)) return null;
+        const mark: AccidentalMarkInfo = {
+          value: value as Accidental,
+          placement: a['placement'] as 'above' | 'below' | undefined,
+          color: a['color'],
+        };
+        assignPosition(mark, a);
+        return mark;
       }).filter((m) => m !== null);
 
       for (const orn of ornContent) {
@@ -1778,10 +1838,7 @@ function parseNotations(elements: XmlChild[], notationsIndex: number = 0): Notat
               placement: ornAttrs['placement'] as 'above' | 'below' | undefined,
               notationsIndex,
             };
-            // Handle default-y positioning
-            if (ornAttrs['default-y']) {
-              ornNotation.defaultY = parseFloat(ornAttrs['default-y']);
-            }
+            assignPosition(ornNotation, ornAttrs);
             if (ornAttrs['color']) ornNotation.color = ornAttrs['color'];
             // Attach accidental marks to the first ornament in the group
             if (accidentalMarks.length > 0 && notations.filter(n => n.type === 'ornament').length === 0) {
@@ -1801,9 +1858,7 @@ function parseNotations(elements: XmlChild[], notationsIndex: number = 0): Notat
             placement: wlAttrs['placement'] as 'above' | 'below' | undefined,
             notationsIndex,
           };
-          if (wlAttrs['default-y']) {
-            wlNotation.defaultY = parseFloat(wlAttrs['default-y']);
-          }
+          assignPosition(wlNotation, wlAttrs);
           if (wlAttrs['color']) wlNotation.color = wlAttrs['color'];
           notations.push(wlNotation);
         }
@@ -1819,8 +1874,7 @@ function parseNotations(elements: XmlChild[], notationsIndex: number = 0): Notat
             placement: tremAttrs['placement'] as 'above' | 'below' | undefined,
             notationsIndex,
           };
-          if (tremAttrs['default-x']) tremNotation.defaultX = parseFloat(tremAttrs['default-x']);
-          if (tremAttrs['default-y']) tremNotation.defaultY = parseFloat(tremAttrs['default-y']);
+          assignPosition(tremNotation, tremAttrs);
           if (tremAttrs['color']) tremNotation.color = tremAttrs['color'];
           notations.push(tremNotation);
         }
@@ -1918,12 +1972,7 @@ function parseNotations(elements: XmlChild[], notationsIndex: number = 0): Notat
               if (techAttrs['substitution'] === 'yes') notation.substitution = true;
             }
             // Positioning attributes
-            if (techAttrs['default-x']) {
-              notation.defaultX = parseFloat(techAttrs['default-x']);
-            }
-            if (techAttrs['default-y']) {
-              notation.defaultY = parseFloat(techAttrs['default-y']);
-            }
+            assignPosition(notation, techAttrs);
             if (techAttrs['font-size']) {
               notation.fontSize = techAttrs['font-size'];
             }
@@ -1976,19 +2025,17 @@ function parseNotations(elements: XmlChild[], notationsIndex: number = 0): Notat
         color: a['color'],
         notationsIndex,
       };
-      if (a['default-x']) (fermataNotation as any).defaultX = parseFloat(a['default-x']);
-      if (a['default-y']) (fermataNotation as any).defaultY = parseFloat(a['default-y']);
+      assignPosition(fermataNotation as FermataNotation, a);
       notations.push(fermataNotation);
     } else if (el.tagName === 'arpeggiate') {
       const arpAttrs = el.attributes as Record<string, string>;
-      const arpNotation: any = {
+      const arpNotation: ArpeggiateNotation = {
         type: 'arpeggiate',
         direction: arpAttrs['direction'] as 'up' | 'down' | undefined,
         number: arpAttrs['number'] ? parseInt(arpAttrs['number'], 10) : undefined,
         notationsIndex,
       };
-      if (arpAttrs['default-x']) arpNotation.defaultX = parseFloat(arpAttrs['default-x']);
-      if (arpAttrs['default-y']) arpNotation.defaultY = parseFloat(arpAttrs['default-y']);
+      assignPosition(arpNotation, arpAttrs);
       if (arpAttrs['color']) arpNotation.color = arpAttrs['color'];
       notations.push(arpNotation);
     } else if (el.tagName === 'non-arpeggiate') {
@@ -2005,13 +2052,15 @@ function parseNotations(elements: XmlChild[], notationsIndex: number = 0): Notat
       const amAttrs = el.attributes as Record<string, string>;
       const amContent = el.children;
       const value = extractText(amContent);
-      notations.push({
+      const amNotation: AccidentalMarkNotation = {
         type: 'accidental-mark',
         value,
         placement: amAttrs['placement'] as 'above' | 'below' | undefined,
         color: amAttrs['color'],
         notationsIndex,
-      });
+      };
+      assignPosition(amNotation, amAttrs);
+      notations.push(amNotation);
     } else if (el.tagName === 'glissando') {
       const glissAttrs = el.attributes as Record<string, string>;
       const glissContent = el.children;
@@ -2108,9 +2157,7 @@ function parseLyric(elements: XmlChild[], attrs: Record<string, string>): Lyric 
     lyric.number = parseInt(attrs['number'], 10);
   }
 
-  if (attrs['default-y']) {
-    lyric.defaultY = parseFloat(attrs['default-y']);
-  }
+  assignPosition(lyric, attrs);
 
   if (attrs['name']) {
     lyric.name = attrs['name'];
@@ -2118,10 +2165,6 @@ function parseLyric(elements: XmlChild[], attrs: Record<string, string>): Lyric 
 
   if (attrs['justify']) {
     lyric.justify = attrs['justify'];
-  }
-
-  if (attrs['relative-x']) {
-    lyric.relativeX = parseFloat(attrs['relative-x']);
   }
 
   if (attrs['placement']) {
@@ -2305,9 +2348,7 @@ function parseDirectionTypes(elements: XmlChild[]): DirectionType[] {
         for (const dv of dynamicsValues) {
           if (dyn.tagName === dv) {
             const result: DirectionType = { kind: 'dynamics', value: dv };
-            if (dynAttrs['default-x']) result.defaultX = parseFloat(dynAttrs['default-x']);
-            if (dynAttrs['default-y']) result.defaultY = parseFloat(dynAttrs['default-y']);
-            if (dynAttrs['relative-x']) result.relativeX = parseFloat(dynAttrs['relative-x']);
+            assignPosition(result, dynAttrs);
             if (dynAttrs['halign']) result.halign = dynAttrs['halign'];
             if (dynAttrs['color']) result.color = dynAttrs['color'];
             results.push(result);
@@ -2320,9 +2361,7 @@ function parseDirectionTypes(elements: XmlChild[]): DirectionType[] {
           const otherDynText = extractText(dyn.children);
           if (otherDynText) {
             const result: DirectionType = { kind: 'dynamics', otherDynamics: otherDynText };
-            if (dynAttrs['default-x']) result.defaultX = parseFloat(dynAttrs['default-x']);
-            if (dynAttrs['default-y']) result.defaultY = parseFloat(dynAttrs['default-y']);
-            if (dynAttrs['relative-x']) result.relativeX = parseFloat(dynAttrs['relative-x']);
+            assignPosition(result, dynAttrs);
             if (dynAttrs['halign']) result.halign = dynAttrs['halign'];
             if (dynAttrs['color']) result.color = dynAttrs['color'];
             results.push(result);
@@ -2339,8 +2378,7 @@ function parseDirectionTypes(elements: XmlChild[]): DirectionType[] {
       if (wedgeType === 'crescendo' || wedgeType === 'diminuendo' || wedgeType === 'stop') {
         const result: DirectionType = { kind: 'wedge', type: wedgeType };
         if (wedgeAttrs['spread']) result.spread = parseFloat(wedgeAttrs['spread']);
-        if (wedgeAttrs['default-y']) result.defaultY = parseFloat(wedgeAttrs['default-y']);
-        if (wedgeAttrs['relative-x']) result.relativeX = parseFloat(wedgeAttrs['relative-x']);
+        assignPosition(result, wedgeAttrs);
         if (wedgeAttrs['color']) result.color = wedgeAttrs['color'];
         results.push(result);
       }
@@ -2389,7 +2427,7 @@ function parseDirectionTypes(elements: XmlChild[]): DirectionType[] {
         }
         if (metAttrs['parentheses'] === 'yes') result.parentheses = true;
         if (metAttrs['print-object'] === 'no') result.printObject = false;
-        if (metAttrs['default-y']) result.defaultY = parseFloat(metAttrs['default-y']);
+        assignPosition(result, metAttrs);
         if (metAttrs['font-family']) result.fontFamily = metAttrs['font-family'];
         if (metAttrs['font-size']) result.fontSize = metAttrs['font-size'];
         if (metAttrs['color']) result.color = metAttrs['color'];
@@ -2404,10 +2442,7 @@ function parseDirectionTypes(elements: XmlChild[]): DirectionType[] {
       const text = extractText(el.children, true);
       // Include words even if text is empty - preserve styling info
       const result: DirectionType = { kind: 'words', text: text || '' };
-      if (a['default-x']) result.defaultX = parseFloat(a['default-x']);
-      if (a['default-y']) result.defaultY = parseFloat(a['default-y']);
-      if (a['relative-x']) result.relativeX = parseFloat(a['relative-x']);
-      if (a['relative-y']) result.relativeY = parseFloat(a['relative-y']);
+      assignPosition(result, a);
       if (a['font-family']) result.fontFamily = a['font-family'];
       if (a['font-size']) result.fontSize = a['font-size'];
       if (a['font-style']) result.fontStyle = a['font-style'];
@@ -2428,8 +2463,7 @@ function parseDirectionTypes(elements: XmlChild[]): DirectionType[] {
       if (text) {
         const result: DirectionType = { kind: 'rehearsal', text };
         if (a['enclosure']) result.enclosure = a['enclosure'];
-        if (a['default-x']) result.defaultX = parseFloat(a['default-x']);
-        if (a['default-y']) result.defaultY = parseFloat(a['default-y']);
+        assignPosition(result, a);
         if (a['font-size']) result.fontSize = a['font-size'];
         if (a['font-weight']) result.fontWeight = a['font-weight'];
         if (a['color']) result.color = a['color'];
@@ -2447,8 +2481,7 @@ function parseDirectionTypes(elements: XmlChild[]): DirectionType[] {
         if (bracketAttrs['number']) result.number = parseInt(bracketAttrs['number'], 10);
         if (bracketAttrs['line-end']) result.lineEnd = bracketAttrs['line-end'] as 'up' | 'down' | 'both' | 'arrow' | 'none';
         if (bracketAttrs['line-type']) result.lineType = bracketAttrs['line-type'] as 'solid' | 'dashed' | 'dotted' | 'wavy';
-        if (bracketAttrs['default-y']) result.defaultY = parseFloat(bracketAttrs['default-y']);
-        if (bracketAttrs['relative-x']) result.relativeX = parseFloat(bracketAttrs['relative-x']);
+        assignPosition(result, bracketAttrs);
         if (bracketAttrs['color']) result.color = bracketAttrs['color'];
         results.push(result);
       }
@@ -2463,8 +2496,8 @@ function parseDirectionTypes(elements: XmlChild[]): DirectionType[] {
         const result: DirectionType = { kind: 'dashes', type: dashType };
         if (dashAttrs['number']) result.number = parseInt(dashAttrs['number'], 10);
         if (dashAttrs['dash-length']) result.dashLength = parseFloat(dashAttrs['dash-length']);
-        if (dashAttrs['default-y']) result.defaultY = parseFloat(dashAttrs['default-y']);
         if (dashAttrs['space-length']) result.spaceLength = parseFloat(dashAttrs['space-length']);
+        assignPosition(result, dashAttrs);
         if (dashAttrs['color']) result.color = dashAttrs['color'];
         results.push(result);
       }
@@ -2476,6 +2509,7 @@ function parseDirectionTypes(elements: XmlChild[]): DirectionType[] {
       const accContent = el.children;
       const accRegAttrs = el.attributes as Record<string, string>;
       const result: DirectionType = { kind: 'accordion-registration' };
+      assignPosition(result, accRegAttrs);
       if (accRegAttrs['color']) result.color = accRegAttrs['color'];
       for (const acc of accContent) {
         if (typeof acc === 'string') continue;
@@ -2509,8 +2543,7 @@ function parseDirectionTypes(elements: XmlChild[]): DirectionType[] {
       for (const o of otherContent) {
         if (typeof o === 'string') {
           const result: DirectionType = { kind: 'other-direction', text: o.trim() };
-          if (otherAttrs['default-x']) result.defaultX = parseFloat(otherAttrs['default-x']);
-          if (otherAttrs['default-y']) result.defaultY = parseFloat(otherAttrs['default-y']);
+          assignPosition(result, otherAttrs);
           if (otherAttrs['halign']) result.halign = otherAttrs['halign'];
           if (otherAttrs['print-object'] === 'no') result.printObject = false;
           if (otherAttrs['color']) result.color = otherAttrs['color'];
@@ -2527,9 +2560,10 @@ function parseDirectionTypes(elements: XmlChild[]): DirectionType[] {
       el.tagName === 'segno' || el.tagName === 'coda' || el.tagName === 'eyeglasses' ||
       el.tagName === 'damp' || el.tagName === 'damp-all'
     ) {
-      const markerColor = (el.attributes as Record<string, string>)['color'];
+      const markerAttrs = el.attributes as Record<string, string>;
       const result = { kind: el.tagName } as DirectionType;
-      if (markerColor) (result as { color?: string }).color = markerColor;
+      assignPosition(result as PositionTarget, markerAttrs);
+      if (markerAttrs['color']) (result as { color?: string }).color = markerAttrs['color'];
       results.push(result);
       continue;
     }
@@ -2581,18 +2615,22 @@ function parseDirectionTypes(elements: XmlChild[]): DirectionType[] {
           }
         }
       }
-      results.push({ kind: 'harp-pedals', pedalTunings: pedalTunings.length > 0 ? pedalTunings : undefined, color: harpColor });
+      const harpResult: DirectionType = { kind: 'harp-pedals', pedalTunings: pedalTunings.length > 0 ? pedalTunings : undefined, color: harpColor };
+      assignPosition(harpResult, el.attributes as Record<string, string>);
+      results.push(harpResult);
       continue;
     }
 
     // Image
     if (el.tagName === 'image') {
       const imgAttrs = el.attributes as Record<string, string>;
-      results.push({
+      const imgResult: DirectionType = {
         kind: 'image',
         source: imgAttrs['source'],
         type: imgAttrs['type'],
-      });
+      };
+      assignPosition(imgResult, imgAttrs);
+      results.push(imgResult);
       continue;
     }
 
@@ -2604,8 +2642,7 @@ function parseDirectionTypes(elements: XmlChild[]): DirectionType[] {
         const result: DirectionType = { kind: 'pedal', type: pedalType };
         if (pedalAttrs['line'] === 'yes') result.line = true;
         else if (pedalAttrs['line'] === 'no') result.line = false;
-        if (pedalAttrs['default-y']) result.defaultY = parseFloat(pedalAttrs['default-y']);
-        if (pedalAttrs['relative-x']) result.relativeX = parseFloat(pedalAttrs['relative-x']);
+        assignPosition(result, pedalAttrs);
         if (pedalAttrs['halign']) result.halign = pedalAttrs['halign'];
         if (pedalAttrs['color']) result.color = pedalAttrs['color'];
         results.push(result);
@@ -2620,6 +2657,7 @@ function parseDirectionTypes(elements: XmlChild[]): DirectionType[] {
       if (shiftType === 'up' || shiftType === 'down' || shiftType === 'stop') {
         const result: DirectionType = { kind: 'octave-shift', type: shiftType };
         if (shiftAttrs['size']) result.size = parseInt(shiftAttrs['size'], 10);
+        assignPosition(result, shiftAttrs);
         if (shiftAttrs['color']) result.color = shiftAttrs['color'];
         results.push(result);
       }
@@ -2706,7 +2744,7 @@ function parseBarline(elements: XmlChild[], attrs: Record<string, string>): Barl
         const endingContent = el.children;
         const endingText = extractText(endingContent);
         if (endingText) barline.ending.text = endingText;
-        if (endingAttrs['default-y']) barline.ending.defaultY = parseFloat(endingAttrs['default-y']);
+        assignPosition(barline.ending, endingAttrs);
         if (endingAttrs['end-length']) barline.ending.endLength = parseFloat(endingAttrs['end-length']);
         if (endingAttrs['color']) barline.ending.color = endingAttrs['color'];
       }
@@ -2883,7 +2921,7 @@ function parseHarmony(elements: XmlChild[], attrs: Record<string, string>): Harm
   } else if (attrs['print-frame'] === 'no') {
     harmony.printFrame = false;
   }
-  if (attrs['default-y']) harmony.defaultY = parseFloat(attrs['default-y']);
+  assignPosition(harmony, attrs);
   if (attrs['halign']) harmony.halign = attrs['halign'];
   if (attrs['font-size']) harmony.fontSize = attrs['font-size'];
   if (attrs['color']) harmony.color = attrs['color'];

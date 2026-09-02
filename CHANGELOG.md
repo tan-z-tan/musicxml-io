@@ -3,6 +3,13 @@
 ## [Unreleased]
 
 ### Added
+- **Full MusicXML `%position` support.** `default-x`, `default-y`, `relative-x` and `relative-y` now round-trip on every element the `Score` model represents that the MusicXML schema gives them to, so the layout a notation program baked into a file can be read back from the `Score` alone. The values stay the producer's raw tenths — `default-*` is the engraver's computed position, `relative-*` the user's offset from it. Newly carried through:
+  - Every `<direction-type>` child — dynamics, wedge, metronome, words, rehearsal, segno, coda, pedal, octave-shift, bracket, dashes, accordion-registration, eyeglasses, damp, damp-all, harp-pedals, image and other-direction. `<swing>` and `<scordatura>` have no position attributes in the schema; they declare the four keys as `undefined` so a `DirectionType` can be read without narrowing on `kind` first.
+  - `<notations>` children — tuplets, ties, slurs, articulations, ornaments (including `<wavy-line>`, `<tremolo>` and `<accidental-mark>`), technicals, fermatas, arpeggios and standalone `<accidental-mark>`.
+  - `<slur>` and `<tied>` also carry the full `%bezier` group. `<tied>` had no position or bezier attributes at all; `bezier-offset` and `bezier-offset2` are new on both (they are divisions, not tenths).
+  - `<lyric>`, `<harmony>`, `<accidental>` and `<ending>`.
+
+  A position attribute of `0` is now kept rather than dropped as falsy, and a non-numeric value is ignored instead of becoming `NaN` in the output.
 - **Full MusicXML `color` support.** The `color` attribute now round-trips on every element the `Score` model represents, not just `<accidental>` and `<words>`. Newly carried through:
   - Notes and their parts — `<note>`, `<type>`, `<dot>`, `<stem>`, `<notehead>`, `<beam>`.
   - Every `<notations>` child — ties, slurs, articulations, ornaments (including `<accidental-mark>`, `<wavy-line>`, `<tremolo>`), technicals, dynamics, fermatas, arpeggios, glissandi and slides. `<tuplet>` is the one notation element with no `color` attribute in the MusicXML schema, so a colour set there is not written out.
