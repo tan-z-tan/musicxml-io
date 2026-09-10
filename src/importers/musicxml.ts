@@ -1125,18 +1125,22 @@ function parseMeasure(elements: XmlChild[], attrs: Record<string, string>): Meas
   if (attrs['implicit'] === 'yes') measure.implicit = true;
 
   const barlines: Barline[] = [];
-  let hasSeenNote = false;
+  // Has the musical cursor moved past the measure start? A <note> or a
+  // <forward> before <attributes> makes those attributes mid-measure (Finale
+  // writes `<forward>` + `<attributes><clef>` for a clef change on a beat where
+  // this part has no note yet — Brahms op.91 sample m5).
+  let hasAdvanced = false;
 
   // Process elements in order - this is the key to maintaining order!
   for (const el of elements) {
     if (typeof el === 'string') continue;
     if (el.tagName === 'attributes') {
       const parsedAttrs = parseAttributes(el.children, el.attributes as Record<string, string>);
-      if (!hasSeenNote && !measure.attributes) {
-        // Only store in measure.attributes if no notes have appeared yet
+      if (!hasAdvanced && !measure.attributes) {
+        // Only store in measure.attributes if the cursor is still at the measure start
         measure.attributes = parsedAttrs;
       } else {
-        // Mid-measure attributes (after notes) go into entries
+        // Mid-measure attributes (after notes or a forward) go into entries
         const attrEntry: AttributesEntry = {
           _id: (el.attributes as Record<string, string>)['id'] || generateId(),
           type: 'attributes',
@@ -1145,11 +1149,12 @@ function parseMeasure(elements: XmlChild[], attrs: Record<string, string>): Meas
         measure.entries.push(attrEntry);
       }
     } else if (el.tagName === 'note') {
-      hasSeenNote = true;
+      hasAdvanced = true;
       measure.entries.push(parseNote(el.children, el.attributes as Record<string, string>));
     } else if (el.tagName === 'backup') {
       measure.entries.push(parseBackup(el.children));
     } else if (el.tagName === 'forward') {
+      hasAdvanced = true;
       measure.entries.push(parseForward(el.children, el.attributes as Record<string, string>));
     } else if (el.tagName === 'direction') {
       measure.entries.push(parseDirection(el.children, el.attributes as Record<string, string>));

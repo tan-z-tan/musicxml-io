@@ -194,6 +194,29 @@ describe('Parser', () => {
       expect(entryTypes).toEqual(['note', 'note', 'attributes', 'note', 'note']);
     });
 
+    it('should treat attributes after a <forward> as mid-measure (Finale clef change on a later beat)', () => {
+      // Finale writes `<forward>` + `<attributes><clef>` when a staff changes
+      // clef on a beat where this voice has no note yet (Brahms op.91 sample
+      // m5, piano RH → treble on beat 3). The cursor has moved, so the
+      // attributes are mid-measure — putting them in measure.attributes drew
+      // the new clef at the measure start.
+      const xml = `<?xml version="1.0"?><score-partwise version="4.0"><part-list><score-part id="P1"><part-name>P</part-name></score-part></part-list>
+<part id="P1"><measure number="1"><attributes><divisions>4</divisions><clef><sign>F</sign><line>4</line></clef></attributes>
+<forward><duration>8</duration></forward>
+<attributes><clef><sign>G</sign><line>2</line></clef></attributes>
+<note><pitch><step>C</step><octave>5</octave></pitch><duration>8</duration><voice>1</voice><type>half</type></note>
+</measure><measure number="2"><forward><duration>8</duration></forward><attributes><clef><sign>F</sign><line>4</line></clef></attributes>
+<note><pitch><step>C</step><octave>3</octave></pitch><duration>8</duration><voice>1</voice><type>half</type></note></measure></part></score-partwise>`;
+      const score = parse(xml);
+      const [m1, m2] = score.parts[0].measures;
+      expect(m1.attributes!.clef![0].sign).toBe('F');
+      expect(m1.entries.map(e => e.type)).toEqual(['forward', 'attributes', 'note']);
+      // No attributes before the forward: measure.attributes stays empty and
+      // the clef change is an entry after the forward.
+      expect(m2.attributes).toBeUndefined();
+      expect(m2.entries.map(e => e.type)).toEqual(['forward', 'attributes', 'note']);
+    });
+
     it('should keep attributes before notes in measure.attributes (42b measure 84)', () => {
       // 42b measure 84: <attributes> at start → notes → <attributes> mid-measure
       const xml = readFileSync(join(lilypondPath, '42b-MultiVoice-MidMeasureClefChange.xml'), 'utf-8');
