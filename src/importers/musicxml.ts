@@ -120,6 +120,8 @@ function decodeXmlEntities(s: string): string {
 // Shared attributes object for the (very common) attribute-less element.
 // The importer only ever reads attributes, so sharing is safe.
 const EMPTY_ATTRS: Record<string, string> = Object.freeze({});
+// Shared children array for self-closing elements (never pushed to).
+const EMPTY_CHILDREN: XmlChild[] = Object.freeze([]) as unknown as XmlChild[];
 
 // Character codes used by the scanner
 const GT = 62; // >
@@ -168,7 +170,10 @@ function parseXml(xml: string): XmlChild[] {
       // place and only allocate a substring for runs we actually keep.
       let whitespaceOnly = true;
       for (let i = pos; i < lt; i++) {
-        if (!isXmlWhitespace(xml.charCodeAt(i))) {
+        const ch = xml.charCodeAt(i);
+        // isXmlWhitespace(), inlined: this is the hottest loop in the scanner
+        // and parseXml is too large for V8 to inline the helper reliably.
+        if (ch !== 32 && ch !== 10 && ch !== 9 && ch !== 13) {
           whitespaceOnly = false;
           break;
         }
@@ -188,7 +193,20 @@ function parseXml(xml: string): XmlChild[] {
     const c = xml.charCodeAt(lt + 1);
 
     if (c === SLASH) {
-      // Closing tag: pop to the nearest matching ancestor (lenient)
+      // Closing tag. Fast path: in well-formed XML it closes the element on
+      // top of the stack, so compare the name in place instead of slicing it.
+      const top = stack.length > 0 ? stack[stack.length - 1] : undefined;
+      if (top !== undefined && xml.startsWith(top.tagName, lt + 2)) {
+        const after = lt + 2 + top.tagName.length;
+        if (xml.charCodeAt(after) === GT) {
+          stack.pop();
+          children = stack.length > 0 ? stack[stack.length - 1].children : root;
+          pos = after + 1;
+          continue;
+        }
+      }
+      // Slow path: pop to the nearest matching ancestor (lenient about
+      // unclosed/mismatched tags; stray closing tags are ignored).
       const gt = xml.indexOf('>', lt + 2);
       if (gt === -1) break;
       let end = gt;
@@ -196,7 +214,8 @@ function parseXml(xml: string): XmlChild[] {
       const name = xml.slice(lt + 2, end);
       for (let i = stack.length - 1; i >= 0; i--) {
         if (stack[i].tagName === name) {
-          stack.length = i;
+          // Array#pop is an order of magnitude faster than assigning length
+          while (stack.length > i) stack.pop();
           break;
         }
       }
@@ -292,9 +311,13 @@ function parseXml(xml: string): XmlChild[] {
         }
       }
 
-      const node: XmlNode = { tagName, attributes, children: [] };
-      children.push(node);
-      if (!selfClosing) {
+      if (selfClosing) {
+        // Self-closing elements (<chord/>, <dot/>, <tie .../>, ...) are very
+        // common in MusicXML; they never get children, so share one array.
+        children.push({ tagName, attributes, children: EMPTY_CHILDREN });
+      } else {
+        const node: XmlNode = { tagName, attributes, children: [] };
+        children.push(node);
         stack.push(node);
         children = node.children;
       }
@@ -332,19 +355,6 @@ export function parse(input: string | Uint8Array): Score {
   if (typeof input !== 'string') {
     // Buffer / Uint8Array: decode with BOM-based encoding detection
     xmlString = decodeXmlBytes(input);
-  } else if (input.includes('\x00')) {
-    // NUL bytes in a string mean the caller read a UTF-16 file without encoding detection
-    // (e.g. fs.readFileSync(path, 'binary')). Silently stripping NULs only works for
-    // ASCII content and corrupts non-ASCII characters (e.g. U+2019 → U+0019).
-    // The correct fix is to pass a Buffer or Uint8Array so the library can detect the
-    // BOM and decode properly.
-    throw new Error(
-      'parse() received a string containing NUL bytes, which indicates a UTF-16 encoded ' +
-      'MusicXML file was read without proper encoding detection. ' +
-      'Pass a Buffer or Uint8Array instead so the encoding is handled automatically:\n' +
-      '  parse(fs.readFileSync(path))          // Node.js\n' +
-      '  parse(new Uint8Array(arrayBuffer))    // Browser'
-    );
   } else {
     xmlString = input;
   }
@@ -352,7 +362,23 @@ export function parse(input: string | Uint8Array): Score {
   // Strip characters forbidden by XML 1.0 (e.g. control char U+0019 from
   // malformed sources) in one pass over the document. Entity references that
   // decode to forbidden characters are handled in decodeXmlEntities.
+  // NUL is part of that class, so the common (clean) case pays for a single
+  // scan of the document; the NUL diagnosis below only runs on a hit.
   if (INVALID_XML_CHARS_TEST.test(xmlString)) {
+    if (typeof input === 'string' && input.includes('\x00')) {
+      // NUL bytes in a string mean the caller read a UTF-16 file without encoding detection
+      // (e.g. fs.readFileSync(path, 'binary')). Silently stripping NULs only works for
+      // ASCII content and corrupts non-ASCII characters (e.g. U+2019 → U+0019).
+      // The correct fix is to pass a Buffer or Uint8Array so the library can detect the
+      // BOM and decode properly.
+      throw new Error(
+        'parse() received a string containing NUL bytes, which indicates a UTF-16 encoded ' +
+        'MusicXML file was read without proper encoding detection. ' +
+        'Pass a Buffer or Uint8Array instead so the encoding is handled automatically:\n' +
+        '  parse(fs.readFileSync(path))          // Node.js\n' +
+        '  parse(new Uint8Array(arrayBuffer))    // Browser'
+      );
+    }
     xmlString = xmlString.replace(INVALID_XML_CHARS_RE, '');
   }
   const parsed = parseXml(xmlString);

@@ -917,18 +917,15 @@ function serializeEntry(entry: MeasureEntry, indent: string, out: string[]): voi
 
 function serializeNote(note: NoteEntry, indent: string, out: string[]): void {
   // Build note attributes
-  const noteAttrs = buildAttrs({
-    'id': note._id,
-    'default-x': note.defaultX,
-    'default-y': note.defaultY,
-    'relative-x': note.relativeX,
-    'relative-y': note.relativeY,
-    'dynamics': note.dynamics,
-    'print-object': note.printObject === false ? false : undefined,
-    'print-dot': note.printDot !== undefined ? note.printDot : undefined,
-    'print-spacing': note.printSpacing,
-    'color': note.color,
-  });
+  // <note> is by far the most common element, so its attributes are built
+  // with plain concatenation instead of buildAttrs() (no temporary object).
+  let noteAttrs = note._id !== undefined ? ` id="${escapeXml(note._id)}"` : '';
+  noteAttrs += positionAttrs(note);
+  if (note.dynamics !== undefined) noteAttrs += ` dynamics="${note.dynamics}"`;
+  if (note.printObject === false) noteAttrs += ' print-object="no"';
+  if (note.printDot !== undefined) noteAttrs += ` print-dot="${note.printDot ? 'yes' : 'no'}"`;
+  if (note.printSpacing !== undefined) noteAttrs += ` print-spacing="${note.printSpacing ? 'yes' : 'no'}"`;
+  noteAttrs += colorAttr(note.color);
   out.push(`${indent}<note${noteAttrs}>`);
 
   // Grace note
@@ -1007,10 +1004,9 @@ function serializeNote(note: NoteEntry, indent: string, out: string[]): void {
 
   // Type
   if (note.noteType) {
-    const typeAttrs = buildAttrs({
-      'size': note.noteTypeSize,
-      'color': note.noteTypeColor,
-    });
+    const typeAttrs =
+      (note.noteTypeSize !== undefined ? ` size="${escapeXml(note.noteTypeSize)}"` : '') +
+      colorAttr(note.noteTypeColor);
     out.push(`${indent}  <type${typeAttrs}>${note.noteType}</type>`);
   }
 
@@ -1058,21 +1054,15 @@ function serializeNote(note: NoteEntry, indent: string, out: string[]): void {
 
   // Stem
   if (note.stem) {
-    const stemAttrs = buildAttrs({
-      'default-x': note.stem.defaultX,
-      'default-y': note.stem.defaultY,
-      'color': note.stem.color,
-    });
+    const stemAttrs = positionAttrs(note.stem) + colorAttr(note.stem.color);
     out.push(`${indent}  <stem${stemAttrs}>${note.stem.value}</stem>`);
   }
 
   // Notehead
   if (note.notehead) {
-    const nhAttrs = buildAttrs({
-      'filled': note.notehead.filled,
-      'parentheses': note.notehead.parentheses || undefined,
-      'color': note.notehead.color,
-    });
+    let nhAttrs = note.notehead.filled !== undefined ? ` filled="${note.notehead.filled ? 'yes' : 'no'}"` : '';
+    if (note.notehead.parentheses) nhAttrs += ' parentheses="yes"';
+    nhAttrs += colorAttr(note.notehead.color);
     out.push(`${indent}  <notehead${nhAttrs}>${note.notehead.value}</notehead>`);
   }
 
@@ -1918,12 +1908,14 @@ function positionAttrs(p: {
   relativeX?: number;
   relativeY?: number;
 }): string {
-  return buildAttrs({
-    'default-x': p.defaultX,
-    'default-y': p.defaultY,
-    'relative-x': p.relativeX,
-    'relative-y': p.relativeY,
-  });
+  // Written out by hand rather than via buildAttrs(): this runs for every
+  // notation / lyric / direction-type and the temporary object was measurable.
+  let result = '';
+  if (p.defaultX !== undefined) result += ` default-x="${p.defaultX}"`;
+  if (p.defaultY !== undefined) result += ` default-y="${p.defaultY}"`;
+  if (p.relativeX !== undefined) result += ` relative-x="${p.relativeX}"`;
+  if (p.relativeY !== undefined) result += ` relative-y="${p.relativeY}"`;
+  return result;
 }
 
 /**
@@ -1937,14 +1929,14 @@ function bezierAttrs(b: {
   bezierOffset?: number;
   bezierOffset2?: number;
 }): string {
-  return buildAttrs({
-    'bezier-x': b.bezierX,
-    'bezier-y': b.bezierY,
-    'bezier-x2': b.bezierX2,
-    'bezier-y2': b.bezierY2,
-    'bezier-offset': b.bezierOffset,
-    'bezier-offset2': b.bezierOffset2,
-  });
+  let result = '';
+  if (b.bezierX !== undefined) result += ` bezier-x="${b.bezierX}"`;
+  if (b.bezierY !== undefined) result += ` bezier-y="${b.bezierY}"`;
+  if (b.bezierX2 !== undefined) result += ` bezier-x2="${b.bezierX2}"`;
+  if (b.bezierY2 !== undefined) result += ` bezier-y2="${b.bezierY2}"`;
+  if (b.bezierOffset !== undefined) result += ` bezier-offset="${b.bezierOffset}"`;
+  if (b.bezierOffset2 !== undefined) result += ` bezier-offset2="${b.bezierOffset2}"`;
+  return result;
 }
 
 /**
