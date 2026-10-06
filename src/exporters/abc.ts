@@ -13,6 +13,7 @@ import type {
   Pitch,
   KeySignature,
   TimeSignature,
+  NoteType,
   Barline,
   Notation,
   MeasureEntry,
@@ -1222,8 +1223,30 @@ function serializeMeasureEntries(
   // Tuplet group tracking: how many notes remain in current tuplet group
   let tupletRemaining = 0;
 
+  // ABC beams adjacent notes, so notes that are not beamed together need a space
+  // between them. `prevEnd` is where the previous note's text ends in `parts`
+  // (-1 while a chord is still being collected), so the space goes before any
+  // decorations, chord symbols or grace notes of the next note.
+  let prev: NoteEntry | null = null;
+  let prevEnd = 0;
+
+  const flushChord = () => {
+    parts.push('[' + chordPitches.join('') + ']' + chordDurationStr + chordTieStr + chordSlurEnd);
+    if (prevEnd === -1) prevEnd = parts.length;
+    inChord = false;
+    chordHasIndividualDurations = false;
+    chordPitches = [];
+    chordDurationStr = '';
+    chordTieStr = '';
+    chordSlurStart = '';
+    chordSlurEnd = '';
+  };
+
   for (let ei = 0; ei < measure.entries.length; ei++) {
     const entry = measure.entries[ei];
+
+    // A chord ends at the first entry that is not one of its notes
+    if (inChord && !(entry.type === 'note' && entry.chord && !entry.grace)) flushChord();
 
     switch (entry.type) {
       case 'note': {
@@ -1280,17 +1303,8 @@ function serializeMeasureEntries(
           break;
         }
 
-        // If we were in a chord, flush it first
-        if (inChord) {
-          parts.push('[' + chordPitches.join('') + ']' + chordDurationStr + chordTieStr + chordSlurEnd);
-          inChord = false;
-          chordHasIndividualDurations = false;
-          chordPitches = [];
-          chordDurationStr = '';
-          chordTieStr = '';
-          chordSlurStart = '';
-          chordSlurEnd = '';
-        }
+        if (prev && breaksBeam(prev, note)) parts.splice(prevEnd, 0, ' ');
+        prev = note;
 
         // Handle lyrics (one entry per verse)
         if (note.lyrics && note.lyrics.length > 0 && opts.includeLyrics) {
@@ -1404,10 +1418,12 @@ function serializeMeasureEntries(
             if (insertIdx < parts.length) {
               parts.splice(insertIdx, 0, chordSlurStart);
               parts.push(tupletPrefix + effectiveSerialized.decorations);
+              prevEnd = -1;
               break;
             }
           }
           parts.push(tupletPrefix + chordSlurStart + effectiveSerialized.decorations);
+          prevEnd = -1;
           break;
         }
 
@@ -1432,6 +1448,7 @@ function serializeMeasureEntries(
             // Push note without slur start
             const noteOnly = effectiveSerialized.decorations + effectiveSerialized.pitch + effectiveSerialized.duration + effectiveSerialized.tieStr + effectiveSerialized.slurEnd;
             parts.push(tupletPrefix + noteOnly);
+            prevEnd = parts.length;
             break;
           }
         }
@@ -1461,10 +1478,13 @@ function serializeMeasureEntries(
           }
           parts.push(pitchStr2 + baseDurStr1 + tieStr2 + slurEnd2 + slurE1);
           ei = brokenResult.nextIndex; // Skip the second note
+          prev = note2;
+          prevEnd = parts.length;
           break;
         }
 
         parts.push(tupletPrefix + effectiveSerialized.full);
+        prevEnd = parts.length;
         break;
       }
 
@@ -1483,11 +1503,13 @@ function serializeMeasureEntries(
           // Intra-measure line break/continuation markers
           if (dt.text === '__abc_line_cont__') {
             parts.push('\\\n');
+            prev = null;
             handledAsSpecial = true;
             break;
           }
           if (dt.text === '__abc_line_break__') {
             parts.push('\n');
+            prev = null;
             handledAsSpecial = true;
             break;
           }
@@ -1496,6 +1518,7 @@ function serializeMeasureEntries(
             // The newline that follows comes from the line break token that
             // separates the field from the music line below it
             parts.push('\n' + dt.text.slice(ABC_BODY_FIELD_MARKER.length));
+            prev = null;
             handledAsSpecial = true;
             break;
           }
@@ -1527,10 +1550,12 @@ function serializeMeasureEntries(
       case 'backup':
         // Emit & overlay marker (go back to start of bar for voice overlay)
         parts.push(' & ');
+        prev = null;
         break;
 
       case 'forward':
         // Forward entries are time-advancing spacers, not directly represented in ABC
+        prev = null;
         break;
 
       default:
@@ -1539,13 +1564,30 @@ function serializeMeasureEntries(
   }
 
   // Flush any remaining chord
-  if (inChord && chordPitches.length > 0) {
-    parts.push('[' + chordPitches.join('') + ']' + chordDurationStr + chordTieStr + chordSlurEnd);
-  }
+  if (inChord && chordPitches.length > 0) flushChord();
 
   // Return updated unit note if it changed (from inline [L:] fields)
   const unitNoteChanged = currentUnitNote.num !== unitNote.num || currentUnitNote.den !== unitNote.den;
   return { noteStr: parts.join(''), lyrics, updatedUnitNote: unitNoteChanged ? currentUnitNote : undefined };
+}
+
+const BEAMABLE_TYPES = new Set<NoteType>(['eighth', '16th', '32nd', '64th', '128th', '256th', '512th', '1024th']);
+
+/**
+ * Whether to write a space between two consecutive notes. ABC beams adjacent
+ * eighth-or-shorter notes, so a space must separate notes that are not beamed
+ * together (per their `<beam>` elements; notes without them are unbeamed, as in
+ * MusicXML). A beam group is also set off from a neighbouring longer note.
+ */
+function breaksBeam(prev: NoteEntry, cur: NoteEntry): boolean {
+  if (prev.rest || cur.rest) return false;
+  const beamable = (n: NoteEntry) => n.noteType !== undefined && BEAMABLE_TYPES.has(n.noteType);
+  const p = prev.beam?.find(b => b.number === 1)?.type;
+  const c = cur.beam?.find(b => b.number === 1)?.type;
+  if (beamable(prev) && beamable(cur)) {
+    return !(p === 'begin' || p === 'continue' || c === 'continue' || c === 'end');
+  }
+  return p !== undefined || c !== undefined;
 }
 
 /**
