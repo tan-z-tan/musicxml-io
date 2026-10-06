@@ -1444,3 +1444,110 @@ describe('ABC → MusicXML → ABC round-trip', () => {
     });
   }
 });
+
+describe('ABC beaming', () => {
+  const tune = (body: string, meter = '4/4') => `X:1\nM:${meter}\nL:1/8\nK:C\n${body}\n`;
+  const bodyOf = (abc: string) => abc.split('\n').slice(4).join('\n').trim();
+
+  type Score = ReturnType<typeof parseAbc>;
+  /** Beams of every non-grace note, e.g. "1begin" / "1end,2backward hook" ("-" when unbeamed). */
+  function beamsOf(score: Score): string[] {
+    const out: string[] = [];
+    for (const part of score.parts) {
+      for (const measure of part.measures) {
+        for (const e of measure.entries) {
+          if (e.type !== 'note' || e.grace) continue;
+          out.push(e.beam?.map(b => b.number + b.type).join(',') || '-');
+        }
+      }
+    }
+    return out;
+  }
+
+  it('reads beam groups from note adjacency (issue #109)', () => {
+    const score = parseAbc(tune('CE GA/B/ c/B/A G/E/C|]'));
+    expect(beamsOf(score)).toEqual([
+      '1begin', '1end',
+      '1begin', '1continue,2begin', '1end,2end',
+      '1begin,2begin', '1continue,2end', '1end',
+      '1begin,2begin', '1continue,2end', '1end',
+    ]);
+  });
+
+  it('keeps the spaces that separate beam groups (issue #109)', () => {
+    const body = 'CE GA/B/ c/B/A G/E/C|]';
+    expect(bodyOf(serializeAbc(parseAbc(tune(body))))).toBe(body);
+  });
+
+  it('ends a beam at rests and at notes of a quarter or longer', () => {
+    expect(beamsOf(parseAbc(tune('ABz cd2ef|]')))).toEqual(['1begin', '1end', '-', '-', '-', '1begin', '1end']);
+  });
+
+  it('sets a beam group off from a neighbouring longer note', () => {
+    const body = 'EBBA B2 EB|AGF G3 A/B/|]';
+    expect(bodyOf(serializeAbc(parseAbc(tune(body))))).toBe(body);
+  });
+
+  it('leaves a single eighth unbeamed', () => {
+    expect(beamsOf(parseAbc(tune('A B c2 d4|]')))).toEqual(['-', '-', '-', '-']);
+  });
+
+  it('uses hooks for a lone shorter note', () => {
+    expect(beamsOf(parseAbc(tune('A3/2B/ A/B3/2 z4|]')))).toEqual([
+      '1begin', '1end,2backward hook', '1begin,2forward hook', '1end', '-',
+    ]);
+  });
+
+  it('beams chords, broken rhythm and tuplets', () => {
+    const body = '[CE][DF] [EG]A A>B c<d (3ABC (3DEF|]';
+    const score = parseAbc(tune(body));
+    expect(beamsOf(score).filter(b => b !== '-')).toEqual([
+      '1begin', '1end', '1begin', '1end',
+      '1begin', '1end,2backward hook', '1begin,2forward hook', '1end',
+      '1begin', '1continue', '1end', '1begin', '1continue', '1end',
+    ]);
+    expect(bodyOf(serializeAbc(score))).toBe(body);
+  });
+
+  it('does not break a beam across a grace note, decoration or chord symbol', () => {
+    const body = 'A{g}B "Am"c!p!d e/f/g/a/ b2|]';
+    const score = parseAbc(tune(body));
+    expect(beamsOf(score).slice(0, 4)).toEqual(['1begin', '1end', '1begin', '1end']);
+    expect(bodyOf(serializeAbc(score))).toBe(body);
+  });
+
+  it('puts the space before the slur or decoration of the next group', () => {
+    const body = 'AB (cd) !p!ef .ga|]';
+    expect(bodyOf(serializeAbc(parseAbc(tune(body))))).toBe(body);
+  });
+
+  it('keeps chord symbols after a chord in place', () => {
+    const body = '[CE]"G"A B|]';
+    expect(bodyOf(serializeAbc(parseAbc(tune(body))))).toBe(body);
+  });
+
+  it('keeps beams through ABC → MusicXML → ABC', () => {
+    const body = 'CE GA/B/ c/B/A G/E/C|]';
+    const abc = serializeAbc(parse(serialize(parseAbc(tune(body)))));
+    expect(bodyOf(abc)).toBe(body);
+  });
+
+  it('writes notes without beam information as unbeamed', () => {
+    const score = parseAbc(tune('ABcd|]'));
+    for (const e of score.parts[0].measures[0].entries) if (e.type === 'note') delete e.beam;
+    expect(bodyOf(serializeAbc(score))).toBe('A B c d|]');
+  });
+
+  it('gives a triplet eighth the type eighth', () => {
+    const notes = parseAbc(tune('(3ABC z(3z/A/B/|]')).parts[0].measures[0].entries.filter(e => e.type === 'note');
+    expect(notes.map(n => n.noteType)).toEqual(['eighth', 'eighth', 'eighth', 'eighth', '16th', '16th', '16th']);
+  });
+
+  it('round-trips the beams of every fixture', () => {
+    for (const file of readdirSync(fixturesPath).filter(f => f.endsWith('.abc'))) {
+      const first = parseAbc(readFixture(file));
+      const second = parseAbc(serializeAbc(first));
+      expect(beamsOf(second), file).toEqual(beamsOf(first));
+    }
+  });
+});

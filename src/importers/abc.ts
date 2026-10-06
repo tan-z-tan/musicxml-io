@@ -35,6 +35,7 @@ import type {
   DynamicsValue,
   Notation,
   Accidental,
+  BeamInfo,
 } from '../types';
 import { generateId } from '../id';
 import {
@@ -1675,6 +1676,15 @@ function buildMeasures(
   const lineBreaks: number[] = []; // measure numbers after which line breaks occur
   // Bar count of a multi-measure rest (Zn) awaiting attachment to its measure
   let pendingMultipleRest: number | null = null;
+  // ABC beams adjacent notes; whitespace (or a line break) between notes ends the beam
+  let beamBreak = false;
+  const beamBreakBefore = new WeakSet<NoteEntry>();
+
+  /** Record whether `entry` (a non-grace note or chord head) follows a beam break. */
+  function markBeamBreak(entry: NoteEntry) {
+    if (beamBreak) beamBreakBefore.add(entry);
+    beamBreak = false;
+  }
 
   function flushPendingPreNoteItems() {
     for (const item of pendingPreNoteItems) {
@@ -1697,6 +1707,7 @@ function buildMeasures(
       number: String(measureNumber),
       entries: currentEntries,
     };
+    assignAbcBeams(currentEntries, beamBreakBefore);
 
     // Add attributes to first measure
     if (isFirstMeasure) {
@@ -1836,6 +1847,7 @@ function buildMeasures(
         }
 
         if (!inGrace) {
+          markBeamBreak(entry);
           currentEntries.push(entry);
           currentPosition += entry.duration;
 
@@ -1958,6 +1970,7 @@ function buildMeasures(
               entry.notations.push({ type: 'tied', tiedType: 'start' });
             }
 
+            if (ci === 0 && !inGrace) markBeamBreak(entry);
             currentEntries.push(entry);
             if (ci === 0) {
               currentPosition += entry.duration;
@@ -2116,6 +2129,8 @@ function buildMeasures(
           }
         }
         pendingBrokenRhythm = token.value;
+        // A broken-rhythm pair stays beamed even when written `A > B`
+        beamBreak = false;
         break;
       }
 
@@ -2236,9 +2251,11 @@ function buildMeasures(
       }
 
       case 'space':
+        if (!pendingBrokenRhythm) beamBreak = true;
         break;
 
       case 'line_break': {
+        beamBreak = true;
         // Flush pending items before recording line break position
         flushPendingPreNoteItems();
         // Store intra-measure line breaks as direction entries for round-trip
@@ -2332,6 +2349,68 @@ function applyLyricsToNotes(targetNotes: NoteEntry[], syllables: string[], verse
 }
 
 
+/** Number of beams a note of this type carries (0 = not beamable). */
+const BEAM_LEVELS: Partial<Record<NoteType, number>> = {
+  eighth: 1, '16th': 2, '32nd': 3, '64th': 4, '128th': 5, '256th': 6, '512th': 7, '1024th': 8,
+};
+
+/**
+ * Give `<beam>` elements to the notes of one measure. In ABC, consecutive
+ * eighth-or-shorter notes written without whitespace between them form a beam
+ * group; a space, rest, longer note or voice change ends it.
+ */
+function assignAbcBeams(entries: MeasureEntry[], breakBefore: WeakSet<NoteEntry>) {
+  const groups: NoteEntry[][] = [];
+  let group: NoteEntry[] = [];
+  const close = () => {
+    if (group.length >= 2) groups.push(group);
+    group = [];
+  };
+  for (const e of entries) {
+    if (e.type === 'backup' || e.type === 'forward') {
+      close();
+      continue;
+    }
+    if (e.type !== 'note' || e.grace || e.chord) continue;
+    const level = e.rest || !e.noteType ? 0 : BEAM_LEVELS[e.noteType] ?? 0;
+    if (level === 0) {
+      close();
+      continue;
+    }
+    if (breakBefore.has(e)) close();
+    group.push(e);
+  }
+  close();
+
+  for (const g of groups) {
+    const levels = g.map((n) => BEAM_LEVELS[n.noteType!]!);
+    const beams: BeamInfo[][] = g.map(() => []);
+    const maxLevel = Math.max(...levels);
+    for (let lv = 1; lv <= maxLevel; lv++) {
+      for (let i = 0; i < g.length; ) {
+        if (levels[i] < lv) {
+          i++;
+          continue;
+        }
+        let j = i;
+        while (j + 1 < g.length && levels[j + 1] >= lv) j++;
+        if (i === j) {
+          // A lone shorter note gets a hook pointing into the group
+          beams[i].push({ number: lv, type: i === g.length - 1 ? 'backward hook' : 'forward hook' });
+        } else {
+          for (let k = i; k <= j; k++) {
+            beams[k].push({ number: lv, type: k === i ? 'begin' : k === j ? 'end' : 'continue' });
+          }
+        }
+        i = j + 1;
+      }
+    }
+    g.forEach((n, i) => {
+      n.beam = beams[i];
+    });
+  }
+}
+
 function applyTieStops(measures: Measure[]) {
   // Scan all notes: if a note has tie start, the next note with same pitch gets tie stop
   const allNotes: NoteEntry[] = [];
@@ -2393,7 +2472,8 @@ function createNoteEntry(
     }
   }
 
-  const { noteType, dots } = durationToNoteType(isGrace ? lengthToDuration(num, den, unitNote) : duration);
+  // A tuplet note keeps the type it is written as (a triplet eighth is an eighth)
+  const { noteType, dots } = durationToNoteType(lengthToDuration(num, den, unitNote));
 
   // A voice's octave= shift moves every written pitch by whole octaves
   const pitch = token.pitch && octaveShift !== 0
@@ -2468,7 +2548,8 @@ function createRestEntry(
     }
   }
 
-  const { noteType, dots } = durationToNoteType(duration);
+  // A tuplet rest keeps the type it is written as
+  const { noteType, dots } = durationToNoteType(isWholeMeasure ? duration : lengthToDuration(num, den, unitNote));
 
   const entry: NoteEntry = {
     _id: generateId(),
