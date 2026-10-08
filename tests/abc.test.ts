@@ -1543,6 +1543,12 @@ describe('ABC beaming', () => {
     expect(notes.map(n => n.noteType)).toEqual(['eighth', 'eighth', 'eighth', 'eighth', '16th', '16th', '16th']);
   });
 
+  it('does not write a broken rhythm across a beam break (issue #109)', () => {
+    for (const body of ['C/CC/ C>C|]', 'A3/2 B/ c|]']) {
+      expect(bodyOf(serializeAbc(parseAbc(tune(body))))).toBe(body);
+    }
+  });
+
   it('round-trips the beams of every fixture', () => {
     for (const file of readdirSync(fixturesPath).filter(f => f.endsWith('.abc'))) {
       const first = parseAbc(readFixture(file));

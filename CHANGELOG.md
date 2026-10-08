@@ -43,6 +43,7 @@
 - Bundle size: importing only `parse` now costs ~47 KB minified / ~13 KB gzipped (was ~49 KB / ~14 KB); the txml dependency is gone.
 
 ### Fixed
+- ABC: `serializeAbc` no longer pairs two notes into a broken rhythm (`>` / `<`) across a beam break. `C/CC/ C>C` came back as `C/CC<CC/`, losing the space and so the beam break; the dotted note and the short note on either side of a space are now written as plain durations ([#109](https://github.com/tan-z-tan/musicxml-io/issues/109)).
 - ABC beaming now survives a round-trip ([#109](https://github.com/tan-z-tan/musicxml-io/issues/109)). In ABC, adjacent eighth-or-shorter notes are beamed and a space breaks the beam; the parser ignored the spaces and the serializer wrote none, so `CE GA/B/ c/B/A G/E/C` came back as `CEGA/B/c/B/AG/E/C` — one long beam. `parseAbc` now gives notes `<beam>` elements (with hooks for a lone shorter note, e.g. the sixteenth of `A>B`), and `serializeAbc` writes a space wherever the `<beam>` elements say a beam ends, so beams from MusicXML input come out right too. Notes with no `<beam>` are unbeamed, as in MusicXML. A space is also kept between a beam group and a neighbouring longer note (`AGF G3`). ABC cannot beam only the first level across a space, so a broken secondary beam is not represented.
 - ABC tuplet notes now get the type they are written as: a triplet eighth (`(3ABC` with `L:1/8`) was typed as a sixteenth.
 - A chord symbol or annotation that follows a chord in ABC (`[CE]"G"A`) is no longer moved in front of the chord on serialize.

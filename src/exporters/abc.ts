@@ -1456,7 +1456,9 @@ function serializeMeasureEntries(
         // Detect broken rhythm: check if this note and the next note form a > or < pair
         // Broken rhythm: A>B means A is dotted (3/2), B is halved (1/2) of their common base
         const brokenResult = detectBrokenRhythm(measure.entries, ei, note, divisions, currentUnitNote);
-        if (brokenResult && !note.chord && !note.grace && !note.timeModification) {
+        // A>B is always beamed in ABC, so never pair two notes the score keeps apart
+        if (brokenResult && !note.chord && !note.grace && !note.timeModification
+          && !breaksBeam(note, brokenResult.nextNote)) {
           // Re-serialize this note with its base duration
           const baseDurStr1 = formatAbcDuration(brokenResult.baseFrac.num, brokenResult.baseFrac.den);
           const pitchStr1 = effectiveSerialized.pitch;
