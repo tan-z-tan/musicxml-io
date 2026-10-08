@@ -43,6 +43,9 @@
 - Bundle size: importing only `parse` now costs ~47 KB minified / ~13 KB gzipped (was ~49 KB / ~14 KB); the txml dependency is gone.
 
 ### Fixed
+- ABC mixolydian keys (`K:Amix`, `K:Dmix`, `K:Gmixolydian`) were read as minor — the mode lookup matched the `m` of "mix" first — giving the wrong key signature. Only the first three letters of a mode now count, as the standard specifies.
+- ABC chord symbols: the whole quoted text must now be a chord. `"Ending"`, `"Fine"` or `"D.C."` used to become an E, F or D chord; they are now annotations above the staff. Suffixes with no MusicXML kind (`m7b5`, `7sus4`, `add9`, `7#9`) are kept as `<kind text>` instead of being cut to the nearest known chord, and non-chord text such as `"N.C."` is no longer dropped.
+- ABC slurs survive a round-trip when they start on a grace note (`({d}e2)`), on the second note of a broken rhythm (`D>(B`), or end on its first note (`e)>e`). A dotted note followed by a chord (`D3/2[C/c/]`) is no longer written as a broken rhythm, which produced `D>C[c]`.
 - ABC tuplets: notes after a `(p:q:r` tuplet that covers fewer than `p` notes (`(3:2:2A2B2 c2`) are no longer pulled into it on serialize — the `r` is written out, read from new `<tuplet>` start/stop marks the parser now records. A chord now counts as one note of a tuplet (`(3[CEG]zz c4` used to leave `c4` inside the tuplet), and rests in a tuplet get their `<time-modification>` and are written at their pre-tuplet length (they came back shortened twice).
 - ABC header fields with a trailing comment (`M:6/8 %Meter`) are read correctly. The comment made the meter unreadable, so such tunes fell back to 4/4.
 - Added `scripts/abc-semantic-roundtrip.ts` and a test suite that compare ABC round-trips note by note (pitch, length, tuplets, ties, slurs, beams, decorations, lyrics, bars) instead of as whitespace-insensitive text, plus `tests/fixtures/abc-hard` with harder ABC 2.1 constructs.

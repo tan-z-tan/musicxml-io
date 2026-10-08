@@ -424,14 +424,11 @@ function parseKeySignature(keyStr: string): KeySignature {
 
   // Extract mode
   const remainder = trimmed.slice(keyMatch[0].length).trim().toLowerCase();
-  let mode = '';
-
-  for (const m of Object.keys(MODE_OFFSET)) {
-    if (m && remainder.startsWith(m)) {
-      mode = m;
-      break;
-    }
-  }
+  // Only the first three letters of a mode name count (ABC 2.1 §3.1.14), so
+  // "mix" must not be read as "m" (minor)
+  const word = remainder.match(/^[a-z]+/)?.[0] ?? '';
+  const abbrev = word === 'm' ? 'm' : word.slice(0, 3);
+  const mode = abbrev in MODE_OFFSET ? abbrev : '';
 
   // Get base fifths for the key note
   const baseFifths = KEY_FIFTHS[keyName];
@@ -2163,7 +2160,8 @@ function buildMeasures(
 
       case 'chord_symbol': {
         const harmony = createHarmonyEntry(token.value);
-        if (harmony) pendingPreNoteItems.push(harmony);
+        // Quoted text that is not a chord ("Ending") is shown above the staff
+        pendingPreNoteItems.push(harmony ?? createAnnotationDirection(token.value, '^'));
         break;
       }
 
@@ -2637,14 +2635,19 @@ function createBarline(barType: string, location: 'left' | 'right', endingNumber
   return barline;
 }
 
+/** Characters a chord-symbol suffix is made of (m7b5, maj9, 7sus4, dim, ø7, +, add9 ...). */
+const CHORD_SUFFIX = /^(?:m|min|maj|ma|M|dim|aug|sus|add|alt|omit|no|[0-9]|[b#+\-°øo^()])*$/;
+
 function createHarmonyEntry(chordStr: string): HarmonyEntry | null {
-  // Parse chord symbol like "Am", "G7", "Cmaj7", "F#m", "Bb"
-  const match = chordStr.match(/^([A-G])(#|b)?(min7|m7|maj7|M7|dim7|aug7|m6|m9|min|maj|dim|aug|sus4|sus2|add9|add11|add|7|9|11|13|6|m)?(\/([A-G](#|b)?))?/);
+  // Parse chord symbol like "Am", "G7", "Cmaj7", "F#m7b5/E". The whole text must
+  // be a chord: "Ending" is text, not an E chord.
+  const match = chordStr.match(/^([A-G])(#|b)?([^/]*)(\/([A-G](#|b)?))?$/);
   if (!match) return null;
+  const quality = match[3] || '';
+  if (!CHORD_SUFFIX.test(quality)) return null;
 
   const rootStep = match[1];
   const rootAlter = match[2] === '#' ? 1 : match[2] === 'b' ? -1 : undefined;
-  const quality = match[3] || '';
   const bassNote = match[5];
 
   let kind = 'major';
@@ -2663,6 +2666,8 @@ function createHarmonyEntry(chordStr: string): HarmonyEntry | null {
     case 'm9': kind = 'minor-ninth'; break;
     case 'sus4': kind = 'suspended-fourth'; break;
     case 'sus2': kind = 'suspended-second'; break;
+    case '': break;
+    default: kind = 'other'; break;
   }
 
   const entry: HarmonyEntry = {
@@ -2670,6 +2675,8 @@ function createHarmonyEntry(chordStr: string): HarmonyEntry | null {
     type: 'harmony',
     root: { rootStep, rootAlter: rootAlter !== undefined ? rootAlter : undefined },
     kind,
+    // Suffixes with no MusicXML kind (m7b5, 7#9, add9 ...) keep their spelling
+    ...(kind === 'other' ? { kindText: quality } : {}),
   };
 
   if (bassNote) {
