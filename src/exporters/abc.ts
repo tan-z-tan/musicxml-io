@@ -1321,12 +1321,15 @@ function serializeMeasureEntries(
 
         // Handle tuplet prefix - detect tuplet group start from timeModification
         let tupletPrefix = '';
-        if (note.timeModification && !note.chord && !note.grace && tupletRemaining <= 0) {
-          // Start of a new tuplet group
-          // Default group size is p (actualNotes), e.g. (3 means 3 notes in the time of 2
+        const startsTuplet = note.notations?.some(n => n.type === 'tuplet' && n.tupletType === 'start');
+        if (note.timeModification && !note.chord && !note.grace && (tupletRemaining <= 0 || startsTuplet)) {
+          // (p:q:r — p notes in the time of q, applied to the next r notes.
+          // Write only the parts ABC cannot infer.
           const p = note.timeModification.actualNotes;
-          tupletRemaining = p;
-          tupletPrefix = `(${p}`;
+          const q = note.timeModification.normalNotes;
+          const r = (startsTuplet ? tupletGroupSize(measure.entries, ei) : null) ?? p;
+          tupletRemaining = r;
+          tupletPrefix = r !== p ? `(${p}:${q}:${r}` : DEFAULT_TUPLET_Q[p] === q ? `(${p}` : `(${p}:${q}`;
         }
         if (note.timeModification && !note.chord && !note.grace) {
           tupletRemaining--;
@@ -1773,6 +1776,30 @@ interface SerializedNote {
   decorations: string;
 }
 
+/** Duration as written in ABC: a tuplet note is written at its pre-tuplet length. */
+function writtenDuration(note: NoteEntry): number {
+  const tm = note.timeModification;
+  return tm ? Math.round(note.duration * tm.actualNotes / tm.normalNotes) : note.duration;
+}
+
+/** `q` that ABC assumes for `(p` when the meter is simple (ABC 2.1 §4.13). */
+const DEFAULT_TUPLET_Q: Record<number, number> = { 2: 3, 3: 2, 4: 3, 6: 2, 8: 3 };
+
+/**
+ * Number of notes in the tuplet starting at `start`, read from its MusicXML
+ * `<tuplet>` start/stop marks. Null when the marks are missing.
+ */
+function tupletGroupSize(entries: MeasureEntry[], start: number): number | null {
+  let count = 0;
+  for (let i = start; i < entries.length; i++) {
+    const e = entries[i];
+    if (e.type !== 'note' || e.chord || e.grace) continue;
+    count++;
+    if (e.notations?.some(n => n.type === 'tuplet' && n.tupletType === 'stop')) return count;
+  }
+  return null;
+}
+
 function serializeNote(
   note: NoteEntry,
   divisions: number,
@@ -1790,7 +1817,7 @@ function serializeNote(
       // Check for invisible rest
       const isInvisible = note.printObject === false;
       pitchStr = isInvisible ? 'x' : 'z';
-      const { num, den } = durationToAbcFraction(note.duration, divisions, unitNote);
+      const { num, den } = durationToAbcFraction(writtenDuration(note), divisions, unitNote);
       durationStr = formatAbcDuration(num, den);
     }
   } else if (note.grace) {
@@ -1801,8 +1828,7 @@ function serializeNote(
     durationStr = '';
   } else if (note.pitch) {
     pitchStr = serializePitch(note.pitch, note.accidental?.value === 'natural');
-    const effectiveDuration = note.duration;
-    const { num, den } = durationToAbcFraction(effectiveDuration, divisions, unitNote);
+    const { num, den } = durationToAbcFraction(writtenDuration(note), divisions, unitNote);
     durationStr = formatAbcDuration(num, den);
   }
 
