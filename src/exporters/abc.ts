@@ -62,6 +62,25 @@ let openWedge: 'crescendo' | 'diminuendo' | null = null;
  * pitches, so writing ABC has to take it back out.
  */
 let voiceOctaveShift = 0;
+/**
+ * Accidentals implied at the current point of the measure: the key signature,
+ * overridden by accidentals already written in the bar. A note only needs an
+ * accidental when its pitch differs from what these imply (ABC 2.1 §4.2).
+ */
+let keyAlters: Partial<Record<Pitch['step'], number>> = {};
+let barAlters = new Map<string, number>();
+/** Pitch of the last note if it started a tie: the tied note keeps its accidental across the bar. */
+let tiedFrom: Pitch | null = null;
+
+const SHARP_ORDER: Pitch['step'][] = ['F', 'C', 'G', 'D', 'A', 'E', 'B'];
+
+/** Alteration each step gets from a key signature with `fifths` sharps (or flats). */
+function keyAltersFor(fifths: number): Partial<Record<Pitch['step'], number>> {
+  const alters: Partial<Record<Pitch['step'], number>> = {};
+  if (fifths > 0) for (const s of SHARP_ORDER.slice(0, fifths)) alters[s] = 1;
+  if (fifths < 0) for (const s of [...SHARP_ORDER].reverse().slice(0, -fifths)) alters[s] = -1;
+  return alters;
+}
 
 /** Map KeySignature fifths to ABC key note */
 const FIFTHS_TO_KEY_MAJOR: Record<number, string> = {
@@ -254,18 +273,22 @@ function serializeMicrotone(alter: number): string {
   return magnitude >= 1.5 ? symbol + symbol : symbol;
 }
 
-function serializePitch(pitch: Pitch, explicitNatural?: boolean): string {
+function serializePitch(pitch: Pitch, shownAccidental?: string): string {
   let result = '';
 
-  // Accidental
-  if (explicitNatural) {
-    result += '=';
-  } else if (pitch.alter !== undefined && pitch.alter !== 0) {
-    if (pitch.alter === 1) result += '^';
-    else if (pitch.alter === 2) result += '^^';
-    else if (pitch.alter === -1) result += '_';
-    else if (pitch.alter === -2) result += '__';
-    else result += serializeMicrotone(pitch.alter);
+  // Accidental: written when the score shows one, or when the key and the bar
+  // so far would otherwise imply a different pitch
+  const alter = pitch.alter ?? 0;
+  const barKey = `${pitch.step}${pitch.octave}`;
+  const implied = barAlters.get(barKey) ?? keyAlters[pitch.step] ?? 0;
+  if (shownAccidental || alter !== implied) {
+    if (alter === 0) result += '=';
+    else if (alter === 1) result += '^';
+    else if (alter === 2) result += '^^';
+    else if (alter === -1) result += '_';
+    else if (alter === -2) result += '__';
+    else result += serializeMicrotone(alter);
+    barAlters.set(barKey, alter);
   }
 
   // Note letter and octave, with the voice's octave= shift removed
@@ -682,6 +705,7 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
   for (let partIdx = 0; partIdx < score.parts.length; partIdx++) {
     const part = score.parts[partIdx];
     voiceOctaveShift = readVoiceOctaveShift(score, partIdx);
+    tiedFrom = null;
     const divisions = getPartDivisions(part);
     partDivisions.push(divisions);
     const measStrings: string[] = [];
@@ -697,6 +721,7 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
       const measure = part.measures[mi];
       const measDivisions = measure.attributes?.divisions ?? divisions;
       let measureStr = '';
+      const keyBefore = currentKey;
 
       // Detect inline key change
       if (mi > 0 && measure.attributes?.key) {
@@ -719,7 +744,9 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
       }
 
       // Entries
-      const { noteStr, updatedUnitNote } = serializeMeasureEntries(measure, measDivisions, currentUnitNote, opts);
+      // A mid-bar [K:] marker switches the key where it stands
+      const startKey = hasInlineKeyMarker(measure) ? keyBefore : currentKey;
+      const { noteStr, updatedUnitNote } = serializeMeasureEntries(measure, measDivisions, currentUnitNote, opts, startKey);
       if (updatedUnitNote) currentUnitNote = updatedUnitNote;
       const collapsed = applyMultiMeasureRest(measure, noteStr);
       for (let k = 1; k <= collapsed.absorbed; k++) absorbedMeasures.add(mi + k);
@@ -884,6 +911,7 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
 
       const divisions = partDivisions[partIdx];
       voiceOctaveShift = readVoiceOctaveShift(score, partIdx);
+      tiedFrom = null;
       const bodyResult = serializePartBody(part, divisions, unitNote, opts, lineBreaks, lyricsAfterAll, lyricsLineCounts, lyricsLineVerses);
 
       let musicLine = bodyResult.music;
@@ -999,6 +1027,7 @@ function serializePartBody(
     if (absorbedMeasures.has(mi)) continue;
     const measure = part.measures[mi];
     const measDivisions = measure.attributes?.divisions ?? divisions;
+    const keyBefore = currentKey;
 
     // Detect inline key change by comparing with previous key
     if (mi > 0 && measure.attributes?.key) {
@@ -1023,6 +1052,8 @@ function serializePartBody(
     // Serialize entries (pass mutable unitNote reference for inline L: tracking)
     const { noteStr, lyrics, updatedUnitNote } = serializeMeasureEntries(
       measure, measDivisions, unitNote, opts,
+      // A mid-bar [K:] marker switches the key where it stands
+      hasInlineKeyMarker(measure) ? keyBefore : currentKey,
     );
     // Update unitNote if inline [L:] changed it
     if (updatedUnitNote) {
@@ -1206,8 +1237,11 @@ function serializeMeasureEntries(
   divisions: number,
   unitNote: UnitNote,
   opts: Required<AbcSerializeOptions>,
+  startKey?: KeySignature,
 ): { noteStr: string; lyrics: Map<number, string[]>; updatedUnitNote?: UnitNote } {
   const parts: string[] = [];
+  keyAlters = keyAltersFor(startKey?.fifths ?? 0);
+  barAlters = new Map();
   // Syllables of this measure, keyed by verse number
   const lyrics = new Map<number, string[]>();
   // Mutable unit note for inline [L:] changes
@@ -1338,41 +1372,8 @@ function serializeMeasureEntries(
           tupletRemaining--;
         }
 
-        // For tuplet notes, compute the pre-tuplet duration for ABC output
-        let effectiveSerialized = serialized;
-        if (note.timeModification && note.pitch) {
-          // Undo the tuplet modification: ABC notation expects the base duration
-          // with the (p prefix handling the modification
-          const baseDuration = Math.round(note.duration * note.timeModification.actualNotes / note.timeModification.normalNotes);
-          const { num, den } = durationToAbcFraction(baseDuration, divisions, currentUnitNote);
-          const baseDurationStr = formatAbcDuration(num, den);
-          const pitchStr = serializePitch(note.pitch, note.accidental?.value === 'natural');
-          // Rebuild serialized with base duration
-          let tieStr = '';
-          if (note.tie?.type === 'start' || note.ties?.some(t => t.type === 'start')) {
-            tieStr = '-';
-          }
-          let slurStart = '';
-          let slurEnd = '';
-          if (note.notations) {
-            for (const notation of note.notations) {
-              if (notation.type === 'slur') {
-                if (notation.slurType === 'start') slurStart += notation.lineType === 'dotted' ? '.(' : '(';
-                if (notation.slurType === 'stop') slurEnd += ')';
-              }
-            }
-          }
-          const decorations = serializeNoteDecorations(note);
-          effectiveSerialized = {
-            full: slurStart + decorations + pitchStr + baseDurationStr + tieStr + slurEnd,
-            pitch: pitchStr,
-            duration: baseDurationStr,
-            slurStart,
-            slurEnd,
-            tieStr,
-            decorations,
-          };
-        }
+        // serializeNote already writes a tuplet note at its pre-tuplet length
+        const effectiveSerialized = serialized;
 
         // Check if next entry is a chord note (this note starts a chord)
         const nextEntry = ei + 1 < measure.entries.length ? measure.entries[ei + 1] : null;
@@ -1475,7 +1476,7 @@ function serializeMeasureEntries(
 
           // Serialize the second note with its base duration
           const note2 = brokenResult.nextNote;
-          const pitchStr2 = serializeNoteDecorations(note2) + serializePitch(note2.pitch!, note2.accidental?.value === 'natural');
+          const pitchStr2 = serializeNoteDecorations(note2) + serializePitch(note2.pitch!, note2.accidental?.value);
           let tieStr2 = '';
           if (note2.tie?.type === 'start' || note2.ties?.some(t => t.type === 'start')) tieStr2 = '-';
           let slurEnd2 = '';
@@ -1535,6 +1536,9 @@ function serializeMeasureEntries(
           const inlineField = dt.text.match(/^\[([A-Za-z]):([^\]]*)\]$/);
           if (inlineField) {
             parts.push(dt.text);
+            if (inlineField[1] === 'K' && measure.attributes?.key && /^\s*([A-Ga-g]|none\b)/i.test(inlineField[2])) {
+              keyAlters = keyAltersFor(measure.attributes.key.fifths);
+            }
             if (inlineField[1] === 'L') {
               const lMatch = inlineField[2].trim().match(/^(\d+)\/(\d+)$/);
               if (lMatch) {
@@ -1830,11 +1834,14 @@ function serializeNote(
   } else if (note.grace) {
     // Grace notes - pitch only (grouping handled in serializeMeasureEntries)
     if (note.pitch) {
-      pitchStr = serializePitch(note.pitch, note.accidental?.value === 'natural');
+      pitchStr = serializePitch(note.pitch, note.accidental?.value);
     }
     durationStr = '';
   } else if (note.pitch) {
-    pitchStr = serializePitch(note.pitch, note.accidental?.value === 'natural');
+    if (tiedFrom && !note.chord && tiedFrom.step === note.pitch.step && tiedFrom.octave === note.pitch.octave) {
+      barAlters.set(`${note.pitch.step}${note.pitch.octave}`, tiedFrom.alter ?? 0);
+    }
+    pitchStr = serializePitch(note.pitch, note.accidental?.value);
     const { num, den } = durationToAbcFraction(writtenDuration(note), divisions, unitNote);
     durationStr = formatAbcDuration(num, den);
   }
@@ -1844,6 +1851,7 @@ function serializeNote(
   if (note.tie?.type === 'start' || note.ties?.some(t => t.type === 'start')) {
     tieStr = '-';
   }
+  if (!note.chord && !note.grace) tiedFrom = tieStr && note.pitch ? note.pitch : null;
 
   // Slur handling: we track slur start/stop via notations
   let slurStart = '';

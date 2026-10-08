@@ -1624,3 +1624,38 @@ describe('ABC key modes', () => {
   });
 });
 
+
+describe('ABC key signature and bar accidentals', () => {
+  const pitches = (abc: string) => parseAbc(abc).parts[0].measures.map(m =>
+    m.entries.filter(e => e.type === 'note' && (e as any).pitch).map((e: any) => `${e.pitch.step}${e.pitch.alter ?? ''}${e.pitch.octave}`).join(' '));
+
+  it('applies the key signature to notes written without an accidental', () => {
+    expect(pitches('X:1\nL:1/4\nK:D\nF c f C|\n')).toEqual(['F14 C15 F15 C14']);
+    expect(pitches('X:1\nL:1/4\nK:Bb\nB E e A|\n')).toEqual(['B-14 E-14 E-15 A4']);
+  });
+
+  it('carries an accidental to the end of the bar, for that octave only', () => {
+    expect(pitches('X:1\nL:1/4\nK:C\n^G G g =G|G4|\n')).toEqual(['G14 G14 G5 G4', 'G4']);
+  });
+
+  it('keeps the accidental of a note tied across the bar line', () => {
+    expect(pitches('X:1\nL:1/4\nK:C\nz2 ^F2-|F2 F2|\n')).toEqual(['F14', 'F14 F4']);
+  });
+
+  it('switches key at an inline [K:]', () => {
+    expect(pitches('X:1\nL:1/4\nK:C\nF2 [K:G] F2|\n')).toEqual(['F4 F14']);
+  });
+
+  it('writes only the accidentals the key and bar do not already imply', () => {
+    for (const body of ['F c =f ^gg2|', '=f2-f2|', 'B_B B2=B2|']) {
+      const abc = `X:1\nL:1/8\nK:D\n${body}\n`;
+      expect(serializeAbc(parseAbc(abc)).split('\n').slice(3).join('').trim()).toBe(body);
+    }
+  });
+
+  it('gives MusicXML the sounding pitch', () => {
+    const xml = serialize(parseAbc('X:1\nL:1/4\nK:G\nF4|\n'));
+    expect(xml).toMatch(/<step>F<\/step>\s*<alter>1<\/alter>/);
+    expect(xml).not.toContain('<accidental');
+  });
+});

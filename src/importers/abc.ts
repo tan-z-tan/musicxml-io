@@ -1265,6 +1265,16 @@ function parseMicrotoneFactor(line: string, i: number): { factor: number; nextIn
   return { factor: num / den, nextIndex: i + match[0].length };
 }
 
+const SHARP_ORDER: Pitch['step'][] = ['F', 'C', 'G', 'D', 'A', 'E', 'B'];
+
+/** Alteration each step gets from a key signature with `fifths` sharps (or flats). */
+function keyAltersFor(fifths: number): Partial<Record<Pitch['step'], number>> {
+  const alters: Partial<Record<Pitch['step'], number>> = {};
+  if (fifths > 0) for (const s of SHARP_ORDER.slice(0, fifths)) alters[s] = 1;
+  if (fifths < 0) for (const s of [...SHARP_ORDER].reverse().slice(0, -fifths)) alters[s] = -1;
+  return alters;
+}
+
 function abcNoteToPitch(letter: string, accidental: number): Pitch {
   const isLower = letter === letter.toLowerCase();
   const step = letter.toUpperCase() as Pitch['step'];
@@ -1682,6 +1692,31 @@ function buildMeasures(
   const lineBreaks: number[] = []; // measure numbers after which line breaks occur
   // Bar count of a multi-measure rest (Zn) awaiting attachment to its measure
   let pendingMultipleRest: number | null = null;
+  // Pitch spelling state: the key signature and accidentals written earlier in
+  // the bar both apply to a note written without an accidental (ABC 2.1 §4.2)
+  let keyAlters = keyAltersFor(keySignature.fifths);
+  let barAlters = new Map<string, number>();
+  // Pitch of the last note if it started a tie: the tied note keeps its accidental across the bar
+  let tiedFrom: Pitch | null = null;
+
+  /** Give `entry` the sounding pitch its written note implies. */
+  function applyAccidentals(entry: NoteEntry, token: AbcToken) {
+    const p = entry.pitch;
+    if (!p) return;
+    const key = `${p.step}${p.octave}`;
+    let alter: number;
+    if (token.accidental !== undefined || token.explicitNatural) {
+      alter = p.alter ?? 0;
+      barAlters.set(key, alter);
+    } else if (tiedFrom && tiedFrom.step === p.step && tiedFrom.octave === p.octave) {
+      alter = tiedFrom.alter ?? 0;
+    } else {
+      alter = barAlters.get(key) ?? keyAlters[p.step] ?? 0;
+    }
+    entry.pitch = { ...p, alter: alter !== 0 ? alter : undefined };
+    if (entry.pitch.alter === undefined) delete entry.pitch.alter;
+  }
+
   // ABC beams adjacent notes; whitespace (or a line break) between notes ends the beam
   let beamBreak = false;
   const beamBreakBefore = new WeakSet<NoteEntry>();
@@ -1783,6 +1818,7 @@ function buildMeasures(
     }
 
     measures.push(measure);
+    barAlters = new Map();
     currentEntries = [];
     currentBarlines = [];
     currentPosition = 0;
@@ -1800,6 +1836,8 @@ function buildMeasures(
         }
 
         const entry = createNoteEntry(token, currentUnitNote, pendingTie, inGrace, tupletState, graceSlash, octaveShift);
+        applyAccidentals(entry, token);
+        if (!inGrace) tiedFrom = null;
         pendingTie = false;
         attachPendingNotations(entry);
 
@@ -1950,6 +1988,7 @@ function buildMeasures(
             const entry = chordToken.type === 'rest'
               ? createRestEntry(chordToken, currentUnitNote, tupletState, measureDuration)
               : createNoteEntry(chordToken, currentUnitNote, false, inGrace, tupletState, graceSlash, octaveShift);
+            if (entry.pitch) applyAccidentals(entry, chordToken);
 
             // Restore for any other processing
             chordToken.durationNum = originalNum;
@@ -2080,6 +2119,7 @@ function buildMeasures(
           for (let ei = currentEntries.length - 1; ei >= 0; ei--) {
             const e = currentEntries[ei];
             if (e.type === 'note' && !e.rest) {
+              tiedFrom = e.pitch ?? null;
               e.tie = { type: 'start' };
               e.ties = [{ type: 'start' }];
               if (!e.notations) e.notations = [];
@@ -2247,6 +2287,8 @@ function buildMeasures(
         // K: is a key change - attached to the measure it opens
         if (field === 'K') {
           pendingKeyChange = `K:${rawValue}`;
+          // Notes after the change are spelled in the new key ("K:clef=bass" keeps the key)
+          if (/^\s*([A-Ga-g]|none\b)/i.test(rawValue)) keyAlters = keyAltersFor(parseKeySignature(rawValue).fifths);
           break;
         }
 
