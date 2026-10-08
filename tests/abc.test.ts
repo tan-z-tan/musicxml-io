@@ -1557,3 +1557,30 @@ describe('ABC beaming', () => {
     }
   });
 });
+
+describe('ABC tuplets and header comments', () => {
+  const tune = (body: string, meter = '4/4') => `X:1\nM:${meter}\nL:1/8\nK:C\n${body}\n`;
+  const notes = (abc: string) => parseAbc(abc).parts[0].measures[0].entries.filter(e => e.type === 'note' && !e.chord) as any[];
+
+  it('counts a chord as one note of a tuplet', () => {
+    const n = notes(tune('(3[CEG]zz c4|]'));
+    expect(n.map(e => !!e.timeModification)).toEqual([true, true, true, false]);
+  });
+
+  it('gives tuplet rests their time modification', () => {
+    const n = notes(tune('(3zAB c6|]'));
+    expect(n[0].timeModification).toEqual({ actualNotes: 3, normalNotes: 2 });
+    expect(n[0].duration).toBe(n[1].duration);
+  });
+
+  it('writes (p:q:r when the tuplet covers fewer notes than p', () => {
+    const out = serializeAbc(parseAbc(tune('(3:2:2A2B2 c2 z2|]')));
+    expect(out).toContain('(3:2:2A2B2');
+    expect(notes(out).map(e => !!e.timeModification)).toEqual([true, true, false, false]);
+  });
+
+  it('ignores a trailing comment on a header field', () => {
+    const s = parseAbc('X:1\nM:6/8     %Meter\nL:1/8     %\nK:Em\nABc def|]\n');
+    expect(s.parts[0].measures[0].attributes?.time).toMatchObject({ beats: '6', beatType: 8 });
+  });
+});

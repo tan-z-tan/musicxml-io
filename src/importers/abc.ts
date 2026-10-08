@@ -224,6 +224,12 @@ function appendToHeaderField(header: AbcHeader, field: string, text: string) {
   }
 }
 
+/** Drop an end-of-line `%` comment; `\%` is a literal percent sign. */
+function stripAbcComment(text: string): string {
+  const m = text.match(/(^|[^\\])%/);
+  return m ? text.slice(0, m.index! + m[1].length).trimEnd() : text;
+}
+
 function parseHeader(lines: string[]): { header: AbcHeader; bodyStartIndex: number; headerFieldOrder: string[] } {
   const header: AbcHeader = { voices: [], extraFields: [], directives: [] };
   let bodyStartIndex = 0;
@@ -283,7 +289,8 @@ function parseHeader(lines: string[]): { header: AbcHeader; bodyStartIndex: numb
     const postKFields = new Set(['I', 'N']);
     if (fieldMatch && (!foundKey || fieldMatch[1] === 'V' || (foundKey && postKFields.has(fieldMatch[1])))) {
       const [, field, rawFieldValue] = fieldMatch;
-      const value = rawFieldValue.trimStart();
+      // A trailing "%..." is a comment (M:6/8 %Meter); the raw line keeps it for round-trip
+      const value = stripAbcComment(rawFieldValue).trimStart();
       lastField = field;
       // If we're after K: and this is a post-K: header field (I:, N:)
       if (foundKey && field !== 'V') {
@@ -1652,7 +1659,9 @@ function buildMeasures(
   let slurStartNotes: NoteEntry[] = [];
   let inGrace = false;
   let pendingBrokenRhythm: string | null = null;
-  let tupletState: { p: number; q: number; remaining: number } | null = null;
+  let tupletState: { p: number; q: number; remaining: number; total: number } | null = null;
+  // Head note of the chord being built, so the chord counts once toward a tuplet
+  let chordHead: NoteEntry | null = null;
   // Queue preserving the original order of chord symbols, annotations and
   // decorations that become <direction> entries ahead of the note they precede
   const pendingPreNoteItems: MeasureEntry[] = [];
@@ -1684,6 +1693,21 @@ function buildMeasures(
   function markBeamBreak(entry: NoteEntry) {
     if (beamBreak) beamBreakBefore.add(entry);
     beamBreak = false;
+  }
+
+  /** Count a note (or chord head) against the open tuplet and mark where the group starts and ends. */
+  function advanceTuplet(entry: NoteEntry) {
+    if (!tupletState) return;
+    if (tupletState.remaining === tupletState.total) {
+      if (!entry.notations) entry.notations = [];
+      entry.notations.push({ type: 'tuplet', tupletType: 'start' });
+    }
+    tupletState.remaining--;
+    if (tupletState.remaining <= 0) {
+      if (!entry.notations) entry.notations = [];
+      entry.notations.push({ type: 'tuplet', tupletType: 'stop' });
+      tupletState = null;
+    }
   }
 
   function flushPendingPreNoteItems() {
@@ -1851,13 +1875,7 @@ function buildMeasures(
           currentEntries.push(entry);
           currentPosition += entry.duration;
 
-          // Update tuplet state
-          if (tupletState) {
-            tupletState.remaining--;
-            if (tupletState.remaining <= 0) {
-              tupletState = null;
-            }
-          }
+          advanceTuplet(entry);
         } else {
           currentEntries.push(entry);
         }
@@ -1891,12 +1909,7 @@ function buildMeasures(
           }
         }
 
-        if (tupletState) {
-          tupletState.remaining--;
-          if (tupletState.remaining <= 0) {
-            tupletState = null;
-          }
-        }
+        advanceTuplet(restEntry);
         break;
       }
 
@@ -1974,10 +1987,14 @@ function buildMeasures(
             currentEntries.push(entry);
             if (ci === 0) {
               currentPosition += entry.duration;
+              if (!inGrace) chordHead = entry;
             }
           }
         }
         chordNotes = [];
+        // A chord counts as one note of a tuplet
+        if (chordHead) advanceTuplet(chordHead);
+        chordHead = null;
         break;
       }
 
@@ -2139,6 +2156,7 @@ function buildMeasures(
           p: token.tupletP!,
           q: token.tupletQ!,
           remaining: token.tupletR || token.tupletP!,
+          total: token.tupletR || token.tupletP!,
         };
         pendingTupletStart = true;
         break;
@@ -2560,6 +2578,10 @@ function createRestEntry(
     noteType,
     dots: dots > 0 ? dots : undefined,
   };
+
+  if (tupletState && !isWholeMeasure) {
+    entry.timeModification = { actualNotes: tupletState.p, normalNotes: tupletState.q };
+  }
 
   if (isInvisible) {
     entry.printObject = false;
