@@ -507,6 +507,8 @@ function serializeTempo(direction: DirectionEntry): string | null {
       const quarterLen = NOTE_TYPE_TO_QUARTER_LENGTH[beatUnit] ?? 1;
       const den = Math.round(4 / quarterLen);
 
+      // A dotted beat unit is three of the next shorter value: 3/8 for a dotted quarter
+      if (dt.beatUnitDot) return `3/${den * 2}=${perMinute}`;
       return `1/${den}=${perMinute}`;
     }
   }
@@ -1056,7 +1058,9 @@ function serializePartBody(
           (newKey.mode || 'major') !== (currentKey.mode || 'major')) {
         // An inline [K:...] marker already writes the change in place
         if (!hasInlineKeyMarker(measure)) {
-          musicParts.push('\nK:' + serializeKey(newKey) + '\n');
+          // Own line, but never a blank line before it: that would end the tune
+          const atLineStart = musicParts.length === 0 || musicParts[musicParts.length - 1].endsWith('\n');
+          musicParts.push((atLineStart ? '' : '\n') + 'K:' + serializeKey(newKey) + '\n');
         }
         currentKey = newKey;
       }

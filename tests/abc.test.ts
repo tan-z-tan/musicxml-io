@@ -1659,3 +1659,65 @@ describe('ABC key signature and bar accidentals', () => {
     expect(xml).not.toContain('<accidental');
   });
 });
+
+describe('ABC 2.1 features (spec review)', () => {
+  const notes = (abc: string) => parseAbc(abc).parts[0].measures.flatMap(m => m.entries.filter(e => e.type === 'note')) as any[];
+
+  it('reads lyric symbols: _ holds, * skips, ~ joins, \\- is a hyphen, | jumps to the next bar', () => {
+    const n = notes('X:1\nL:1/4\nK:C\nC D E F|G A B c|c4|\nw: a_ * b~c d\\-e | f\n');
+    expect(n.map(x => x.lyrics?.[0]?.text ?? '-')).toEqual(['a', '-', '-', 'b c', 'd-e', '-', '-', '-', 'f']);
+    expect(n[0].lyrics[0].extend).toBe(true);
+  });
+
+  it('starts the next w: line after the last note the previous one reached', () => {
+    const n = notes('X:1\nL:1/4\nK:C\nC D E F|\nw: a * * *\nG A B c|\nw: b\n');
+    expect(n.map(x => x.lyrics?.[0]?.text ?? '-')).toEqual(['a', '-', '-', '-', 'b', '-', '-', '-']);
+  });
+
+  it('decodes text escapes in titles, lyrics and annotations', () => {
+    const s = parseAbc('X:1\nT:Caf\\\'e \\"uber Stra\\sse &eacute;t\\u00e9\nL:1/4\nK:C\n"^Fran\\cc ais"C|\nw:\\\'el\\`eve\n');
+    expect(s.metadata.movementTitle).toBe('Café über Straße été');
+    const e = s.parts[0].measures[0].entries as any[];
+    expect(e.find(x => x.type === 'direction').directionTypes[0].text).toBe('Franç ais');
+    expect(e.find(x => x.type === 'note').lyrics[0].text).toBe('élève');
+  });
+
+  it('applies a chord length on top of the notes\' own lengths', () => {
+    expect(notes('X:1\nL:1/8\nK:C\n[C2E]2 [C/E/]4|\n').map(n => n.duration)).toEqual([1920, 960, 960, 960]);
+  });
+
+  it('applies a broken rhythm to every note of a chord', () => {
+    expect(notes('X:1\nL:1/8\nK:C\n[CE]>[DF] z6|\n').map(n => n.duration)).toEqual([720, 720, 240, 240, 2880]);
+  });
+
+  it('K: without a tonic changes the clef, not the key', () => {
+    const m = parseAbc('X:1\nL:1/4\nK:G\nF2 [K:clef=bass] F2|\n').parts[0].measures[0];
+    expect(m.attributes?.key?.fifths).toBe(1);
+    expect(m.attributes?.clef?.[0]).toMatchObject({ sign: 'F', line: 4 });
+    expect(parseAbc('X:1\nK:bass\nC|\n').parts[0].measures[0].attributes).toMatchObject({ key: { fifths: 0 }, clef: [{ sign: 'F' }] });
+  });
+
+  it('gives tunes the M:/L: of the file header', () => {
+    const tunes = parseAbcTunes('M:6/8\nL:1/4\n\nX:1\nT:a\nK:G\nGAB|\n\nX:2\nT:b\nK:D\nDEF|\n');
+    for (const t of tunes) {
+      expect(t.parts[0].measures[0].attributes?.time).toMatchObject({ beats: '6', beatType: 8 });
+      expect((t.parts[0].measures[0].entries.find(e => e.type === 'note') as any).duration).toBe(960);
+    }
+  });
+
+  it('expands U: user-defined symbols', () => {
+    const n = notes('X:1\nL:1/4\nU:W=!accent!\nK:C\nWA B|\n');
+    expect(n[0].notations?.some((x: any) => x.type === 'articulation' && x.articulation === 'accent')).toBe(true);
+  });
+
+  it('reads a dotted tempo beat unit (Q:3/8=60)', () => {
+    const d = parseAbc('X:1\nL:1/8\nQ:3/8=60\nK:C\nCDE|\n').parts[0].measures[0].entries[0] as any;
+    expect(d.directionTypes[0]).toMatchObject({ beatUnit: 'quarter', beatUnitDot: true, perMinute: 60 });
+    expect(d.sound.tempo).toBe(90);
+  });
+
+  it('never writes a blank line before a body K: field', () => {
+    const out = serializeAbc(parseAbc('X:1\nL:1/4\nK:G\nGABc|\nK:D\nDEFG|\n'));
+    expect(out).not.toMatch(/\n\nK:/);
+  });
+});

@@ -905,6 +905,23 @@ function parseLyricLine(text: string): string[] {
   return out.map(t => (t.length > 1 || !'*_-|'.includes(t) ? decodeAbcText(t) : t));
 }
 
+/**
+ * Symbols redefined by U: fields of the tune being parsed (letter → decoration
+ * name, '' for `!nil!`). Set by parseTune before the body is tokenized.
+ */
+let userSymbols = new Map<string, string>();
+
+/** Read `U:W=!wedge!` style definitions. Only H-W, h-w and ~ may be redefined. */
+function readUserSymbols(fields: { field: string; value: string }[]): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const { field, value } of fields) {
+    if (field !== 'U') continue;
+    const m = value.match(/^\s*([H-Wh-w~])\s*=\s*[!+]([^!+]*)[!+]/);
+    if (m) map.set(m[1], m[2] === 'nil' || m[2] === 'none' ? '' : m[2]);
+  }
+  return map;
+}
+
 function tokenizeMusicLine(line: string): AbcToken[] {
   const tokens: AbcToken[] = [];
   let i = 0;
@@ -1090,6 +1107,14 @@ function tokenizeMusicLine(line: string): AbcToken[] {
       const dur = parseDuration(line, i);
       i = dur.nextIndex;
       tokens.push({ type: 'chord_end', value: ']', durationNum: dur.num, durationDen: dur.den });
+      continue;
+    }
+
+    // Symbol defined with U: (U:W=!wedge!) stands for its decoration
+    const userSymbol = userSymbols.get(ch);
+    if (userSymbol !== undefined) {
+      if (userSymbol !== '') tokens.push({ type: 'decoration', value: userSymbol });
+      i++;
       continue;
     }
 
@@ -1637,21 +1662,27 @@ function parseTempoToDirection(tempoStr: string): DirectionEntry | null {
 
   const perMinute = parseInt(withUnit ? withUnit[3] : rateOnly![0], 10);
   let beatUnit: NoteType = 'quarter';
+  let beatUnitDot = false;
+  // <sound tempo> is always in quarter notes per minute
+  let quarterNotes = 1;
 
   if (withUnit) {
     const num = parseInt(withUnit[1], 10);
     const den = parseInt(withUnit[2], 10);
-    const quarterNotes = (num / den) * 4;
+    quarterNotes = (num / den) * 4;
     const found = NOTE_TYPE_MAP[quarterNotes];
+    const dotted = NOTE_TYPE_MAP[(quarterNotes * 2) / 3];
     if (found) beatUnit = found;
+    // Q:3/8=60 is a dotted quarter
+    else if (dotted) { beatUnit = dotted; beatUnitDot = true; }
   }
 
   return {
     _id: generateId(),
     type: 'direction',
-    directionTypes: [{ kind: 'metronome', beatUnit, perMinute }],
+    directionTypes: [{ kind: 'metronome', beatUnit, perMinute, ...(beatUnitDot ? { beatUnitDot } : {}) }],
     placement: 'above',
-    sound: { tempo: perMinute },
+    sound: { tempo: Math.round(perMinute * quarterNotes * 1000) / 1000 },
   };
 }
 
@@ -1749,6 +1780,7 @@ function buildMeasures(
   // Verse number and target notes of the w: line group being processed
   let lyricVerse = 0;
   let lyricTargets: LyricTarget[] = [];
+  let lyricCursor: NoteEntry | null = null;
   let inChord = false;
   let chordNotes: AbcToken[] = [];
   let chordNoteTies: boolean[] = []; // track ties per chord note
@@ -2333,9 +2365,12 @@ function buildMeasures(
           lyricVerse++;
         } else {
           lyricVerse = 1;
-          lyricTargets = collectUnlyricedNotes(measures, currentEntries);
+          lyricTargets = collectLyricTargets(measures, currentEntries, lyricCursor);
         }
-        applyLyricsToNotes(lyricTargets, syllables, lyricVerse);
+        const used = applyLyricsToNotes(lyricTargets, syllables, lyricVerse);
+        // The next music line's w: starts after the last note this one reached,
+        // even if that note got no syllable (*, _, |)
+        if (lyricVerse === 1 && used > 0) lyricCursor = lyricTargets[used - 1].note;
         break;
       }
 
@@ -2448,20 +2483,21 @@ function buildMeasures(
 }
 
 /**
- * The notes a `w:` line applies to: every pitched, non-grace note seen so far
- * that has not yet been given a syllable.
+ * The notes a `w:` line applies to: every pitched, non-grace note after
+ * `after` (the last note the previous `w:` line reached).
  */
-function collectUnlyricedNotes(
+function collectLyricTargets(
   finalizedMeasures: Measure[],
   currentEntries: MeasureEntry[],
+  after: NoteEntry | null,
 ): LyricTarget[] {
   const notes: LyricTarget[] = [];
+  let started = after === null;
   const collect = (entries: MeasureEntry[], bar: number) => {
     for (const entry of entries) {
-      if (entry.type === 'note' && !entry.rest && !entry.grace && !entry.chord &&
-        (!entry.lyrics || entry.lyrics.length === 0)) {
-        notes.push({ note: entry, bar });
-      }
+      if (entry.type !== 'note' || entry.rest || entry.grace || entry.chord) continue;
+      if (started) notes.push({ note: entry, bar });
+      else if (entry === after) started = true;
     }
   };
   finalizedMeasures.forEach((m, i) => collect(m.entries, i));
@@ -2473,7 +2509,7 @@ function collectUnlyricedNotes(
 interface LyricTarget { note: NoteEntry; bar: number }
 
 /** Assign one verse of `w:` tokens (see parseLyricLine) to the given notes, in order. */
-function applyLyricsToNotes(targets: LyricTarget[], tokens: string[], verse: number) {
+function applyLyricsToNotes(targets: LyricTarget[], tokens: string[], verse: number): number {
   let ni = 0;
   let wordOpen = false; // previous syllable ended with '-'
   let last: Lyric | null = null;
@@ -2497,6 +2533,7 @@ function applyLyricsToNotes(targets: LyricTarget[], tokens: string[], verse: num
     note.lyrics.push(last);
     wordOpen = hyphen;
   }
+  return ni;
 }
 
 
@@ -2998,6 +3035,7 @@ export function parseAbc(abcString: string): Score {
 
 function parseTune(lines: string[], defaults: string[] = []): Score {
   const { header, bodyStartIndex, headerFieldOrder } = parseHeader(lines);
+  userSymbols = readUserSymbols(header.extraFields ?? []);
   // File-header defaults for fields the tune does not set itself
   if (defaults.length > 0) {
     const inherited = parseHeader(defaults).header;
