@@ -36,6 +36,7 @@ import type {
   Notation,
   Accidental,
   BeamInfo,
+  Lyric,
 } from '../types';
 import { generateId } from '../id';
 import {
@@ -329,7 +330,7 @@ function parseHeader(lines: string[]): { header: AbcHeader; bodyStartIndex: numb
           break;
         case 'K':
           header.key = value.trim();
-          header.clef = line;
+          header.clef = value.trim();
           foundKey = true;
           bodyStartIndex = i + 1;
           headerFieldOrder.push(line);
@@ -405,8 +406,20 @@ function parseHeader(lines: string[]): { header: AbcHeader; bodyStartIndex: numb
 // Key Signature Parsing
 // ============================================================
 
+/**
+ * Whether a K: value names a key (tonic + optional mode) rather than only
+ * parameters: "K:bass" or "K:clef=treble-8" change the clef and keep the key.
+ */
+function hasKeyTonic(keyStr: string): boolean {
+  const word = keyStr.trim().split(/\s+/)[0] ?? '';
+  const m = word.match(/^[A-Ga-g][#b]?([A-Za-z]*)$/);
+  if (!m) return /^(none|HP|Hp)$/.test(word);
+  const mode = m[1].toLowerCase();
+  return mode === '' || mode === 'm' || mode.slice(0, 3) in MODE_OFFSET;
+}
+
 function parseKeySignature(keyStr: string): KeySignature {
-  if (!keyStr || keyStr.trim() === '' || keyStr.trim().toLowerCase() === 'none') {
+  if (!keyStr || keyStr.trim() === '' || keyStr.trim().toLowerCase() === 'none' || !hasKeyTonic(keyStr)) {
     return { fifths: 0, mode: 'major' };
   }
 
@@ -823,20 +836,73 @@ function tokenizeBody(bodyLines: string[]): { tokens: AbcToken[][]; voiceIds: st
   return { tokens: result.length > 0 ? result : [[]], voiceIds, inlineVoiceMarkers, voiceDeclarationLines, bodyComments, bodyDirectives, wFields, voiceInterleavePattern, groupBarCounts, voiceComments, preVoiceComments, trailingComments };
 }
 
+/**
+ * Split a `w:` line into one token per note (ABC 2.1 §5.1):
+ * - `syl` / `syl-` — a syllable, `-` when the word continues
+ * - `*` — the note gets no syllable
+ * - `_` — the previous syllable is held over this note
+ * - `-` — a hyphen on its own: the note gets no syllable, the word continues
+ * - `|` — not a note: skip to the first note of the next bar
+ * `~` is a space and `\-` a hyphen inside a syllable.
+ */
+// Combining marks for ABC's backslash accents (ABC 2.1 §8.1): \'e = é, \"u = ü ...
+const ABC_ACCENT_MARKS: Record<string, string> = {
+  '`': '\u0300', "'": '\u0301', '^': '\u0302', '~': '\u0303', '=': '\u0304', u: '\u0306',
+  '.': '\u0307', '"': '\u0308', o: '\u030A', H: '\u030B', v: '\u030C', c: '\u0327', ';': '\u0328',
+};
+const ABC_LIGATURES: Record<string, string> = {
+  ss: 'ß', ae: 'æ', AE: 'Æ', oe: 'œ', OE: 'Œ', aa: 'å', AA: 'Å', '/o': 'ø', '/O': 'Ø', DH: 'Ð', dh: 'ð', TH: 'Þ', th: 'þ',
+};
+const HTML_ENTITY_MARKS: Record<string, string> = {
+  grave: '\u0300', acute: '\u0301', circ: '\u0302', tilde: '\u0303', uml: '\u0308', ring: '\u030A', cedil: '\u0327',
+};
+const HTML_ENTITIES: Record<string, string> = {
+  amp: '&', quot: '"', apos: "'", lt: '<', gt: '>', nbsp: '\u00A0', szlig: 'ß', aelig: 'æ', AElig: 'Æ', oelig: 'œ', OElig: 'Œ', oslash: 'ø', Oslash: 'Ø', copy: '©',
+};
+
+/**
+ * Decode ABC text escapes in titles, lyrics and annotations: backslash accents
+ * (\'e, \"u, \cc, \ss ...), \uXXXX / \UXXXXXXXX and HTML entities (&eacute;).
+ */
+function decodeAbcText(text: string): string {
+  if (!/[\\&]/.test(text)) return text;
+  return text
+    .replace(/\\u([0-9a-fA-F]{4})|\\U([0-9a-fA-F]{8})/g, (_, h4, h8) => String.fromCodePoint(parseInt(h4 ?? h8, 16)))
+    .replace(/\\(ss|ae|AE|oe|OE|aa|AA|\/o|\/O|DH|dh|TH|th)/g, (_, l) => ABC_LIGATURES[l])
+    .replace(/\\([`'^~=u."oHvc;])([A-Za-z])/g, (_, mark, base) => (base + ABC_ACCENT_MARKS[mark]).normalize('NFC'))
+    .replace(/&([A-Za-z]+);/g, (whole, name: string) => {
+      if (name in HTML_ENTITIES) return HTML_ENTITIES[name];
+      const m = name.match(/^([A-Za-z])(grave|acute|circ|tilde|uml|ring|cedil)$/);
+      return m ? (m[1] + HTML_ENTITY_MARKS[m[2]]).normalize('NFC') : whole;
+    })
+    .replace(/\\([%&"\\])/g, '$1');
+}
+
 function parseLyricLine(text: string): string[] {
-  // Split lyrics by spaces, handling hyphens as syllable separators
-  const parts: string[] = [];
-  const tokens = text.split(/\s+/);
-  for (const token of tokens) {
-    if (token === '') continue;
-    // Handle hyphenated syllables
-    const syllables = token.split('-');
-    for (let i = 0; i < syllables.length; i++) {
-      if (syllables[i] === '' && i > 0) continue; // skip empty from double hyphen
-      parts.push(syllables[i] + (i < syllables.length - 1 ? '-' : ''));
+  const out: string[] = [];
+  let cur = '';
+  let hasCur = false;
+  const end = (hyphen = false) => {
+    if (hasCur) out.push(cur + (hyphen ? '-' : ''));
+    cur = '';
+    hasCur = false;
+  };
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '\\' && text[i + 1] === '-') { cur += '-'; hasCur = true; i++; continue; }
+    if (ch === ' ' || ch === '\t') { end(); continue; }
+    if (ch === '-') {
+      if (hasCur) end(true);
+      else out.push('-');
+      continue;
     }
+    if (ch === '_' || ch === '*' || ch === '|') { end(); out.push(ch); continue; }
+    if (ch === '~') { cur += ' '; hasCur = true; continue; }
+    cur += ch;
+    hasCur = true;
   }
-  return parts;
+  end();
+  return out.map(t => (t.length > 1 || !'*_-|'.includes(t) ? decodeAbcText(t) : t));
 }
 
 function tokenizeMusicLine(line: string): AbcToken[] {
@@ -1504,7 +1570,7 @@ function buildScore(header: AbcHeader, voiceTokensList: AbcToken[][], voiceIds: 
           hasLyrics = true;
           seenLyrics = true;
           verse = ti > 0 && tokens[ti - 1].type === 'lyrics' ? verse + 1 : 1;
-          lyricLineCounts.push(token.syllables?.length || 0);
+          lyricLineCounts.push(token.syllables?.filter(t => t !== '|').length || 0);
           lyricLineVerses.push(verse);
         } else if (seenLyrics && (token.type === 'note' || token.type === 'rest' || token.type === 'bar')) {
           // Music after lyrics means interleaved layout
@@ -1534,7 +1600,7 @@ function buildScore(header: AbcHeader, voiceTokensList: AbcToken[][], voiceIds: 
   // Build creators list
   const creators: { type: string; value: string }[] = [];
   if (header.composer) {
-    creators.push({ type: 'composer', value: header.composer });
+    creators.push({ type: 'composer', value: decodeAbcText(header.composer) });
   }
   creators.push(...extraCreators);
 
@@ -1549,7 +1615,7 @@ function buildScore(header: AbcHeader, voiceTokensList: AbcToken[][], voiceIds: 
   return {
     _id: generateId(),
     metadata: {
-      movementTitle: header.title,
+      movementTitle: header.title !== undefined ? decodeAbcText(header.title) : undefined,
       creators: creators.length > 0 ? creators : undefined,
       source: sourceValue,
       encoding,
@@ -1633,8 +1699,9 @@ function parseAbcClefSpec(fieldValue: string): Clef | undefined {
   const explicit = fieldValue.match(/clef\s*=\s*(\S+)/i);
   if (explicit) return abcClefToMusicXml(explicit[1]);
 
-  // Bare clef name, as in "K:C bass" or "V:1 treble-8"
-  for (const word of fieldValue.trim().split(/\s+/).slice(1)) {
+  // Bare clef name, as in "K:C bass", "K:bass" or "V:1 treble-8"
+  const words = fieldValue.trim().split(/\s+/);
+  for (const word of hasKeyTonic(fieldValue) ? words.slice(1) : words) {
     if (word.includes('=')) continue;
     const bare = word.toLowerCase().replace(/([+-]?(?:8|15)(?:va|vb)?)$/, '');
     if (ABC_CLEF_NAMES[bare] && bare !== 'none') return abcClefToMusicXml(word);
@@ -1681,7 +1748,7 @@ function buildMeasures(
   let noteCountForLyrics = 0;
   // Verse number and target notes of the w: line group being processed
   let lyricVerse = 0;
-  let lyricTargets: NoteEntry[] = [];
+  let lyricTargets: LyricTarget[] = [];
   let inChord = false;
   let chordNotes: AbcToken[] = [];
   let chordNoteTies: boolean[] = []; // track ties per chord note
@@ -1725,6 +1792,17 @@ function buildMeasures(
   function markBeamBreak(entry: NoteEntry) {
     if (beamBreak) beamBreakBefore.add(entry);
     beamBreak = false;
+  }
+
+  /** Apply one side of a broken rhythm: `>` lengthens the first note and shortens the second. */
+  function scaleBroken(n: NoteEntry, markers: number, lengthen: boolean) {
+    const divisor = Math.pow(2, markers);
+    n.duration = lengthen
+      ? Math.round(n.duration * (2 * divisor - 1) / divisor)
+      : Math.round(n.duration / divisor);
+    const { noteType, dots } = durationToNoteType(n.duration);
+    n.noteType = noteType;
+    n.dots = dots > 0 ? dots : undefined;
   }
 
   /** Count a note (or chord head) against the open tuplet and mark where the group starts and ends. */
@@ -1792,7 +1870,10 @@ function buildMeasures(
         measure.attributes = { _id: generateId() };
       }
       const kValue = pendingKeyChange.replace(/^K:\s*/, '');
-      measure.attributes.key = parseKeySignature(kValue);
+      // "K:clef=bass" / "K:bass" change only the clef
+      if (hasKeyTonic(kValue)) measure.attributes.key = parseKeySignature(kValue);
+      const kClef = parseAbcClefSpec(kValue);
+      if (kClef) measure.attributes.clef = [kClef];
       pendingKeyChange = null;
     }
 
@@ -1975,14 +2056,15 @@ function buildMeasures(
           const useIndividualDurations = hasIndividualDurations && chordDurNum === 1 && chordDurDen === 1;
           if (useIndividualDurations) hasIndividualChordDurations = true;
 
+          const chordStart = currentEntries.length;
           for (let ci = 0; ci < chordNotes.length; ci++) {
             const chordToken = chordNotes[ci];
-            // Override duration with chord duration (unless using individual durations)
+            // A length after the chord multiplies the notes' own lengths: [C2E]2 = [C4E2]
             const originalNum = chordToken.durationNum;
             const originalDen = chordToken.durationDen;
             if (!useIndividualDurations) {
-              chordToken.durationNum = chordDurNum;
-              chordToken.durationDen = chordDurDen;
+              chordToken.durationNum = (originalNum || 1) * chordDurNum;
+              chordToken.durationDen = (originalDen || 1) * chordDurDen;
             }
 
             const entry = chordToken.type === 'rest'
@@ -2025,6 +2107,17 @@ function buildMeasures(
               currentPosition += entry.duration;
               if (!inGrace) chordHead = entry;
             }
+          }
+          // Second half of a broken rhythm: the whole chord takes the other length
+          if (pendingBrokenRhythm) {
+            const lengthen = pendingBrokenRhythm[0] === '<';
+            currentEntries.slice(chordStart).forEach((e, k) => {
+              const n = e as NoteEntry;
+              const before = n.duration;
+              scaleBroken(n, pendingBrokenRhythm!.length, lengthen);
+              if (k === 0) currentPosition += n.duration - before;
+            });
+            pendingBrokenRhythm = null;
           }
         }
         chordNotes = [];
@@ -2162,25 +2255,20 @@ function buildMeasures(
         break;
 
       case 'broken_rhythm': {
-        // Modify the previous note's duration
-        const brokenN = token.value.length;
-        const brokenDivisor = Math.pow(2, brokenN);
+        // Lengthen (>) or shorten (<) the previous note — every note of it, if it is a chord
+        const lengthenFirst = token.value[0] === '>';
         for (let ei = currentEntries.length - 1; ei >= 0; ei--) {
           const e = currentEntries[ei];
-          if (e.type === 'note') {
-            if (token.value[0] === '>') {
-              // First note is lengthened (dotted)
-              e.duration = Math.round(e.duration * (2 * brokenDivisor - 1) / brokenDivisor);
-            } else {
-              // First note is shortened
-              e.duration = Math.round(e.duration / brokenDivisor);
-            }
-            // Recalculate noteType and dots after duration change
-            const { noteType: newType, dots: newDots } = durationToNoteType(e.duration);
-            e.noteType = newType;
-            e.dots = newDots > 0 ? newDots : undefined;
-            break;
+          if (e.type !== 'note' || e.grace) continue;
+          let head = ei;
+          while (head > 0 && (currentEntries[head] as NoteEntry).chord) head--;
+          for (let k = head; k <= ei; k++) {
+            const n = currentEntries[k] as NoteEntry;
+            const before = n.duration;
+            scaleBroken(n, token.value.length, lengthenFirst);
+            if (k === head) currentPosition += n.duration - before;
           }
+          break;
         }
         pendingBrokenRhythm = token.value;
         // A broken-rhythm pair stays beamed even when written `A > B`
@@ -2288,7 +2376,7 @@ function buildMeasures(
         if (field === 'K') {
           pendingKeyChange = `K:${rawValue}`;
           // Notes after the change are spelled in the new key ("K:clef=bass" keeps the key)
-          if (/^\s*([A-Ga-g]|none\b)/i.test(rawValue)) keyAlters = keyAltersFor(parseKeySignature(rawValue).fifths);
+          if (hasKeyTonic(rawValue)) keyAlters = keyAltersFor(parseKeySignature(rawValue).fifths);
           break;
         }
 
@@ -2366,43 +2454,48 @@ function buildMeasures(
 function collectUnlyricedNotes(
   finalizedMeasures: Measure[],
   currentEntries: MeasureEntry[],
-): NoteEntry[] {
-  const notes: NoteEntry[] = [];
-  const collect = (entries: MeasureEntry[]) => {
+): LyricTarget[] {
+  const notes: LyricTarget[] = [];
+  const collect = (entries: MeasureEntry[], bar: number) => {
     for (const entry of entries) {
       if (entry.type === 'note' && !entry.rest && !entry.grace && !entry.chord &&
         (!entry.lyrics || entry.lyrics.length === 0)) {
-        notes.push(entry);
+        notes.push({ note: entry, bar });
       }
     }
   };
-  for (const measure of finalizedMeasures) collect(measure.entries);
-  collect(currentEntries);
+  finalizedMeasures.forEach((m, i) => collect(m.entries, i));
+  collect(currentEntries, finalizedMeasures.length);
   return notes;
 }
 
-/** Assign one verse of syllables to the given notes, in order. */
-function applyLyricsToNotes(targetNotes: NoteEntry[], syllables: string[], verse: number) {
-  for (let si = 0; si < syllables.length && si < targetNotes.length; si++) {
-    const syllable = syllables[si];
-    if (!syllable || syllable === '' || syllable === '*') continue;
+/** A note a `w:` line can put a syllable on, and the bar it is in (for `|`). */
+interface LyricTarget { note: NoteEntry; bar: number }
 
-    const note = targetNotes[si];
-    const isHyphenated = syllable.endsWith('-');
-    const text = isHyphenated ? syllable.slice(0, -1) : syllable;
-
-    let syllabic: 'single' | 'begin' | 'middle' | 'end' = isHyphenated ? 'begin' : 'single';
-
-    // Check if previous syllable was hyphenated
-    if (si > 0) {
-      const prevSyllable = syllables[si - 1];
-      if (prevSyllable && prevSyllable.endsWith('-')) {
-        syllabic = isHyphenated ? 'middle' : 'end';
-      }
+/** Assign one verse of `w:` tokens (see parseLyricLine) to the given notes, in order. */
+function applyLyricsToNotes(targets: LyricTarget[], tokens: string[], verse: number) {
+  let ni = 0;
+  let wordOpen = false; // previous syllable ended with '-'
+  let last: Lyric | null = null;
+  for (const tok of tokens) {
+    if (tok === '|') {
+      // Jump to the first note of the next bar
+      const bar = ni > 0 ? targets[ni - 1].bar : -1;
+      while (ni < targets.length && targets[ni].bar <= bar) ni++;
+      continue;
     }
-
+    if (ni >= targets.length) break;
+    const note = targets[ni++].note;
+    if (tok === '*') { wordOpen = false; last = null; continue; }
+    if (tok === '_') { if (last) last.extend = true; continue; }
+    if (tok === '-') continue;
+    const hyphen = tok.endsWith('-');
+    const text = hyphen ? tok.slice(0, -1) : tok;
+    const syllabic: Lyric['syllabic'] = wordOpen ? (hyphen ? 'middle' : 'end') : (hyphen ? 'begin' : 'single');
+    last = { number: verse, text, syllabic };
     if (!note.lyrics) note.lyrics = [];
-    note.lyrics.push({ number: verse, text, syllabic });
+    note.lyrics.push(last);
+    wordOpen = hyphen;
   }
 }
 
@@ -2817,7 +2910,7 @@ function createAnnotationDirection(text: string, marker: string): DirectionEntry
   return {
     _id: generateId(),
     type: 'direction',
-    directionTypes: [{ kind: 'words', text, ...(halign ? { halign } : {}) }],
+    directionTypes: [{ kind: 'words', text: decodeAbcText(text), ...(halign ? { halign } : {}) }],
     ...(placement ? { placement } : {}),
   };
 }
@@ -2855,14 +2948,21 @@ function createDynamicsDirection(dynamic: string): DirectionEntry | null {
  * A new tune starts at every `X:` reference-number field; text before the
  * first one is a file header shared by all tunes (ABC v2.1 §2.2).
  */
-function splitTunes(lines: string[]): string[][] {
-  const tunes: string[][] = [];
+/**
+ * Split a file into tunes. The file header (lines before the first X:) stays
+ * on the first tune's text, and its M:/L:/Q:/C: fields are also returned as
+ * defaults for every tune (ABC 2.1 §2.2) — a tune's own fields override them.
+ */
+function splitTunes(lines: string[]): { lines: string[]; defaults: string[] }[] {
+  const tunes: { lines: string[]; defaults: string[] }[] = [];
   let fileHeader: string[] = [];
+  let defaults: string[] = [];
   let current: string[] | null = null;
 
   for (const line of lines) {
     if (/^X:/.test(line.trim())) {
-      if (current) tunes.push(current);
+      if (current) tunes.push({ lines: current, defaults });
+      if (tunes.length === 0) defaults = fileHeader.filter(l => /^[MLQC]:/.test(l.trim()));
       current = [...fileHeader, line];
       fileHeader = [];
       continue;
@@ -2870,9 +2970,9 @@ function splitTunes(lines: string[]): string[][] {
     if (current) current.push(line);
     else fileHeader.push(line);
   }
-  if (current) tunes.push(current);
+  if (current) tunes.push({ lines: current, defaults });
   // No X: field at all: treat the whole input as a single tune
-  return tunes.length > 0 ? tunes : [lines];
+  return tunes.length > 0 ? tunes : [{ lines, defaults: [] }];
 }
 
 /**
@@ -2882,7 +2982,7 @@ function splitTunes(lines: string[]): string[][] {
  * {@link parseAbc} returns only the first; use this to get them all.
  */
 export function parseAbcTunes(abcString: string): Score[] {
-  return splitTunes(abcString.split('\n')).map(tuneLines => parseTune(tuneLines));
+  return splitTunes(abcString.split('\n')).map(t => parseTune(t.lines, t.defaults));
 }
 
 /**
@@ -2892,11 +2992,20 @@ export function parseAbcTunes(abcString: string): Score[] {
  * {@link parseAbcTunes} to parse them all.
  */
 export function parseAbc(abcString: string): Score {
-  return parseTune(splitTunes(abcString.split('\n'))[0]);
+  const first = splitTunes(abcString.split('\n'))[0];
+  return parseTune(first.lines, first.defaults);
 }
 
-function parseTune(lines: string[]): Score {
+function parseTune(lines: string[], defaults: string[] = []): Score {
   const { header, bodyStartIndex, headerFieldOrder } = parseHeader(lines);
+  // File-header defaults for fields the tune does not set itself
+  if (defaults.length > 0) {
+    const inherited = parseHeader(defaults).header;
+    header.meter ??= inherited.meter;
+    header.unitNoteLength ??= inherited.unitNoteLength;
+    header.tempo ??= inherited.tempo;
+    header.composer ??= inherited.composer;
+  }
   const bodyLines = lines.slice(bodyStartIndex);
   const { tokens: voiceTokensList, voiceIds, inlineVoiceMarkers, voiceDeclarationLines, bodyComments, bodyDirectives, wFields, voiceInterleavePattern, groupBarCounts, voiceComments, preVoiceComments, trailingComments } = tokenizeBody(bodyLines);
   const score = buildScore(header, voiceTokensList, voiceIds, headerFieldOrder, inlineVoiceMarkers, voiceDeclarationLines, bodyComments, bodyDirectives, wFields, voiceInterleavePattern, groupBarCounts, voiceComments, preVoiceComments, trailingComments);

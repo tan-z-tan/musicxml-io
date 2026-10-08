@@ -71,6 +71,23 @@ let keyAlters: Partial<Record<Pitch['step'], number>> = {};
 let barAlters = new Map<string, number>();
 /** Pitch of the last note if it started a tie: the tied note keeps its accidental across the bar. */
 let tiedFrom: Pitch | null = null;
+/** Lyric verses of the part being written, and per verse whether a word or a held syllable is open. */
+let partVerses: number[] = [];
+let verseState = new Map<number, { wordOpen: boolean; held: boolean }>();
+
+function startPartLyrics(part: Part) {
+  const verses = new Set<number>();
+  for (const m of part.measures) for (const e of m.entries) {
+    if (e.type === 'note') for (const l of e.lyrics ?? []) if (l.text) verses.add(l.number ?? 1);
+  }
+  partVerses = [...verses].sort((a, b) => a - b);
+  verseState = new Map();
+}
+
+/** ABC `w:` token for a syllable: `~` for a space and `\\-` for a hyphen inside it. */
+function escapeLyric(text: string): string {
+  return text.replace(/-/g, '\\-').replace(/ /g, '~');
+}
 
 const SHARP_ORDER: Pitch['step'][] = ['F', 'C', 'G', 'D', 'A', 'E', 'B'];
 
@@ -706,6 +723,7 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
     const part = score.parts[partIdx];
     voiceOctaveShift = readVoiceOctaveShift(score, partIdx);
     tiedFrom = null;
+    startPartLyrics(part);
     const divisions = getPartDivisions(part);
     partDivisions.push(divisions);
     const measStrings: string[] = [];
@@ -912,6 +930,7 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
       const divisions = partDivisions[partIdx];
       voiceOctaveShift = readVoiceOctaveShift(score, partIdx);
       tiedFrom = null;
+      startPartLyrics(part);
       const bodyResult = serializePartBody(part, divisions, unitNote, opts, lineBreaks, lyricsAfterAll, lyricsLineCounts, lyricsLineVerses);
 
       let musicLine = bodyResult.music;
@@ -1119,6 +1138,9 @@ function serializePartBody(
   const sortedVerses = Array.from(verses).sort((a, b) => a - b);
 
   /** Syllables of one verse across the measure range [from, to]. */
+  /** Whether w: tokens contain an actual syllable (not only skips / holds). */
+  const hasSyllable = (tokens: string[]) => tokens.some(t => t !== '*' && t !== '_' && t !== '-');
+
   function syllablesIn(verse: number, from: number, to: number): string[] {
     const syllables: string[] = [];
     for (let m = from; m <= to; m++) {
@@ -1136,7 +1158,7 @@ function serializePartBody(
   let lineStart = 0;
   for (let mi = 0; mi < part.measures.length; mi++) {
     if (lineBreakSet.has(mi + 1) || mi === part.measures.length - 1) {
-      const hasAny = sortedVerses.some(v => syllablesIn(v, lineStart, mi).length > 0);
+      const hasAny = sortedVerses.some(v => hasSyllable(syllablesIn(v, lineStart, mi)));
       if (hasAny) {
         lyricLineRanges.push({ startMeasure: lineStart, endMeasure: mi });
       }
@@ -1145,7 +1167,11 @@ function serializePartBody(
   }
 
   // Format lyrics with proper hyphenation
-  function formatLyrics(syllables: string[]): string {
+  function formatLyrics(tokens: string[]): string {
+    // Trailing skips carry no information
+    let n = tokens.length;
+    while (n > 0 && tokens[n - 1] === '*') n--;
+    const syllables = tokens.slice(0, n);
     let result = 'w:';
     for (let i = 0; i < syllables.length; i++) {
       const syllable = syllables[i];
@@ -1168,7 +1194,7 @@ function serializePartBody(
     const out: string[] = [];
     for (const verse of sortedVerses) {
       const syllables = syllablesIn(verse, from, to);
-      if (syllables.length > 0) out.push(formatLyrics(syllables));
+      if (hasSyllable(syllables)) out.push(formatLyrics(syllables));
     }
     return out;
   }
@@ -1186,14 +1212,14 @@ function serializePartBody(
         const all = syllablesIn(verse, 0, lastMeasure);
         const offset = offsets.get(verse) ?? 0;
         const chunk = all.slice(offset, offset + lyricsLineCounts[li]);
-        if (chunk.length > 0) lyricsLines.push(formatLyrics(chunk));
+        if (hasSyllable(chunk)) lyricsLines.push(formatLyrics(chunk));
         offsets.set(verse, offset + lyricsLineCounts[li]);
       }
       // Any syllables beyond the recorded counts
       for (const verse of sortedVerses) {
         const all = syllablesIn(verse, 0, lastMeasure);
         const offset = offsets.get(verse) ?? 0;
-        if (offset < all.length) lyricsLines.push(formatLyrics(all.slice(offset)));
+        if (hasSyllable(all.slice(offset))) lyricsLines.push(formatLyrics(all.slice(offset)));
       }
       return { music: musicStr, lyrics: lyricsLines.join('\n') };
     }
@@ -1343,16 +1369,26 @@ function serializeMeasureEntries(
         if (prev && breaksBeam(prev, note)) parts.splice(prevEnd, 0, ' ');
         prev = note;
 
-        // Handle lyrics (one entry per verse)
-        if (note.lyrics && note.lyrics.length > 0 && opts.includeLyrics) {
-          for (const lyric of note.lyrics) {
-            if (!lyric.text) continue;
-            const syllabic = lyric.syllabic || 'single';
-            const suffix = syllabic === 'begin' || syllabic === 'middle' ? '-' : '';
-            const verse = lyric.number ?? 1;
+        // Lyrics: one w: token per note and verse, so syllables stay on their notes.
+        // A note without a syllable is `_` (held), `-` (inside a word) or `*` (skipped)
+        if (opts.includeLyrics && !note.rest) {
+          for (const verse of partVerses) {
+            const lyric = note.lyrics?.find(l => (l.number ?? 1) === verse && l.text);
+            const state = verseState.get(verse) ?? { wordOpen: false, held: false };
+            let tok: string;
+            if (lyric) {
+              const syllabic = lyric.syllabic || 'single';
+              const hyphen = syllabic === 'begin' || syllabic === 'middle';
+              tok = escapeLyric(lyric.text) + (hyphen ? '-' : '');
+              state.wordOpen = hyphen;
+              state.held = !!lyric.extend;
+            } else {
+              tok = state.held ? '_' : state.wordOpen ? '-' : '*';
+            }
+            verseState.set(verse, state);
             const bucket = lyrics.get(verse);
-            if (bucket) bucket.push(lyric.text + suffix);
-            else lyrics.set(verse, [lyric.text + suffix]);
+            if (bucket) bucket.push(tok);
+            else lyrics.set(verse, [tok]);
           }
         }
 
