@@ -1584,3 +1584,43 @@ describe('ABC tuplets and header comments', () => {
     expect(s.parts[0].measures[0].attributes?.time).toMatchObject({ beats: '6', beatType: 8 });
   });
 });
+
+describe('ABC round-trip fixes from The Session corpus', () => {
+  const body = (b: string) => serializeAbc(parseAbc(`X:1\nM:4/4\nL:1/8\nK:G\n${b}\n`)).split('\n').slice(4).join('').trim();
+
+  it('keeps a slur that starts on a grace note', () => {
+    expect(body('({d}e2)A AGE|')).toBe('({d}e2)A AGE|');
+  });
+
+  it('keeps a slur that starts on the second note of a broken rhythm', () => {
+    expect(body('D>(B|d>B) A>B G2|')).toBe('D>(B|d>B) A>B G2|');
+  });
+
+  it('keeps a slur that ends on the first note of a broken rhythm', () => {
+    expect(body('(e2 e2|e)>e d>e|')).toBe('(e2e2|e)>e d>e|');
+  });
+
+  it('does not pair a chord into a broken rhythm', () => {
+    expect(body('D3/2[C/c/] [B,3/2B3/2]D/ G2|')).toBe('D3/2[C/c/] [B,3/2B3/2]D/ G2|');
+  });
+
+  it('keeps unusual chord suffixes and treats non-chord text as an annotation', () => {
+    const out = body('"F#m7b5"A2 "D7sus4"B2 "Ending"c2 "N.C."d2|');
+    expect(out).toContain('"F#m7b5"');
+    expect(out).toContain('"D7sus4"');
+    expect(out).toContain('"^Ending"');
+    expect(out).toContain('"^N.C."');
+  });
+});
+
+describe('ABC key modes', () => {
+  it('reads mixolydian keys (mix is not m)', () => {
+    for (const [k, fifths] of [['Amix', 2], ['Dmix', 1], ['Gmixolydian', 0], ['EDor', 2], ['Bm', 2], ['F#m', 3]] as const) {
+      const key = parseAbc(`X:1\nK:${k}\nA|\n`).parts[0].measures[0].attributes?.key;
+      expect(key?.fifths, k).toBe(fifths);
+    }
+    const out = serializeAbc(parseAbc('X:1\nK:Amix\nA|\n'));
+    expect(parseAbc(out).parts[0].measures[0].attributes?.key).toMatchObject({ fifths: 2, mode: 'mixolydian' });
+  });
+});
+
