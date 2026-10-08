@@ -1278,8 +1278,11 @@ function serializeMeasureEntries(
             }
           }
           if (openChord) graceNotes.push(']');
+          // A slur that starts on a grace note opens before the group: ({d}e2)
+          const graceSlurs = measure.entries.slice(ei, gi).reduce((n, ge) => n + (ge.type === 'note'
+            ? (ge.notations ?? []).filter(nt => nt.type === 'slur' && nt.slurType === 'start').length : 0), 0);
           // ABC {/...} is an acciaccatura (slashed); plain {...} an appoggiatura
-          parts.push((note.grace.slash ? '{/' : '{') + graceNotes.join('') + '}');
+          parts.push('('.repeat(graceSlurs) + (note.grace.slash ? '{/' : '{') + graceNotes.join('') + '}');
           ei = gi - 1; // Skip the grouped grace notes
           break;
         }
@@ -1468,7 +1471,7 @@ function serializeMeasureEntries(
           const tie1 = effectiveSerialized.tieStr;
           const slurS1 = effectiveSerialized.slurStart;
           const slurE1 = effectiveSerialized.slurEnd;
-          parts.push(tupletPrefix + slurS1 + effectiveSerialized.decorations + pitchStr1 + baseDurStr1 + tie1 + brokenResult.marker);
+          parts.push(tupletPrefix + slurS1 + effectiveSerialized.decorations + pitchStr1 + baseDurStr1 + tie1 + slurE1 + brokenResult.marker);
 
           // Serialize the second note with its base duration
           const note2 = brokenResult.nextNote;
@@ -1476,12 +1479,14 @@ function serializeMeasureEntries(
           let tieStr2 = '';
           if (note2.tie?.type === 'start' || note2.ties?.some(t => t.type === 'start')) tieStr2 = '-';
           let slurEnd2 = '';
+          let slurStart2 = '';
           if (note2.notations) {
             for (const notation of note2.notations) {
               if (notation.type === 'slur' && notation.slurType === 'stop') slurEnd2 += ')';
+              if (notation.type === 'slur' && notation.slurType === 'start') slurStart2 += notation.lineType === 'dotted' ? '.(' : '(';
             }
           }
-          parts.push(pitchStr2 + baseDurStr1 + tieStr2 + slurEnd2 + slurE1);
+          parts.push(slurStart2 + pitchStr2 + baseDurStr1 + tieStr2 + slurEnd2);
           ei = brokenResult.nextIndex; // Skip the second note
           prev = note2;
           prevEnd = parts.length;
@@ -1670,6 +1675,8 @@ function detectBrokenRhythm(
 
   // Skip if next note is a chord member, grace, rest, or tuplet
   if (nextNote.chord || nextNote.grace || nextNote.rest || nextNote.timeModification) return null;
+  // Chords are written separately, not as half of a > pair (D3/2[C/c/] became D>C[c])
+  if (isChordHead(entries, currentIdx) || isChordHead(entries, nextIdx)) return null;
 
   const d1 = currentNote.duration;
   const d2 = nextNote.duration;
