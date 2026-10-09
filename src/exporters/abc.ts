@@ -84,9 +84,9 @@ function startPartLyrics(part: Part) {
   verseState = new Map();
 }
 
-/** ABC `w:` token for a syllable: `~` for a space and `\\-` for a hyphen inside it. */
+/** ABC `w:` token for a syllable: `\\\\` for a backslash, `\\-` for a hyphen and `~` for a space inside it. */
 function escapeLyric(text: string): string {
-  return text.replace(/-/g, '\\-').replace(/ /g, '~');
+  return text.replace(/\\/g, '\\\\').replace(/-/g, '\\-').replace(/ /g, '~');
 }
 
 const SHARP_ORDER: Pitch['step'][] = ['F', 'C', 'G', 'D', 'A', 'E', 'B'];

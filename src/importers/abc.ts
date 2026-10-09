@@ -890,6 +890,7 @@ function parseLyricLine(text: string): string[] {
   for (let i = 0; i < text.length; i++) {
     const ch = text[i];
     if (ch === '\\' && text[i + 1] === '-') { cur += '-'; hasCur = true; i++; continue; }
+    if (ch === '\\' && text[i + 1] === '\\') { cur += '\\'; hasCur = true; i++; continue; }
     if (ch === ' ' || ch === '\t') { end(); continue; }
     if (ch === '-') {
       if (hasCur) end(true);

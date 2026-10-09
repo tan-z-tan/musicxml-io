@@ -1721,3 +1721,13 @@ describe('ABC 2.1 features (spec review)', () => {
     expect(out).not.toMatch(/\n\nK:/);
   });
 });
+
+describe('ABC lyric escaping', () => {
+  it('round-trips a syllable containing a backslash, a hyphen and a space', () => {
+    const score = parseAbc('X:1\nL:1/4\nK:C\nC D|\nw:x y\n');
+    const first = score.parts[0].measures[0].entries.find(e => e.type === 'note') as any;
+    first.lyrics[0].text = 'a\\b-c d';
+    const back = parseAbc(serializeAbc(score)).parts[0].measures[0].entries.find(e => e.type === 'note') as any;
+    expect(back.lyrics[0].text).toBe('a\\b-c d');
+  });
+});
