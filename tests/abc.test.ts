@@ -1584,3 +1584,188 @@ describe('ABC tuplets and header comments', () => {
     expect(s.parts[0].measures[0].attributes?.time).toMatchObject({ beats: '6', beatType: 8 });
   });
 });
+
+describe('ABC round-trip fixes from The Session corpus', () => {
+  const body = (b: string) => serializeAbc(parseAbc(`X:1\nM:4/4\nL:1/8\nK:G\n${b}\n`)).split('\n').slice(4).join('').trim();
+
+  it('keeps a slur that starts on a grace note', () => {
+    expect(body('({d}e2)A AGE|')).toBe('({d}e2)A AGE|');
+  });
+
+  it('keeps a slur that starts on the second note of a broken rhythm', () => {
+    expect(body('D>(B|d>B) A>B G2|')).toBe('D>(B|d>B) A>B G2|');
+  });
+
+  it('keeps a slur that ends on the first note of a broken rhythm', () => {
+    expect(body('(e2 e2|e)>e d>e|')).toBe('(e2e2|e)>e d>e|');
+  });
+
+  it('does not pair a chord into a broken rhythm', () => {
+    expect(body('D3/2[C/c/] [B,3/2B3/2]D/ G2|')).toBe('D3/2[C/c/] [B,3/2B3/2]D/ G2|');
+  });
+
+  it('keeps unusual chord suffixes and treats non-chord text as an annotation', () => {
+    const out = body('"F#m7b5"A2 "D7sus4"B2 "Ending"c2 "N.C."d2|');
+    expect(out).toContain('"F#m7b5"');
+    expect(out).toContain('"D7sus4"');
+    expect(out).toContain('"^Ending"');
+    expect(out).toContain('"^N.C."');
+  });
+});
+
+describe('ABC key modes', () => {
+  it('reads mixolydian keys (mix is not m)', () => {
+    for (const [k, fifths] of [['Amix', 2], ['Dmix', 1], ['Gmixolydian', 0], ['EDor', 2], ['Bm', 2], ['F#m', 3]] as const) {
+      const key = parseAbc(`X:1\nK:${k}\nA|\n`).parts[0].measures[0].attributes?.key;
+      expect(key?.fifths, k).toBe(fifths);
+    }
+    const out = serializeAbc(parseAbc('X:1\nK:Amix\nA|\n'));
+    expect(parseAbc(out).parts[0].measures[0].attributes?.key).toMatchObject({ fifths: 2, mode: 'mixolydian' });
+  });
+});
+
+
+describe('ABC key signature and bar accidentals', () => {
+  const pitches = (abc: string) => parseAbc(abc).parts[0].measures.map(m =>
+    m.entries.filter(e => e.type === 'note' && (e as any).pitch).map((e: any) => `${e.pitch.step}${e.pitch.alter ?? ''}${e.pitch.octave}`).join(' '));
+
+  it('applies the key signature to notes written without an accidental', () => {
+    expect(pitches('X:1\nL:1/4\nK:D\nF c f C|\n')).toEqual(['F14 C15 F15 C14']);
+    expect(pitches('X:1\nL:1/4\nK:Bb\nB E e A|\n')).toEqual(['B-14 E-14 E-15 A4']);
+  });
+
+  it('carries an accidental to the end of the bar, for that octave only', () => {
+    expect(pitches('X:1\nL:1/4\nK:C\n^G G g =G|G4|\n')).toEqual(['G14 G14 G5 G4', 'G4']);
+  });
+
+  it('keeps the accidental of a note tied across the bar line', () => {
+    expect(pitches('X:1\nL:1/4\nK:C\nz2 ^F2-|F2 F2|\n')).toEqual(['F14', 'F14 F4']);
+  });
+
+  it('switches key at an inline [K:]', () => {
+    expect(pitches('X:1\nL:1/4\nK:C\nF2 [K:G] F2|\n')).toEqual(['F4 F14']);
+  });
+
+  it('writes only the accidentals the key and bar do not already imply', () => {
+    for (const body of ['F c =f ^gg2|', '=f2-f2|', 'B_B B2=B2|']) {
+      const abc = `X:1\nL:1/8\nK:D\n${body}\n`;
+      expect(serializeAbc(parseAbc(abc)).split('\n').slice(3).join('').trim()).toBe(body);
+    }
+  });
+
+  it('gives MusicXML the sounding pitch', () => {
+    const xml = serialize(parseAbc('X:1\nL:1/4\nK:G\nF4|\n'));
+    expect(xml).toMatch(/<step>F<\/step>\s*<alter>1<\/alter>/);
+    expect(xml).not.toContain('<accidental');
+  });
+});
+
+describe('ABC 2.1 features (spec review)', () => {
+  const notes = (abc: string) => parseAbc(abc).parts[0].measures.flatMap(m => m.entries.filter(e => e.type === 'note')) as any[];
+
+  it('reads lyric symbols: _ holds, * skips, ~ joins, \\- is a hyphen, | jumps to the next bar', () => {
+    const n = notes('X:1\nL:1/4\nK:C\nC D E F|G A B c|c4|\nw: a_ * b~c d\\-e | f\n');
+    expect(n.map(x => x.lyrics?.[0]?.text ?? '-')).toEqual(['a', '-', '-', 'b c', 'd-e', '-', '-', '-', 'f']);
+    expect(n[0].lyrics[0].extend).toBe(true);
+  });
+
+  it('starts the next w: line after the last note the previous one reached', () => {
+    const n = notes('X:1\nL:1/4\nK:C\nC D E F|\nw: a * * *\nG A B c|\nw: b\n');
+    expect(n.map(x => x.lyrics?.[0]?.text ?? '-')).toEqual(['a', '-', '-', '-', 'b', '-', '-', '-']);
+  });
+
+  it('decodes text escapes in titles, lyrics and annotations', () => {
+    const s = parseAbc('X:1\nT:Caf\\\'e \\"uber Stra\\sse &eacute;t\\u00e9\nL:1/4\nK:C\n"^Fran\\cc ais"C|\nw:\\\'el\\`eve\n');
+    expect(s.metadata.movementTitle).toBe('Café über Straße été');
+    const e = s.parts[0].measures[0].entries as any[];
+    expect(e.find(x => x.type === 'direction').directionTypes[0].text).toBe('Franç ais');
+    expect(e.find(x => x.type === 'note').lyrics[0].text).toBe('élève');
+  });
+
+  it('applies a chord length on top of the notes\' own lengths', () => {
+    expect(notes('X:1\nL:1/8\nK:C\n[C2E]2 [C/E/]4|\n').map(n => n.duration)).toEqual([1920, 960, 960, 960]);
+  });
+
+  it('applies a broken rhythm to every note of a chord', () => {
+    expect(notes('X:1\nL:1/8\nK:C\n[CE]>[DF] z6|\n').map(n => n.duration)).toEqual([720, 720, 240, 240, 2880]);
+  });
+
+  it('K: without a tonic changes the clef, not the key', () => {
+    const m = parseAbc('X:1\nL:1/4\nK:G\nF2 [K:clef=bass] F2|\n').parts[0].measures[0];
+    expect(m.attributes?.key?.fifths).toBe(1);
+    expect(m.attributes?.clef?.[0]).toMatchObject({ sign: 'F', line: 4 });
+    expect(parseAbc('X:1\nK:bass\nC|\n').parts[0].measures[0].attributes).toMatchObject({ key: { fifths: 0 }, clef: [{ sign: 'F' }] });
+  });
+
+  it('gives tunes the M:/L: of the file header', () => {
+    const tunes = parseAbcTunes('M:6/8\nL:1/4\n\nX:1\nT:a\nK:G\nGAB|\n\nX:2\nT:b\nK:D\nDEF|\n');
+    for (const t of tunes) {
+      expect(t.parts[0].measures[0].attributes?.time).toMatchObject({ beats: '6', beatType: 8 });
+      expect((t.parts[0].measures[0].entries.find(e => e.type === 'note') as any).duration).toBe(960);
+    }
+  });
+
+  it('expands U: user-defined symbols', () => {
+    const n = notes('X:1\nL:1/4\nU:W=!accent!\nK:C\nWA B|\n');
+    expect(n[0].notations?.some((x: any) => x.type === 'articulation' && x.articulation === 'accent')).toBe(true);
+  });
+
+  it('reads a dotted tempo beat unit (Q:3/8=60)', () => {
+    const d = parseAbc('X:1\nL:1/8\nQ:3/8=60\nK:C\nCDE|\n').parts[0].measures[0].entries[0] as any;
+    expect(d.directionTypes[0]).toMatchObject({ beatUnit: 'quarter', beatUnitDot: true, perMinute: 60 });
+    expect(d.sound.tempo).toBe(90);
+  });
+
+  it('never writes a blank line before a body K: field', () => {
+    const out = serializeAbc(parseAbc('X:1\nL:1/4\nK:G\nGABc|\nK:D\nDEFG|\n'));
+    expect(out).not.toMatch(/\n\nK:/);
+  });
+});
+
+describe('ABC lyric escaping', () => {
+  it('round-trips a syllable containing a backslash, a hyphen and a space', () => {
+    const score = parseAbc('X:1\nL:1/4\nK:C\nC D|\nw:x y\n');
+    const first = score.parts[0].measures[0].entries.find(e => e.type === 'note') as any;
+    first.lyrics[0].text = 'a\\b-c d';
+    const back = parseAbc(serializeAbc(score)).parts[0].measures[0].entries.find(e => e.type === 'note') as any;
+    expect(back.lyrics[0].text).toBe('a\\b-c d');
+  });
+});
+
+describe('ABC multi-voice and bar-end decorations (The Session)', () => {
+  const tokensOf = (abc: string) => parseAbcTunes(abc).map(s => s.parts.map(p => p.measures.length));
+
+  it('switches back to a voice declared only in the header', () => {
+    const abc = 'X:1\nM:3/4\nL:1/8\nV:1\nK:D\n|:ag|f2 fg ef|d2 A2 dc|\nV:2\n|:fe|d2 d2 A2|FE F2 F2|\nV:1\nB2 g2 fd|e2 e2:|\nV:2\nGA Bc dF|AB cB:|\n';
+    const once = parseAbc(abc);
+    const twice = parseAbc(serializeAbc(once));
+    expect(twice.parts.map(p => p.measures.length)).toEqual(once.parts.map(p => p.measures.length));
+    expect(tokensOf(serializeAbc(once))).toEqual([[5, 5]]);
+  });
+
+  it('keeps a letter decoration that closes a bar on its own (dBG O|)', () => {
+    const out = serializeAbc(parseAbc('X:1\nL:1/8\nK:G\ndBG !coda!|AGE DEF|\n'));
+    const s = parseAbc(out);
+    expect(s.parts[0].measures[0].entries.some(e => e.type === 'direction')).toBe(true);
+  });
+
+  it('keeps a slur that ends on a later note of a chord', () => {
+    const body = (b: string) => serializeAbc(parseAbc(`X:1\nL:1/8\nK:D\n${b}\n`)).split('\n').slice(3).join('').trim();
+    expect(body('([DA][FA)][EA][AD] z4|')).toContain('[FA])');
+  });
+});
+
+describe('ABC bars with no notes', () => {
+  it('does not make an empty measure from a field or text before a bar line', () => {
+    const s = parseAbc('X:1\nL:1/8\nK:D\nDEFG ABcd|[K:F]|F2 A2 c4|\n');
+    expect(s.parts[0].measures.length).toBe(2);
+    expect(s.parts[0].measures.every(m => m.entries.some(e => e.type === 'note'))).toBe(true);
+  });
+
+  it('keeps text after the last bar line on the last measure', () => {
+    const s = parseAbc('X:1\nL:1/8\nK:D\nDEFG ABcd||"Final"\n');
+    expect(s.parts[0].measures.length).toBe(1);
+    const back = parseAbc(serializeAbc(s));
+    expect(back.parts[0].measures[0].entries.some(e => e.type === 'direction')).toBe(true);
+  });
+});
