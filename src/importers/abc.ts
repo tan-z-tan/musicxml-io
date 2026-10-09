@@ -35,10 +35,10 @@ import type {
   DynamicsValue,
   Notation,
   Accidental,
-  BeamInfo,
   Lyric,
 } from '../types';
 import { generateId } from '../id';
+import { applyBeamGroup, beamLevel } from '../beams';
 import {
   ABC_BODY_FIELD_MARKER,
   ABC_DYNAMICS,
@@ -2538,11 +2538,6 @@ function applyLyricsToNotes(targets: LyricTarget[], tokens: string[], verse: num
 }
 
 
-/** Number of beams a note of this type carries (0 = not beamable). */
-const BEAM_LEVELS: Partial<Record<NoteType, number>> = {
-  eighth: 1, '16th': 2, '32nd': 3, '64th': 4, '128th': 5, '256th': 6, '512th': 7, '1024th': 8,
-};
-
 /**
  * Give `<beam>` elements to the notes of one measure. In ABC, consecutive
  * eighth-or-shorter notes written without whitespace between them form a beam
@@ -2561,7 +2556,7 @@ function assignAbcBeams(entries: MeasureEntry[], breakBefore: WeakSet<NoteEntry>
       continue;
     }
     if (e.type !== 'note' || e.grace || e.chord) continue;
-    const level = e.rest || !e.noteType ? 0 : BEAM_LEVELS[e.noteType] ?? 0;
+    const level = beamLevel(e);
     if (level === 0) {
       close();
       continue;
@@ -2571,33 +2566,7 @@ function assignAbcBeams(entries: MeasureEntry[], breakBefore: WeakSet<NoteEntry>
   }
   close();
 
-  for (const g of groups) {
-    const levels = g.map((n) => BEAM_LEVELS[n.noteType!]!);
-    const beams: BeamInfo[][] = g.map(() => []);
-    const maxLevel = Math.max(...levels);
-    for (let lv = 1; lv <= maxLevel; lv++) {
-      for (let i = 0; i < g.length; ) {
-        if (levels[i] < lv) {
-          i++;
-          continue;
-        }
-        let j = i;
-        while (j + 1 < g.length && levels[j + 1] >= lv) j++;
-        if (i === j) {
-          // A lone shorter note gets a hook pointing into the group
-          beams[i].push({ number: lv, type: i === g.length - 1 ? 'backward hook' : 'forward hook' });
-        } else {
-          for (let k = i; k <= j; k++) {
-            beams[k].push({ number: lv, type: k === i ? 'begin' : k === j ? 'end' : 'continue' });
-          }
-        }
-        i = j + 1;
-      }
-    }
-    g.forEach((n, i) => {
-      n.beam = beams[i];
-    });
-  }
+  for (const g of groups) applyBeamGroup(g);
 }
 
 function applyTieStops(measures: Measure[]) {

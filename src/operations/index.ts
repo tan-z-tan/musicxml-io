@@ -29,6 +29,7 @@ import type {
   Barline,
 } from '../types';
 import { generateId } from '../id';
+import { applyBeamGroup, beamLevel } from '../beams';
 import {
   STEPS,
   STEP_SEMITONES,
@@ -2984,8 +2985,10 @@ export function autoBeam(
     let currentGroup: Array<{ note: NoteEntry; position: number }> = [];
 
     for (const { note, position: notePos } of notes) {
-      // Only beam eighth notes and shorter (duration <= half a beat)
-      if (note.duration > beatDuration / 2) {
+      // Only beam eighth notes and shorter, dotted ones included (a dotted
+      // eighth + 16th fills one beat); grace notes are beamed separately
+      const beamable = note.noteType ? beamLevel(note) > 0 : note.duration < beatDuration;
+      if (!beamable || note.grace) {
         // This note is too long to beam
         if (currentGroup.length >= 2) {
           beatGroups.push(currentGroup);
@@ -3014,27 +3017,13 @@ export function autoBeam(
       beatGroups.push(currentGroup);
     }
 
-    // Apply beaming to each group
+    // Level 1 joins each group; 16ths and shorter get secondary beams and hooks
     for (const group of beatGroups) {
-      for (let i = 0; i < group.length; i++) {
-        const { note } = group[i];
-
-        if (!note.beam) {
-          note.beam = [];
-        }
-
-        let beamType: 'begin' | 'continue' | 'end';
-        if (i === 0) {
-          beamType = 'begin';
-        } else if (i === group.length - 1) {
-          beamType = 'end';
-        } else {
-          beamType = 'continue';
-        }
-
-        note.beam.push({
-          number: 1,
-          type: beamType,
+      if (group.every(({ note }) => note.noteType)) {
+        applyBeamGroup(group.map(({ note }) => note));
+      } else {
+        group.forEach(({ note }, i) => {
+          note.beam = [{ number: 1, type: i === 0 ? 'begin' : i === group.length - 1 ? 'end' : 'continue' }];
         });
       }
     }

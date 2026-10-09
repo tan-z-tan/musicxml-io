@@ -43,6 +43,7 @@
 - Bundle size: importing only `parse` now costs ~47 KB minified / ~13 KB gzipped (was ~49 KB / ~14 KB); the txml dependency is gone.
 
 ### Fixed
+- `autoBeam` beams dotted eighths: it only accepted notes of at most half a beat, so a dotted eighth + 16th (`C<D`, `A>B`) was left unbeamed and written apart in ABC ([#116](https://github.com/tan-z-tan/musicxml-io/issues/116)). It now beams any eighth or shorter note by type and adds secondary beams and hooks for 16ths and shorter, using the same rules as the ABC parser (`src/beams.ts`).
 - ABC lyrics follow the `w:` symbols of ABC 2.1 §5.1: `_` holds the previous syllable over the next note (MusicXML `<extend>`), `*` skips a note, `~` joins words on one note, `\-` is a literal hyphen and `|` jumps to the next bar. They used to end up in the syllable text (`the_`, `\`, `b|c`). A `w:` line now starts after the last note the previous one reached, so a skipped or held note no longer pulls the next line's lyrics onto it, and the serializer writes `*` / `_` / `-` placeholders so syllables stay on their notes.
 - ABC text escapes are decoded in titles, composers, lyrics and annotations: backslash accents (`\'e`, `\"u`, `\cc`, `\ss` …), `\uXXXX` and HTML entities (`&eacute;`).
 - ABC chords: a length after a chord multiplies the notes' own lengths (`[C2E]2` = `[C4E2]`; the inner lengths were ignored). A broken rhythm next to a chord now lengthens or shortens every note of the chord, not just one.

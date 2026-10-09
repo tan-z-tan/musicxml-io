@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { parse } from '../src';
+import { parse, parseAbc, serializeAbc } from '../src';
+import type { NoteEntry } from '../src/types';
 import {
   transpose,
   addNote,
@@ -2593,6 +2594,21 @@ describe('Beam Operations', () => {
   });
 
   describe('autoBeam', () => {
+    it('beams a dotted eighth with its sixteenth, with a secondary hook (#116)', () => {
+      const score = parseAbc('X:1\nM:4/4\nL:1/8\nK:C\nC<DE/FG/A>Bcd|]\n');
+      const result = autoBeam(score, { partIndex: 0, measureIndex: 0 });
+      expect(result.success).toBe(true);
+      const notes = result.data!.parts[0].measures[0].entries.filter(e => e.type === 'note') as NoteEntry[];
+      const beams = notes.map(n => (n.beam ?? []).map(b => `${b.number}${b.type}`).join(','));
+      expect(beams).toEqual([
+        '1begin,2forward hook', '1end',
+        '1begin,2forward hook', '1continue', '1end,2backward hook',
+        '1begin', '1end,2backward hook',
+        '1begin', '1end',
+      ]);
+      expect(serializeAbc(result.data!)).toContain('C<D E/FG/ A>B cd');
+    });
+
     it('should automatically beam notes in a measure', () => {
       const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
       const score = parse(xml);
