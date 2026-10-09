@@ -43,6 +43,7 @@
 - Bundle size: importing only `parse` now costs ~47 KB minified / ~13 KB gzipped (was ~49 KB / ~14 KB); the txml dependency is gone.
 
 ### Fixed
+- ABC: a bar line after only a field or text (`[K:F]|`, `"Ending"|`) no longer makes a measure with no notes — the markers move to the next measure — and text after the last bar line (`||"Final"`) stays on the last measure instead of being dropped.
 - ABC multi-voice tunes: switching back to a voice declared only in the header (`V:1` before `K:`) wrote no `V:` line, so the following bars landed in the other voice; body `V:` lines are now used in order. Music before the first body `V:` belongs to the voice the header declared (it went to an extra voice "1"), and voice groups count only the bars that close a measure (a leading `|:` was counted).
 - ABC slurs ending on a later note of a chord (`[DB,][B,D])`, `[FA)]`) are kept; only the first note's slur end was written, and a `)` inside the brackets stopped the slur on the previous chord.
 - A letter decoration that closes a bar on its own (`dBG O|`, as written for `!coda!`) is read; it used to be dropped.

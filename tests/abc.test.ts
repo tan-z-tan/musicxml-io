@@ -1754,3 +1754,18 @@ describe('ABC multi-voice and bar-end decorations (The Session)', () => {
     expect(body('([DA][FA)][EA][AD] z4|')).toContain('[FA])');
   });
 });
+
+describe('ABC bars with no notes', () => {
+  it('does not make an empty measure from a field or text before a bar line', () => {
+    const s = parseAbc('X:1\nL:1/8\nK:D\nDEFG ABcd|[K:F]|F2 A2 c4|\n');
+    expect(s.parts[0].measures.length).toBe(2);
+    expect(s.parts[0].measures.every(m => m.entries.some(e => e.type === 'note'))).toBe(true);
+  });
+
+  it('keeps text after the last bar line on the last measure', () => {
+    const s = parseAbc('X:1\nL:1/8\nK:D\nDEFG ABcd||"Final"\n');
+    expect(s.parts[0].measures.length).toBe(1);
+    const back = parseAbc(serializeAbc(s));
+    expect(back.parts[0].measures[0].entries.some(e => e.type === 'direction')).toBe(true);
+  });
+});

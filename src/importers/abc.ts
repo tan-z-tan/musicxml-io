@@ -2190,6 +2190,9 @@ function buildMeasures(
         // Flush any pending items (e.g., chord symbols at end of measure)
         flushPendingPreNoteItems();
         const barType = token.barType || 'regular';
+        // A bar after only fields or text ([K:F]|, "Ending"|) closes no measure:
+        // the markers carry over to the next one instead of making an empty bar
+        const hasNotes = currentEntries.some(e => e.type === 'note');
 
         if (barType === 'double-repeat') {
           finalizeMeasure('end-repeat');
@@ -2197,7 +2200,7 @@ function buildMeasures(
         } else if (barType === 'end-repeat') {
           finalizeMeasure('end-repeat');
         } else if (barType === 'start-repeat') {
-          if (currentEntries.length > 0) {
+          if (hasNotes) {
             finalizeMeasure('regular');
           }
           currentBarlines.push(createBarline('start-repeat', 'left', null)!);
@@ -2206,7 +2209,7 @@ function buildMeasures(
         } else if (barType === 'end-repeat-final') {
           finalizeMeasure('end-repeat');
         } else {
-          if (currentEntries.length > 0 || currentBarlines.length > 0) {
+          if (hasNotes || currentBarlines.length > 0) {
             finalizeMeasure(barType !== 'regular' ? barType : undefined);
           }
         }
@@ -2502,9 +2505,20 @@ function buildMeasures(
     }
   }
 
-  // Finalize last measure if it has entries
+  // Chord symbols / text waiting for a note that never came
+  flushPendingPreNoteItems();
+
+  // Finalize last measure if it has entries. Text or fields after the last
+  // bar line ("Final", [K:...]) stay on the last measure rather than making
+  // a measure with no notes.
   if (currentEntries.length > 0) {
-    finalizeMeasure();
+    const last = measures[measures.length - 1];
+    if (last && !currentEntries.some(e => e.type === 'note') && currentBarlines.length === 0 && !pendingKeyChange && !pendingTimeChange) {
+      last.entries.push(...currentEntries);
+      currentEntries = [];
+    } else {
+      finalizeMeasure();
+    }
   }
 
   // Handle tie stop on notes after tie start
