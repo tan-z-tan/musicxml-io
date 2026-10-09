@@ -575,9 +575,10 @@ function durationToNoteType(duration: number): { noteType: NoteType; dots: numbe
 // Tokenizer
 // ============================================================
 
-function tokenizeBody(bodyLines: string[]): { tokens: AbcToken[][]; voiceIds: string[]; inlineVoiceMarkers: Map<string, string>; voiceDeclarationLines: string[]; bodyComments: string[]; bodyDirectives: string[]; wFields: string[]; voiceInterleavePattern: string[][]; groupBarCounts: number[][]; voiceComments: Record<string, Array<{ barIndex: number; comment: string }>>; preVoiceComments: string[][]; trailingComments: string[] } {
+function tokenizeBody(bodyLines: string[], initialVoice = '1'): { tokens: AbcToken[][]; voiceIds: string[]; inlineVoiceMarkers: Map<string, string>; voiceDeclarationLines: string[]; bodyComments: string[]; bodyDirectives: string[]; wFields: string[]; voiceInterleavePattern: string[][]; groupBarCounts: number[][]; voiceComments: Record<string, Array<{ barIndex: number; comment: string }>>; preVoiceComments: string[][]; trailingComments: string[] } {
   const voiceTokens: Map<string, AbcToken[]> = new Map();
-  let currentVoice = '1';
+  // Music before any V: belongs to the first voice the header declared
+  let currentVoice = initialVoice;
   voiceTokens.set(currentVoice, []);
   let isContinuation = false; // true if previous line ended with \
   const inlineVoiceMarkers: Map<string, string> = new Map(); // voiceId -> original [V:...] text
@@ -594,6 +595,8 @@ function tokenizeBody(bodyLines: string[]): { tokens: AbcToken[][]; voiceIds: st
   const groupBarCounts: number[][] = []; // groupBarCounts[groupIdx][voiceInGroupIdx] = number of bars
   let currentGroupBarCounts: number[] = [];
   let currentVoiceBarCount = 0;
+  // Whether the voice has music since its last bar line
+  const voiceHasContent = new Map<string, boolean>();
   // Per-voice bar counts (independent of group tracking)
   const voiceBarCounts: Map<string, number> = new Map();
   // Within-voice comments with their position (barIndex)
@@ -789,8 +792,15 @@ function tokenizeBody(bodyLines: string[]): { tokens: AbcToken[][]; voiceIds: st
         }
       }
       voiceTokens.get(currentVoice)!.push(token);
-      // Count bar tokens for voice interleave tracking (group-level)
-      if (token.type === 'bar') {
+      if (token.type !== 'bar' && token.type !== 'space' && token.type !== 'line_break') {
+        voiceHasContent.set(currentVoice, true);
+      }
+      // Count the bars that close a measure, for voice interleave tracking
+      // (group-level). A leading |: on an empty measure closes nothing.
+      const closesMeasure = token.type === 'bar' && (voiceHasContent.get(currentVoice) ||
+        ['end-repeat', 'final', 'double-repeat', 'end-repeat-final'].includes(token.barType ?? ''));
+      if (token.type === 'bar') voiceHasContent.set(currentVoice, false);
+      if (closesMeasure) {
         currentVoiceBarCount++;
         // Also track per-voice bar counts (global, not per-group)
         voiceBarCounts.set(currentVoice, (voiceBarCounts.get(currentVoice) || 0) + 1);
@@ -1121,6 +1131,11 @@ function tokenizeMusicLine(line: string): AbcToken[] {
 
     // ABC shorthand decorations (. ~ H J L M O P R S T u v)
     // These appear as standalone characters before the note they decorate
+    if (ABC_SHORTHAND_DECORATIONS.has(ch) && i + 1 === line.length && /[A-Za-z]/.test(ch)) {
+      tokens.push({ type: 'decoration', value: ch });
+      i++;
+      continue;
+    }
     if (ABC_SHORTHAND_DECORATIONS.has(ch) && i + 1 < line.length) {
       const nextCh = line[i + 1];
       // Treat as decoration if followed by a note, chord, rest, grace group,
@@ -1128,7 +1143,9 @@ function tokenizeMusicLine(line: string): AbcToken[] {
       if (isNoteStart(nextCh) || nextCh === '[' || nextCh === '{' ||
         nextCh === 'z' || nextCh === 'Z' || nextCh === 'x' || nextCh === 'X' || nextCh === 'y' ||
         ABC_SHORTHAND_DECORATIONS.has(nextCh) ||
-        nextCh === '(' || nextCh === '!' || nextCh === '+' || nextCh === '"') {
+        nextCh === '(' || nextCh === '!' || nextCh === '+' || nextCh === '"' ||
+        // A letter decoration may also close a bar on its own: dBG O| (coda)
+        (/[A-Za-z]/.test(ch) && (nextCh === '|' || nextCh === ' '))) {
         tokens.push({ type: 'decoration', value: ch });
         i++;
         continue;
@@ -1768,6 +1785,8 @@ function buildMeasures(
   let tupletState: { p: number; q: number; remaining: number; total: number } | null = null;
   // Head note of the chord being built, so the chord counts once toward a tuplet
   let chordHead: NoteEntry | null = null;
+  // Slur stops written inside the chord brackets being collected
+  const pendingChordSlurStops: number[] = [];
   // Queue preserving the original order of chord symbols, annotations and
   // decorations that become <direction> entries ahead of the note they precede
   const pendingPreNoteItems: MeasureEntry[] = [];
@@ -2141,6 +2160,13 @@ function buildMeasures(
               if (!inGrace) chordHead = entry;
             }
           }
+          // Slurs closed inside the brackets end on the chord's last note
+          const lastNote = currentEntries[currentEntries.length - 1];
+          for (const number of pendingChordSlurStops.splice(0)) {
+            if (lastNote?.type !== 'note') break;
+            if (!lastNote.notations) lastNote.notations = [];
+            lastNote.notations.push({ type: 'slur', slurType: 'stop', number });
+          }
           // Second half of a broken rhythm: the whole chord takes the other length
           if (pendingBrokenRhythm) {
             const lengthen = pendingBrokenRhythm[0] === '<';
@@ -2263,7 +2289,11 @@ function buildMeasures(
         break;
 
       case 'slur_end':
-        if (slurDepth > 0) {
+        if (slurDepth > 0 && inChord) {
+          // Inside a chord ([FA)]): the chord isn't built yet, so stop on it at chord_end
+          slurDepth--;
+          pendingChordSlurStops.push(slurDepth + 1);
+        } else if (slurDepth > 0) {
           slurDepth--;
           // Add slur stop to the most recent note
           for (let ei = currentEntries.length - 1; ei >= 0; ei--) {
@@ -3015,7 +3045,7 @@ function parseTune(lines: string[], defaults: string[] = []): Score {
     header.composer ??= inherited.composer;
   }
   const bodyLines = lines.slice(bodyStartIndex);
-  const { tokens: voiceTokensList, voiceIds, inlineVoiceMarkers, voiceDeclarationLines, bodyComments, bodyDirectives, wFields, voiceInterleavePattern, groupBarCounts, voiceComments, preVoiceComments, trailingComments } = tokenizeBody(bodyLines);
+  const { tokens: voiceTokensList, voiceIds, inlineVoiceMarkers, voiceDeclarationLines, bodyComments, bodyDirectives, wFields, voiceInterleavePattern, groupBarCounts, voiceComments, preVoiceComments, trailingComments } = tokenizeBody(bodyLines, header.voices?.[0]?.id ?? '1');
   const score = buildScore(header, voiceTokensList, voiceIds, headerFieldOrder, inlineVoiceMarkers, voiceDeclarationLines, bodyComments, bodyDirectives, wFields, voiceInterleavePattern, groupBarCounts, voiceComments, preVoiceComments, trailingComments);
 
   // Detect if the file uses explicit /2 duration form (e.g., "f/2") vs shorthand "f/"

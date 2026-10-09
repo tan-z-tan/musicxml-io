@@ -43,6 +43,9 @@
 - Bundle size: importing only `parse` now costs ~47 KB minified / ~13 KB gzipped (was ~49 KB / ~14 KB); the txml dependency is gone.
 
 ### Fixed
+- ABC multi-voice tunes: switching back to a voice declared only in the header (`V:1` before `K:`) wrote no `V:` line, so the following bars landed in the other voice; body `V:` lines are now used in order. Music before the first body `V:` belongs to the voice the header declared (it went to an extra voice "1"), and voice groups count only the bars that close a measure (a leading `|:` was counted).
+- ABC slurs ending on a later note of a chord (`[DB,][B,D])`, `[FA)]`) are kept; only the first note's slur end was written, and a `)` inside the brackets stopped the slur on the previous chord.
+- A letter decoration that closes a bar on its own (`dBG O|`, as written for `!coda!`) is read; it used to be dropped.
 - `autoBeam` beams dotted eighths: it only accepted notes of at most half a beat, so a dotted eighth + 16th (`C<D`, `A>B`) was left unbeamed and written apart in ABC ([#116](https://github.com/tan-z-tan/musicxml-io/issues/116)). It now beams any eighth or shorter note by type and adds secondary beams and hooks for 16ths and shorter, using the same rules as the ABC parser (`src/beams.ts`).
 - ABC lyrics follow the `w:` symbols of ABC 2.1 §5.1: `_` holds the previous syllable over the next note (MusicXML `<extend>`), `*` skips a note, `~` joins words on one note, `\-` is a literal hyphen and `|` jumps to the next bar. They used to end up in the syllable text (`the_`, `\`, `b|c`). A `w:` line now starts after the last note the previous one reached, so a skipped or held note no longer pulls the next line's lyrics onto it, and the serializer writes `*` / `_` / `-` placeholders so syllables stay on their notes.
 - ABC text escapes are decoded in titles, composers, lyrics and annotations: backslash accents (`\'e`, `\"u`, `\cc`, `\ss` …), `\uXXXX` and HTML entities (`&eacute;`).

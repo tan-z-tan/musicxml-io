@@ -820,6 +820,8 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
 
     // Track V: declaration line index for round-trip
     let voiceDeclIdx = 0;
+    // Voice the written body is currently in (null before the first group)
+    let lastVoice: string | null = null;
 
     let commentIdx = 0;
     for (let gi = 0; gi < voiceInterleavePattern.length; gi++) {
@@ -830,11 +832,9 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
         if (partIdx === undefined) continue;
         const measStrings = partMeasureStrings[partIdx];
 
-        // Find the body V: line for this voice ID
-        const bodyVoiceLineIdx = bodyVoiceLines.findIndex((l, idx) => {
-          const m = l.match(/^V:\s*(\S+)/);
-          return m && m[1] === voiceId && idx >= voiceDeclIdx;
-        });
+        // The next body V: line, if it switches to this voice (lines are used in order)
+        const nextVoiceLine = bodyVoiceLines[voiceDeclIdx]?.match(/^V:\s*(\S+)/);
+        const bodyVoiceLineIdx = nextVoiceLine && nextVoiceLine[1] === voiceId ? voiceDeclIdx : -1;
 
         if (bodyVoiceLineIdx >= 0) {
           // Output pre-voice comments for this declaration
@@ -845,9 +845,11 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
           }
           lines.push(bodyVoiceLines[bodyVoiceLineIdx]);
           voiceDeclIdx = bodyVoiceLineIdx + 1;
+        } else if (voiceFullLines[voiceId] && (lastVoice === null || lastVoice === voiceId)) {
+          // Voice declared in header only and already current - no V: line needed
         } else if (voiceFullLines[voiceId]) {
-          // Voice declared in header only (no body V: line) - don't output V: line
-          // (it was already output in the header section)
+          // Switching back to a header-declared voice still needs a V: line
+          lines.push(`V:${voiceId}`);
         } else {
           // Fallback: construct V: line
           let voiceLine = `V:${voiceId}`;
@@ -860,6 +862,8 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
           }
           lines.push(voiceLine);
         }
+
+        lastVoice = voiceId;
 
         // Output measures for this voice in this group
         const voiceIdxInGroup = group.indexOf(voiceId);
@@ -1367,6 +1371,10 @@ function serializeMeasureEntries(
             chordNoteStr += '-';
           }
           chordPitches.push(chordNoteStr);
+          // A slur may end on any note of the chord: ([CE][DF)] / ([CE][DF])
+          for (const nt of note.notations ?? []) {
+            if (nt.type === 'slur' && nt.slurType === 'stop') chordSlurEnd += ')';
+          }
           break;
         }
 
@@ -1447,7 +1455,7 @@ function serializeMeasureEntries(
             for (const notation of note.notations) {
               if (notation.type === 'slur') {
                 if (notation.slurType === 'start') chordSlurStart = '(';
-                if (notation.slurType === 'stop') chordSlurEnd = ')';
+                if (notation.slurType === 'stop') chordSlurEnd += ')';
               }
             }
           }

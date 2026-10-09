@@ -1731,3 +1731,26 @@ describe('ABC lyric escaping', () => {
     expect(back.lyrics[0].text).toBe('a\\b-c d');
   });
 });
+
+describe('ABC multi-voice and bar-end decorations (The Session)', () => {
+  const tokensOf = (abc: string) => parseAbcTunes(abc).map(s => s.parts.map(p => p.measures.length));
+
+  it('switches back to a voice declared only in the header', () => {
+    const abc = 'X:1\nM:3/4\nL:1/8\nV:1\nK:D\n|:ag|f2 fg ef|d2 A2 dc|\nV:2\n|:fe|d2 d2 A2|FE F2 F2|\nV:1\nB2 g2 fd|e2 e2:|\nV:2\nGA Bc dF|AB cB:|\n';
+    const once = parseAbc(abc);
+    const twice = parseAbc(serializeAbc(once));
+    expect(twice.parts.map(p => p.measures.length)).toEqual(once.parts.map(p => p.measures.length));
+    expect(tokensOf(serializeAbc(once))).toEqual([[5, 5]]);
+  });
+
+  it('keeps a letter decoration that closes a bar on its own (dBG O|)', () => {
+    const out = serializeAbc(parseAbc('X:1\nL:1/8\nK:G\ndBG !coda!|AGE DEF|\n'));
+    const s = parseAbc(out);
+    expect(s.parts[0].measures[0].entries.some(e => e.type === 'direction')).toBe(true);
+  });
+
+  it('keeps a slur that ends on a later note of a chord', () => {
+    const body = (b: string) => serializeAbc(parseAbc(`X:1\nL:1/8\nK:D\n${b}\n`)).split('\n').slice(3).join('').trim();
+    expect(body('([DA][FA)][EA][AD] z4|')).toContain('[FA])');
+  });
+});
