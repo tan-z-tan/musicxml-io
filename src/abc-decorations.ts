@@ -101,16 +101,14 @@ const DECORATIONS: DecorationDef[] = [
   { spellings: ['dacoda'], canonical: '!dacoda!', target: { kind: 'words', text: 'Da Coda' } },
   { spellings: ['dacapo'], canonical: '!dacapo!', target: { kind: 'words', text: 'Da Capo' } },
   { spellings: ['fine'], canonical: '!fine!', target: { kind: 'words', text: 'Fine' } },
+  // Fingerings !0! .. !5!
+  { spellings: ['0'], canonical: '!0!', target: { kind: 'fingering', fingering: '0' } },
+  { spellings: ['1'], canonical: '!1!', target: { kind: 'fingering', fingering: '1' } },
+  { spellings: ['2'], canonical: '!2!', target: { kind: 'fingering', fingering: '2' } },
+  { spellings: ['3'], canonical: '!3!', target: { kind: 'fingering', fingering: '3' } },
+  { spellings: ['4'], canonical: '!4!', target: { kind: 'fingering', fingering: '4' } },
+  { spellings: ['5'], canonical: '!5!', target: { kind: 'fingering', fingering: '5' } },
 ];
-
-// Fingerings !0! .. !5!
-for (let n = 0; n <= 5; n++) {
-  DECORATIONS.push({
-    spellings: [String(n)],
-    canonical: `!${n}!`,
-    target: { kind: 'fingering', fingering: String(n) },
-  });
-}
 
 /** ABC dynamics decorations, e.g. `!mf!`. */
 export const ABC_DYNAMICS = new Set<string>([
@@ -130,12 +128,16 @@ export const ABC_SHORTHAND_DECORATIONS = new Set<string>([
   '.', '~', 'H', 'J', 'L', 'M', 'O', 'P', 'R', 'S', 'T', 'u', 'v',
 ]);
 
-const BY_SPELLING = new Map<string, DecorationDef>();
-for (const def of DECORATIONS) {
-  for (const spelling of def.spellings) {
-    BY_SPELLING.set(spelling, def);
+// Keep each lookup's initialization removable when its consumer is unused.
+const BY_SPELLING = /* @__PURE__ */ (() => {
+  const map = new Map<string, DecorationDef>();
+  for (const def of DECORATIONS) {
+    for (const spelling of def.spellings) {
+      map.set(spelling, def);
+    }
   }
-}
+  return map;
+})();
 
 /** Stable key identifying a decoration target, used for the reverse lookup. */
 function targetKey(target: AbcDecorationTarget): string {
@@ -155,10 +157,13 @@ function targetKey(target: AbcDecorationTarget): string {
   }
 }
 
-const CANONICAL_BY_TARGET = new Map<string, string>();
-for (const def of DECORATIONS) {
-  CANONICAL_BY_TARGET.set(targetKey(def.target), def.canonical);
-}
+const CANONICAL_BY_TARGET = /* @__PURE__ */ (() => {
+  const map = new Map<string, string>();
+  for (const def of DECORATIONS) {
+    map.set(targetKey(def.target), def.canonical);
+  }
+  return map;
+})();
 
 /**
  * Resolve an ABC decoration to its semantic target.

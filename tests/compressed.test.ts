@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import { strToU8, unzipSync, zipSync } from 'fflate';
 import { parse } from '../src';
 import { serialize } from '../src';
 import {
@@ -27,6 +28,54 @@ describe('Compressed MusicXML (.mxl)', () => {
   });
 
   describe('parseCompressed', () => {
+    const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+
+    it('only inflates the manifest and selected score, skipping embedded assets', () => {
+      const archive = zipSync({
+        'images/preview.bin': new Uint8Array(128).fill(42),
+        'META-INF/container.xml': strToU8('<container><rootfiles><rootfile full-path="scores/main.musicxml"/></rootfiles></container>'),
+        'scores/main.musicxml': strToU8(xml),
+        'other.xml': strToU8('not a score'),
+      });
+      // Corrupt the first asset's DEFLATE stream. Unzipping the entire archive
+      // would fail, while reading just the requested score must still succeed.
+      const view = new DataView(archive.buffer, archive.byteOffset, archive.byteLength);
+      const assetStart = 30 + view.getUint16(26, true) + view.getUint16(28, true);
+      archive[assetStart] = 7; // reserved DEFLATE block type
+      expect(() => unzipSync(archive)).toThrow();
+      expect(parseCompressed(archive).metadata.workTitle).toBe('Single Note');
+    });
+
+    it.each(['piece.xml', 'score.xml', 'musicxml.xml'])(
+      'retains manifest-free selection for %s',
+      (name) => {
+        const files = { [name]: strToU8(xml) };
+        if (name !== 'piece.xml') files['other.xml'] = strToU8('not a score');
+        expect(parseCompressed(zipSync(files)).metadata.workTitle).toBe('Single Note');
+      },
+    );
+
+    it('prefers score.xml when both common fallback names exist', () => {
+      const archive = zipSync({
+        'musicxml.xml': strToU8('not the selected score'),
+        'score.xml': strToU8(xml),
+      });
+      expect(parseCompressed(archive).metadata.workTitle).toBe('Single Note');
+    });
+
+    it('reports missing manifest targets instead of selecting another XML file', () => {
+      const archive = zipSync({
+        'META-INF/container.xml': strToU8('<rootfile full-path="missing.xml"/>'),
+        'score.xml': strToU8(xml),
+      });
+      expect(() => parseCompressed(archive)).toThrow('Could not find MusicXML file');
+    });
+
+    it('rejects ambiguous archives without a manifest', () => {
+      const archive = zipSync({ 'one.xml': strToU8(xml), 'two.xml': strToU8(xml) });
+      expect(() => parseCompressed(archive)).toThrow('Could not find MusicXML file');
+    });
+
     it('should parse .mxl file from LilyPond test suite', () => {
       const mxlPath = join(lilypondPath, '90a-Compressed-MusicXML.mxl');
       const data = readFileSync(mxlPath);

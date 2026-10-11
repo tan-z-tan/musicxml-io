@@ -158,7 +158,7 @@ const NOTE_TYPE_MAP: Record<number, NoteType> = {
  * NOTE_TYPE_MAP as a pre-parsed array, in the same iteration order.
  * `durationToNoteType` runs once per note, so it must not rebuild this.
  */
-const NOTE_TYPE_ENTRIES: [number, NoteType][] = Object.entries(NOTE_TYPE_MAP)
+const NOTE_TYPE_ENTRIES: [number, NoteType][] = /* @__PURE__ */ Object.entries(NOTE_TYPE_MAP)
   .map(([quarterNotes, type]) => [parseFloat(quarterNotes), type]);
 
 // Key signature mapping

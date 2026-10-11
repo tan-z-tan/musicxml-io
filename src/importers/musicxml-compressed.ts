@@ -8,10 +8,19 @@ import type { Score } from '../types';
  * @returns The parsed Score
  */
 export function parseCompressed(data: Uint8Array): Score {
-  const files = unzipSync(data);
-
   // Find the container.xml to get the rootfile path
   const containerPath = 'META-INF/container.xml';
+  const xmlFiles: string[] = [];
+  // Scan the directory, but only inflate the manifest. MXL archives can also
+  // contain large images, PDFs, audio and other scores we never need to decode.
+  const files = unzipSync(data, {
+    filter: ({ name }) => {
+      if (name.endsWith('.xml') && !name.startsWith('META-INF')) {
+        xmlFiles.push(name);
+      }
+      return name === containerPath;
+    },
+  });
   const containerData = files[containerPath];
 
   let rootFilePath: string | undefined;
@@ -28,17 +37,13 @@ export function parseCompressed(data: Uint8Array): Score {
   // If no container.xml, look for common patterns
   if (!rootFilePath) {
     // Try to find the main XML file
-    const xmlFiles = Object.keys(files).filter(
-      (name) => name.endsWith('.xml') && !name.startsWith('META-INF')
-    );
-
     if (xmlFiles.length === 1) {
       rootFilePath = xmlFiles[0];
     } else {
       // Look for common names
       const commonNames = ['score.xml', 'musicxml.xml'];
       for (const name of commonNames) {
-        if (files[name]) {
+        if (xmlFiles.includes(name)) {
           rootFilePath = name;
           break;
         }
@@ -46,11 +51,16 @@ export function parseCompressed(data: Uint8Array): Score {
     }
   }
 
-  if (!rootFilePath || !files[rootFilePath]) {
+  if (!rootFilePath) {
     throw new Error('Could not find MusicXML file in compressed archive');
   }
 
-  const xmlData = files[rootFilePath];
+  const xmlData = unzipSync(data, {
+    filter: ({ name }) => name === rootFilePath,
+  })[rootFilePath];
+  if (!xmlData) {
+    throw new Error('Could not find MusicXML file in compressed archive');
+  }
   const xmlString = strFromU8(xmlData);
 
   return parse(xmlString);
@@ -64,25 +74,6 @@ export function parseCompressed(data: Uint8Array): Score {
 export function isCompressed(data: Uint8Array): boolean {
   // ZIP files start with PK (0x50 0x4B)
   return data.length >= 2 && data[0] === 0x50 && data[1] === 0x4b;
-}
-
-/**
- * Detect encoding from BOM and decode Uint8Array to string
- * Supports UTF-8, UTF-16BE, UTF-16LE
- */
-function decodeXmlBytes(data: Uint8Array): string {
-  // UTF-16 BE BOM: FE FF
-  if (data.length >= 2 && data[0] === 0xFE && data[1] === 0xFF) {
-    return new TextDecoder('utf-16be').decode(data);
-  }
-
-  // UTF-16 LE BOM: FF FE
-  if (data.length >= 2 && data[0] === 0xFF && data[1] === 0xFE) {
-    return new TextDecoder('utf-16le').decode(data);
-  }
-
-  // Default to UTF-8 (TextDecoder handles UTF-8 BOM automatically)
-  return new TextDecoder('utf-8').decode(data);
 }
 
 /**
@@ -100,7 +91,6 @@ export function parseAuto(data: Uint8Array | string): Score {
     return parseCompressed(data);
   }
 
-  // Decode with encoding detection (handles UTF-16 and UTF-8)
-  const xmlString = decodeXmlBytes(data);
-  return parse(xmlString);
+  // The uncompressed parser already handles UTF-8 and UTF-16 BOMs.
+  return parse(data);
 }
