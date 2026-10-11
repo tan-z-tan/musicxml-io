@@ -22,6 +22,10 @@ describe('File Operations', () => {
   });
 
   describe('parseFile', () => {
+    it('loads the ABC parser on demand', async () => {
+      const score = await parseFile(join(fixturesPath, 'abc/twinkle.abc'));
+      expect(score.parts.length).toBeGreaterThan(0);
+    });
     it('should parse .xml file', async () => {
       const filePath = join(fixturesPath, 'basic/single-note.xml');
       const score = await parseFile(filePath);
@@ -146,6 +150,22 @@ describe('File Operations', () => {
   });
 
   describe('serializeToFile', () => {
+    it('loads the ABC serializer on demand and reads its output back', async () => {
+      const score = await parseFile(join(fixturesPath, 'abc/twinkle.abc'));
+      const outputPath = join(tempPath, 'lazy-output.abc');
+      cleanupFiles.push(outputPath);
+      await serializeToFile(score, outputPath);
+      expect((await parseFile(outputPath)).parts.length).toBe(score.parts.length);
+    });
+
+    it.each(['mid', 'midi'])('loads the MIDI exporter on demand for .%s', async (extension) => {
+      const score = await parseFile(join(fixturesPath, 'basic/single-note.xml'));
+      const outputPath = join(tempPath, `lazy-output.${extension}`);
+      cleanupFiles.push(outputPath);
+      await serializeToFile(score, outputPath);
+      expect(readFileSync(outputPath).subarray(0, 4).toString()).toBe('MThd');
+    });
+
     it('should write .xml file', async () => {
       const sourcePath = join(fixturesPath, 'basic/single-note.xml');
       const score = await parseFile(sourcePath);

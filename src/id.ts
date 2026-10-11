@@ -17,7 +17,7 @@ const POOL_SIZE = ID_LENGTH * 128;
 let pool: Uint8Array<ArrayBuffer> | undefined;
 let poolOffset = 0;
 
-function randomBytes(): Uint8Array {
+function fillPool(): void {
   if (pool === undefined || poolOffset + ID_LENGTH > POOL_SIZE) {
     if (pool === undefined) {
       pool = new Uint8Array(POOL_SIZE);
@@ -25,9 +25,6 @@ function randomBytes(): Uint8Array {
     globalThis.crypto.getRandomValues(pool);
     poolOffset = 0;
   }
-  const bytes = pool.subarray(poolOffset, poolOffset + ID_LENGTH);
-  poolOffset += ID_LENGTH;
-  return bytes;
 }
 
 /**
@@ -43,10 +40,13 @@ function randomBytes(): Uint8Array {
  * @returns A unique 11-character ID string
  */
 export function generateId(): string {
-  const bytes = randomBytes();
+  fillPool();
+  // Read directly from the pool instead of allocating a view for every ID.
+  const bytes = pool!;
+  const end = poolOffset + ID_LENGTH;
   let id = 'i';
-  for (let i = 0; i < ID_LENGTH; i++) {
-    id += ALPHABET[bytes[i] & 63];
+  for (; poolOffset < end; poolOffset++) {
+    id += ALPHABET[bytes[poolOffset] & 63];
   }
   return id;
 }

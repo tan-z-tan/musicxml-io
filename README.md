@@ -76,6 +76,8 @@ const output = serialize(transposed);
 
 ### ABC Notation
 
+For MusicXML-first applications, see [Bundle size and optional formats](#bundle-size-and-optional-formats).
+
 ```typescript
 import { parseAbc, serializeAbc } from 'musicxml-io';
 
@@ -95,10 +97,67 @@ import { parseAbcTunes, serializeAbcTunes } from 'musicxml-io';
 const tunes = parseAbcTunes(abcString);   // Score[]
 const book = serializeAbcTunes(tunes);
 
-// Auto-detect format (MusicXML, .mxl, or ABC)
+// Auto-detect MusicXML or .mxl (ABC uses parseAbc)
 import { parseAuto } from 'musicxml-io';
 const score2 = parseAuto(input);
 ```
+
+### Bundle size and optional formats
+
+The existing `musicxml-io` and `musicxml-io/browser` exports remain compatible.
+Unused ABC initialization can now be tree-shaken away. For applications that
+load optional formats dynamically, use the format-specific entry points:
+
+| Import | Contents |
+|--------|----------|
+| `musicxml-io/core` | MusicXML/XML/MXL, query, operations, accessors, validation, IDs and their types; no ABC, MIDI or file I/O |
+| `musicxml-io/musicxml` | `parse`, `serialize`, `SerializeOptions` and score types; no ZIP dependency |
+| `musicxml-io/musicxml-compressed` | `parseAuto`, `parseCompressed`, `isCompressed`, `serializeCompressed` |
+| `musicxml-io/abc` | `parseAbc`, `parseAbcTunes`, `serializeAbc`, `serializeAbcTunes`, `AbcSerializeOptions` |
+| `musicxml-io/midi` | `exportMidi`, `exportMidiWithTimingMap` and MIDI export types |
+| `musicxml-io/file` | Node.js `parseFile`, `serializeToFile`, `decodeBuffer`; optional codecs load on demand |
+
+The existing `/query`, `/operations` and `/accessors` entry points remain available.
+All entry points support ESM and CommonJS, with TypeScript declarations.
+
+```typescript
+import { parseAuto, serialize, generateId } from 'musicxml-io/core';
+import type { Score } from 'musicxml-io/core';
+
+// Normal MusicXML / MXL loading remains synchronous.
+const score = parseAuto(xmlOrMxl);
+
+// Call only when the user opens an ABC file.
+async function openAbc(text: string): Promise<Score> {
+  const { parseAbc } = await import('musicxml-io/abc');
+  return parseAbc(text);
+}
+
+async function saveMidi(score: Score): Promise<Uint8Array> {
+  const { exportMidi } = await import('musicxml-io/midi');
+  return exportMidi(score);
+}
+```
+
+For reliable code splitting, migrate **all runtime imports** in the relevant
+application graph from the full root/browser entry to `/core` or narrower
+entry points. A full entry also re-exports ABC and MIDI; some bundlers can
+hoist those into an initially loaded shared chunk when a dynamic import of
+the same format exists elsewhere. Type-only root imports do not add runtime code.
+Dynamic imports need code-splitting support in the consuming bundler.
+
+For `musicxml-layout`, its MusicXML re-exports and other runtime imports can use
+`/core` (or `/musicxml`, `/query`, `/accessors` as appropriate). For Octava,
+`src/data/musicxml-importer.ts` currently imports `parseAbc` eagerly. Load `/abc`
+only on the ABC path, and finish the asynchronous parsing **before** entering
+the synchronous Yjs transaction in `ScoreDataManager.importFromMusicXML`.
+Both projects need the version containing these entry points installed first.
+
+`npm run check:bundle` builds the package, measures minified/gzipped consumer
+bundles, checks that ABC stays out of initial MusicXML bundles (including a
+lazy ABC consumer), and smoke-tests the published ESM and CommonJS exports.
+`npm run bench:loading` measures XML/MXL parsing and ID generation; the MXL
+benchmark includes an embedded asset to verify that unused files are not inflated.
 
 `parseAbc` returns the first tune of a multi-tune file; use `parseAbcTunes`
 to get them all.

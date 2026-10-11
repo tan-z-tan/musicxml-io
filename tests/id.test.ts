@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import {
@@ -21,6 +21,30 @@ const fixturesPath = join(__dirname, 'fixtures');
 
 describe('Unique Element IDs', () => {
   describe('generateId', () => {
+    it('consumes each pool byte once and refills at ID boundaries', async () => {
+      vi.resetModules();
+      const { generateId: freshGenerateId } = await import('../src/id');
+      let refills = 0;
+      const random = vi.spyOn(globalThis.crypto, 'getRandomValues').mockImplementation((array) => {
+        refills++;
+        const bytes = array as Uint8Array;
+        for (let i = 0; i < bytes.length; i++) bytes[i] = (i + refills) & 255;
+        return array;
+      });
+      try {
+        const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-';
+        for (let n = 0; n < 260; n++) {
+          const offset = (n % 128) * 10;
+          const refill = Math.floor(n / 128) + 1;
+          const expected = 'i' + Array.from({ length: 10 }, (_, i) => alphabet[(offset + i + refill) & 63]).join('');
+          expect(freshGenerateId()).toBe(expected);
+        }
+        expect(random).toHaveBeenCalledTimes(3);
+      } finally {
+        random.mockRestore();
+      }
+    });
+
     it('should generate IDs with correct format', () => {
       const id = generateId();
       expect(id).toMatch(/^i[A-Za-z0-9_-]{10}$/);
