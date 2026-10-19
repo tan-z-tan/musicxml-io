@@ -95,7 +95,8 @@
     "release:minor": "bash scripts/release.sh minor",
     "release:major": "bash scripts/release.sh major",
     "check:bundle": "npm run build && node scripts/check-bundle.mjs",
-    "bench:loading": "npm run build && node scripts/bench-loading.mjs"
+    "bench:loading": "npm run build && node scripts/bench-loading.mjs",
+    "bench:io": "npm run build && node scripts/bench-io.mjs"
   },
   "keywords": [
     "musicxml",

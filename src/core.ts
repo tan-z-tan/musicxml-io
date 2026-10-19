@@ -90,9 +90,9 @@ export { parse } from './importers/musicxml';
 export { parseCompressed, isCompressed, parseAuto } from './importers/musicxml-compressed';
 
 // Exporters
-export { serialize } from './exporters/musicxml';
+export { serialize, serializeUnchecked } from './exporters/musicxml';
 export { serializeCompressed } from './exporters/musicxml-compressed';
-export type { SerializeOptions } from './exporters/musicxml';
+export type { SerializeOptions, SerializeUncheckedOptions } from './exporters/musicxml';
 
 // Query (all read operations)
 export {

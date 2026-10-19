@@ -77,6 +77,8 @@ interface XmlNode {
   tagName: string;
   attributes: Record<string, string>;
   children: XmlChild[];
+  // Completed score measures no longer need their temporary XML subtree.
+  measure?: Measure;
 }
 type XmlChild = XmlNode | string;
 
@@ -124,6 +126,7 @@ const EMPTY_ATTRS: Record<string, string> = Object.freeze({});
 const EMPTY_CHILDREN: XmlChild[] = Object.freeze([]) as unknown as XmlChild[];
 
 // Character codes used by the scanner
+const LT = 60; // <
 const GT = 62; // >
 const SLASH = 47; // /
 const BANG = 33; // !
@@ -199,6 +202,11 @@ function parseXml(xml: string): XmlChild[] {
       if (top !== undefined && xml.startsWith(top.tagName, lt + 2)) {
         const after = lt + 2 + top.tagName.length;
         if (xml.charCodeAt(after) === GT) {
+          if (stack.length === 3 && top.tagName === 'measure' &&
+              stack[1].tagName === 'part' && stack[0].tagName === 'score-partwise') {
+            top.measure = parseMeasure(top.children, top.attributes);
+            top.children = EMPTY_CHILDREN;
+          }
           stack.pop();
           children = stack.length > 0 ? stack[stack.length - 1].children : root;
           pos = after + 1;
@@ -289,7 +297,8 @@ function parseXml(xml: string): XmlChild[] {
           let value: string;
           if (ch === DQUOTE || ch === SQUOTE) {
             const valStart = ++i;
-            while (i < len && xml.charCodeAt(i) !== ch) i++;
+            const quoteEnd = xml.indexOf(ch === DQUOTE ? '"' : "'", i);
+            i = quoteEnd === -1 ? len : quoteEnd;
             value = xml.slice(valStart, i);
             i++; // past the closing quote
           } else {
@@ -316,6 +325,19 @@ function parseXml(xml: string): XmlChild[] {
         // common in MusicXML; they never get children, so share one array.
         children.push({ tagName, attributes, children: EMPTY_CHILDREN });
       } else {
+        // Scalar leaves (duration, step, voice, type, beam, ...) dominate
+        // MusicXML. Consume their text and closing tag together, avoiding
+        // a stack push/pop and another trip through the scanner.
+        if (xml.charCodeAt(i) !== LT) {
+          const textEnd = xml.indexOf('<', i);
+          const closeEnd = textEnd + tagName.length + 2;
+          if (textEnd !== -1 && xml.charCodeAt(textEnd + 1) === SLASH &&
+              xml.startsWith(tagName, textEnd + 2) && xml.charCodeAt(closeEnd) === GT) {
+            children.push({ tagName, attributes, children: [decodeXmlEntities(xml.slice(i, textEnd))] });
+            pos = closeEnd + 1;
+            continue;
+          }
+        }
         const node: XmlNode = { tagName, attributes, children: [] };
         children.push(node);
         stack.push(node);
@@ -1129,7 +1151,7 @@ function parseParts(elements: XmlChild[]): Part[] {
         if (measureEl.tagName === 'measure') {
           const measureAttrs = measureEl.attributes as Record<string, string>;
           const measureContent = measureEl.children;
-          part.measures.push(parseMeasure(measureContent, measureAttrs));
+          part.measures.push(measureEl.measure ?? parseMeasure(measureContent, measureAttrs));
         }
       }
 

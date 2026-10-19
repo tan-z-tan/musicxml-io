@@ -1,5 +1,6 @@
 // MusicXML exporters
-export { serialize, SerializeOptions } from './musicxml';
+export { serialize, serializeUnchecked } from './musicxml';
+export type { SerializeOptions, SerializeUncheckedOptions } from './musicxml';
 export { serializeCompressed } from './musicxml-compressed';
 
 // MIDI exporter
