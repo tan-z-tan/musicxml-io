@@ -111,7 +111,7 @@ load optional formats dynamically, use the format-specific entry points:
 | Import | Contents |
 |--------|----------|
 | `musicxml-io/core` | MusicXML/XML/MXL, query, operations, accessors, validation, IDs and their types; no ABC, MIDI or file I/O |
-| `musicxml-io/musicxml` | `parse`, `serialize`, `SerializeOptions` and score types; no ZIP dependency |
+| `musicxml-io/musicxml` | `parse`, `serialize`, `serializeUnchecked`, serialization options and score types; no ZIP dependency |
 | `musicxml-io/musicxml-compressed` | `parseAuto`, `parseCompressed`, `isCompressed`, `serializeCompressed` |
 | `musicxml-io/abc` | `parseAbc`, `parseAbcTunes`, `serializeAbc`, `serializeAbcTunes`, `AbcSerializeOptions` |
 | `musicxml-io/midi` | `exportMidi`, `exportMidiWithTimingMap` and MIDI export types |
@@ -153,11 +153,38 @@ only on the ABC path, and finish the asynchronous parsing **before** entering
 the synchronous Yjs transaction in `ScoreDataManager.importFromMusicXML`.
 Both projects need the version containing these entry points installed first.
 
+For export paths that do not request validation, use `serializeUnchecked` to
+keep the validator out of the bundle. Its output is identical to `serialize`
+with validation disabled (the default), and it accepts `version` and `indent`:
+
+```typescript
+import { serializeUnchecked as serialize } from 'musicxml-io/musicxml';
+
+const xml = serialize(score);
+```
+
+For example, Octava's `src/data/musicxml-exporter.ts` can use this import after
+upgrading the dependency. Keep using `serialize` for callers that pass
+`validate`, `validateOptions`, `throwOnValidationError` or `onValidation`.
+The existing `serialize` API and its validation behavior remain unchanged.
+
 `npm run check:bundle` builds the package, measures minified/gzipped consumer
 bundles, checks that ABC stays out of initial MusicXML bundles (including a
-lazy ABC consumer), and smoke-tests the published ESM and CommonJS exports.
+lazy ABC consumer), checks that unchecked export excludes validation, and
+smoke-tests the published ESM and CommonJS exports.
 `npm run bench:loading` measures XML/MXL parsing and ID generation; the MXL
 benchmark includes an embedded asset to verify that unused files are not inflated.
+`npm run bench:io` measures XML import/export at several sizes and peak import
+RSS in a separate process. The largest case repeats ActorPrelude's measures
+eight times (about 10 MB). To compare against a saved previous build, run
+`npm run bench:io -- --baseline=/absolute/path/to/previous/dist`.
+Timings are medians of nine runs, with baseline/current execution order
+alternated. No performance thresholds are imposed on shared CI machines.
+
+The importer converts completed measures immediately and releases their XML
+subtrees. The exporter joins lines per measure and avoids temporary notation
+groups on the common single-container path, reducing allocation and GC for
+large scores while preserving the existing XML formatting.
 
 `parseAbc` returns the first tune of a multi-tune file; use `parseAbcTunes`
 to get them all.
@@ -535,19 +562,21 @@ import { isRest, getPartName } from 'musicxml-io/accessors';
 ```
 
 The package declares `"sideEffects": false`, so bundlers can drop everything
-you don't import — pulling in only `parse` costs roughly 51 KB minified
-(~14 KB gzip).
+you don't import — pulling in only `parse` costs roughly 48 KB minified
+(~13 KB gzip).
 
 Approximate cost of common imports (minified / gzipped, measured with
 esbuild against the published ESM build):
 
 | Import | Size |
 |--------|------|
-| `parse` (.xml only) | ~51 KB / ~14 KB |
-| `parseAuto` (.xml + .mxl, adds fflate's unzip) | ~57 KB / ~17 KB |
-| `serialize` (includes the validator behind `validate: true`) | ~62 KB / ~15 KB |
-| `parse` + `serialize` | ~109 KB / ~28 KB |
-| everything | ~316 KB / ~78 KB |
+| `parse` (.xml only) | ~48 KB / ~13 KB |
+| `parseAuto` (.xml + .mxl, adds fflate's unzip) | ~54 KB / ~16 KB |
+| `serialize` (includes the validator behind `validate: true`) | ~58 KB / ~14 KB |
+| `serializeUnchecked` (no validator) | ~45 KB / ~10 KB |
+| `parse` + `serialize` | ~106 KB / ~27 KB |
+| `parse` + `serializeUnchecked` | ~93 KB / ~23 KB |
+| everything (browser entry) | ~324 KB / ~81 KB |
 
 The ABC notation codecs (`parseAbc`, `serializeAbc`), MIDI export, query
 helpers, operations, and the validator are all separate modules — they only

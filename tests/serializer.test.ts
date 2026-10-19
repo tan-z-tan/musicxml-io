@@ -1,8 +1,45 @@
 import { describe, it, expect } from 'vitest';
-import { serialize, parse } from '../src';
+import { serialize, serializeUnchecked, parse, type SerializeOptions } from '../src';
 import type { Score, NoteEntry, DirectionEntry, HarmonyEntry, Measure } from '../src/types';
 
 describe('Serializer', () => {
+  it.each([{}, { indent: '' }, { indent: '\t', version: '3.1' }])(
+    'writes identical XML through the unchecked API with options %j', options => {
+      const score = parse(`<score-partwise><part id="P1"><measure number="1">
+        <note><pitch><step>C</step><alter>1</alter><octave>4</octave></pitch>
+        <duration>1</duration><type>quarter</type></note></measure></part></score-partwise>`);
+      const before = JSON.stringify(score);
+      expect(serializeUnchecked(score, options)).toBe(serialize(score, options));
+      expect(JSON.stringify(score)).toBe(before);
+    },
+  );
+
+  it('preserves notation containers and interleaving', () => {
+    const notations = '<notations><articulations><staccato/></articulations>' +
+      '<slur number="1" type="start"/><articulations><accent/></articulations>' +
+      '<ornaments><trill-mark/><turn/></ornaments>' +
+      '<technical><fingering>2</fingering><string>1</string></technical></notations>' +
+      '<notations><tied type="stop"/></notations>';
+    const score = parse(`<score-partwise><part id="P1"><measure number="1">
+      <note><rest/><duration>1</duration>${notations}</note></measure></part></score-partwise>`);
+    const xml = serializeUnchecked(score).replace(/>\s+</g, '><');
+    expect(xml).toContain(notations);
+  });
+
+  it('resolves formatting before invoking the validation callback', () => {
+    const score: Score = { metadata: {}, partList: [], parts: [], version: '4.0' };
+    const options: SerializeOptions = {
+      version: '3.1', indent: '\t', validate: true,
+      onValidation: () => {
+        score.version = '2.0';
+        options.version = '1.0';
+        options.indent = '    ';
+      },
+    };
+    expect(serialize(score, options)).toBe(serializeUnchecked(score, { version: '3.1', indent: '\t' }));
+    expect(score.version).toBe('2.0');
+  });
+
   it('should serialize a simple score', () => {
     const score: Score = {
       metadata: {

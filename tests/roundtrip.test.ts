@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
-import { parse, parseCompressed, serialize, serializeCompressed } from '../src';
+import { parse, parseCompressed, serialize, serializeUnchecked, serializeCompressed } from '../src';
 import { decodeBuffer } from '../src/file';
 
 const fixturesPath = join(__dirname, 'fixtures');
@@ -47,6 +47,7 @@ describe('Round-trip', () => {
         const original = decodeBuffer(buffer);
         score = parse(original);
         const exported = serialize(score);
+        expect(serializeUnchecked(score)).toBe(exported);
         reparsed = parse(exported);
       }
 

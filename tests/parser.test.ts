@@ -6,6 +6,28 @@ import { parse, getClefChanges } from '../src';
 const fixturesPath = join(__dirname, 'fixtures');
 
 describe('Parser', () => {
+  it.each(['</measure>', '</measure >', '<unclosed></measure>', ''])(
+    'preserves measures across parts with closing sequence %j', (closing) => {
+      const score = parse(`<score-partwise version="4.0">
+        <part id="P1"><measure id="m1" number="1">
+          <attributes><divisions>4</divisions></attributes>
+          <note id="n1"><pitch><step>D</step><alter>-1</alter><octave>5</octave></pitch>
+            <duration>4</duration><voice>2</voice><type>quarter</type>
+            <lyric><text>A &amp; B</text></lyric></note>${closing}</part>
+        <part id="P2"><measure id="m2" number="2"/></part>
+        <movement-title>After the parts</movement-title>
+      </score-partwise>`);
+      expect(score.metadata.movementTitle).toBe('After the parts');
+      expect(score.parts.map(part => part.id)).toEqual(['P1', 'P2']);
+      expect(score.parts[0].measures[0]).toMatchObject({
+        _id: 'm1', number: '1', attributes: { divisions: 4 },
+        entries: [{ _id: 'n1', type: 'note', pitch: { step: 'D', alter: -1, octave: 5 },
+          duration: 4, voice: '2', noteType: 'quarter', lyrics: [{ text: 'A & B' }] }],
+      });
+      expect(score.parts[1].measures[0]).toMatchObject({ _id: 'm2', number: '2', entries: [] });
+    },
+  );
+
   describe('basic parsing', () => {
     it('should parse a single note', () => {
       const xml = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');

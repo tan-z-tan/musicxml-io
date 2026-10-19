@@ -12,7 +12,7 @@ const root = new URL('../', import.meta.url);
 const cwd = fileURLToPath(root);
 const abcMarker = /abc-reference-number|spellings|__abc_field__/;
 
-async function bundle(name, contents, { noZip = false, lazy = false } = {}) {
+async function bundle(name, contents, { noZip = false, noValidation = false, lazy = false } = {}) {
   const result = await build({
     absWorkingDir: cwd,
     stdin: { contents, resolveDir: cwd, sourcefile: 'consumer.js' },
@@ -43,6 +43,9 @@ async function bundle(name, contents, { noZip = false, lazy = false } = {}) {
   const initialFiles = result.outputFiles.filter(file => initial.has(relative(cwd, file.path)));
   const initialText = initialFiles.map(file => file.text).join('\n');
   assert.ok(!abcMarker.test(initialText), `${name}: no ABC code in initial bundle`);
+  if (noValidation) {
+    assert.ok(!/MISSING_DIVISIONS|INVALID_DURATION|Score validation failed/.test(initialText), `${name}: no validator`);
+  }
   if (noZip) {
     for (const key of initial) {
       const retained = Object.entries(outputs[key].inputs).filter(([, value]) => value.bytesInOutput > 0);
@@ -62,6 +65,8 @@ await bundle('root: parse', 'export { parse } from "musicxml-io";', { noZip: tru
 await bundle('root: MusicXML + MXL', 'export { parseAuto, serialize } from "musicxml-io";');
 await bundle('browser: MusicXML + MXL', 'export { parseAuto, serialize } from "musicxml-io/browser";');
 await bundle('musicxml subpath', 'export { parse, serialize } from "musicxml-io/musicxml";', { noZip: true });
+await bundle('unchecked XML export', 'export { serializeUnchecked } from "musicxml-io/musicxml";', { noZip: true, noValidation: true });
+await bundle('unchecked XML roundtrip', 'export { parse, serializeUnchecked } from "musicxml-io/core";', { noZip: true, noValidation: true });
 await bundle('compressed subpath', 'export { parseAuto, serializeCompressed } from "musicxml-io/musicxml-compressed";');
 await bundle('core with lazy ABC', `
   export { parseAuto, serialize, generateId } from 'musicxml-io/core';
@@ -87,12 +92,15 @@ for (const load of [specifier => import(specifier), specifier => require(specifi
   const midi = await load('musicxml-io/midi');
   const file = await load('musicxml-io/file');
   assert.equal(api.parse, core.parse);
+  assert.equal(full.serializeUnchecked, core.serializeUnchecked);
+  assert.equal(browser.serializeUnchecked, core.serializeUnchecked);
   assert.equal(full.parseAbc, abc.parseAbc);
   assert.equal(browser.serializeAbc, abc.serializeAbc);
   assert.equal(full.exportMidi, midi.exportMidi);
   assert.equal(full.parseFile, file.parseFile);
   assert.ok(!('parseAbc' in api) && !('exportMidi' in api) && !('parseFile' in api));
   const score = core.parse(xml);
+  assert.equal(core.serializeUnchecked(score), core.serialize(score));
   assert.equal(core.parse(core.serialize(score)).metadata.workTitle, 'Single Note');
   assert.equal(compressed.parseAuto(compressed.serializeCompressed(score)).metadata.workTitle, 'Single Note');
   assert.ok(abc.parseAbc(abc.serializeAbc(score)).parts.length > 0);

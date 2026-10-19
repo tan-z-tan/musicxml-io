@@ -47,9 +47,12 @@ import {
   type ValidationResult,
 } from '../validator';
 
-export interface SerializeOptions {
+export interface SerializeUncheckedOptions {
   version?: string;
   indent?: string;
+}
+
+export interface SerializeOptions extends SerializeUncheckedOptions {
   /** Validate score before serializing (default: false) */
   validate?: boolean;
   /** Options for validation (if validate is true) */
@@ -63,7 +66,6 @@ export interface SerializeOptions {
 export function serialize(score: Score, options: SerializeOptions = {}): string {
   const version = options.version || score.version || '4.0';
   const indent = options.indent ?? '  ';
-
   // Validation
   if (options.validate) {
     const result = validate(score, options.validateOptions);
@@ -81,6 +83,16 @@ export function serialize(score: Score, options: SerializeOptions = {}): string 
     }
   }
 
+  return serializeUnchecked(score, { version, indent });
+}
+
+/**
+ * Write MusicXML without validation. Import this instead of serialize when
+ * validation is handled separately, so bundlers can omit the validator.
+ */
+export function serializeUnchecked(score: Score, options: SerializeUncheckedOptions = {}): string {
+  const version = options.version || score.version || '4.0';
+  const indent = options.indent ?? '  ';
   const lines: string[] = [];
 
   // XML declaration
@@ -613,7 +625,11 @@ function serializePart(part: Part, indent: string, out: string[]): void {
   out.push(`${indent}<part${idAttr}>`);
 
   for (const measure of part.measures) {
-    serializeMeasure(measure, indent + indent, out);
+    // Flatten one measure at a time, so the final join need not retain a
+    // separate string/rope for every line of a large score.
+    const measureLines: string[] = [];
+    serializeMeasure(measure, indent + indent, measureLines);
+    out.push(measureLines.join('\n'));
   }
 
   out.push(`${indent}</part>`);
@@ -1099,13 +1115,9 @@ function serializeNote(note: NoteEntry, indent: string, out: string[]): void {
 }
 
 function serializePitch(pitch: Pitch, indent: string, out: string[]): void {
-  out.push(`${indent}<pitch>`);
-  out.push(`${indent}  <step>${pitch.step}</step>`);
-  if (pitch.alter !== undefined && pitch.alter !== 0) {
-    out.push(`${indent}  <alter>${pitch.alter}</alter>`);
-  }
-  out.push(`${indent}  <octave>${pitch.octave}</octave>`);
-  out.push(`${indent}</pitch>`);
+  const alter = pitch.alter !== undefined && pitch.alter !== 0
+    ? `${indent}  <alter>${pitch.alter}</alter>\n` : '';
+  out.push(`${indent}<pitch>\n${indent}  <step>${pitch.step}</step>\n${alter}${indent}  <octave>${pitch.octave}</octave>\n${indent}</pitch>`);
 }
 
 function serializeBeam(beam: BeamInfo, indent: string, out: string[]): void {
@@ -1115,6 +1127,13 @@ function serializeBeam(beam: BeamInfo, indent: string, out: string[]): void {
 }
 
 function serializeNotations(notations: Notation[], indent: string, out: string[]): void {
+  // Almost every note has only one <notations> container. Avoid a Map,
+  // group arrays and sorting unless multiple indices actually occur.
+  const firstIndex = notations[0]?.notationsIndex ?? 0;
+  if (notations.every(notation => (notation.notationsIndex ?? 0) === firstIndex)) {
+    serializeNotationsGroup(notations, indent, out);
+    return;
+  }
   // Group notations by notationsIndex for separate <notations> elements
   const notationsGroups = new Map<number, Notation[]>();
   for (const notation of notations) {
@@ -1137,55 +1156,25 @@ function serializeNotations(notations: Notation[], indent: string, out: string[]
 function serializeNotationsGroup(notations: Notation[], indent: string, out: string[]): void {
   out.push(`${indent}<notations>`);
 
-  // Build ordered chunks that preserve original element interleaving.
-  // Container types (articulation, ornament, technical) are grouped with consecutive
-  // siblings of the same type, while standalone types (slur, tied, etc.) are emitted individually.
-  type Chunk =
-    | { kind: 'standalone'; notation: Notation }
-    | { kind: 'articulations'; items: Notation[]; articulationsIndex: number }
-    | { kind: 'ornaments'; items: Notation[] }
-    | { kind: 'technical'; items: Notation[] };
-
-  const chunks: Chunk[] = [];
-  for (const notation of notations) {
-    if (notation.type === 'articulation') {
-      const artIdx = (notation as any).articulationsIndex ?? 0;
-      const last = chunks[chunks.length - 1];
-      if (last && last.kind === 'articulations' && last.articulationsIndex === artIdx) {
-        last.items.push(notation);
-      } else {
-        chunks.push({ kind: 'articulations', items: [notation], articulationsIndex: artIdx });
-      }
-    } else if (notation.type === 'ornament') {
-      const last = chunks[chunks.length - 1];
-      if (last && last.kind === 'ornaments') {
-        last.items.push(notation);
-      } else {
-        chunks.push({ kind: 'ornaments', items: [notation] });
-      }
-    } else if (notation.type === 'technical') {
-      const last = chunks[chunks.length - 1];
-      if (last && last.kind === 'technical') {
-        last.items.push(notation);
-      } else {
-        chunks.push({ kind: 'technical', items: [notation] });
-      }
-    } else {
-      chunks.push({ kind: 'standalone', notation });
+  // Emit consecutive containers directly, preserving interleaving without
+  // allocating a chunk object and array for every standalone notation.
+  for (let i = 0; i < notations.length;) {
+    const notation = notations[i];
+    const type = notation.type;
+    if (type !== 'articulation' && type !== 'ornament' && type !== 'technical') {
+      serializeStandaloneNotation(notation, indent, out);
+      i++;
+      continue;
     }
-  }
-
-  // Serialize chunks in order
-  for (const chunk of chunks) {
-    if (chunk.kind === 'standalone') {
-      serializeStandaloneNotation(chunk.notation, indent, out);
-    } else if (chunk.kind === 'articulations') {
-      serializeArticulationsGroup(chunk.items, indent, out);
-    } else if (chunk.kind === 'ornaments') {
-      serializeOrnamentsGroup(chunk.items, indent, out);
-    } else if (chunk.kind === 'technical') {
-      serializeTechnicalGroup(chunk.items, indent, out);
-    }
+    let end = i + 1;
+    while (end < notations.length && notations[end].type === type &&
+           (type !== 'articulation' ||
+            (notations[end].articulationsIndex ?? 0) === (notation.articulationsIndex ?? 0))) end++;
+    const items = i === 0 && end === notations.length ? notations : notations.slice(i, end);
+    if (type === 'articulation') serializeArticulationsGroup(items, indent, out);
+    else if (type === 'ornament') serializeOrnamentsGroup(items, indent, out);
+    else serializeTechnicalGroup(items, indent, out);
+    i = end;
   }
 
   out.push(`${indent}</notations>`);
