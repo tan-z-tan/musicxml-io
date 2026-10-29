@@ -690,7 +690,7 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
 
   // Clef the K: line gives every voice that names none
   const kLine = lines.find(l => /^K:/.test(l));
-  const kClef = kLine ? locateAbcClefSpec(kLine.slice(2).replace(/%.*$/, ''))?.clef : undefined;
+  const kClef = kLine ? locateAbcClefSpec(kLine.slice(2).split('%')[0])?.clef : undefined;
   const headerClefName = kClef ? musicXmlClefToAbc(kClef) : 'treble';
 
   // The first tempo of the tune is the one a header Q: line stands for

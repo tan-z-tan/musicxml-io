@@ -497,8 +497,11 @@ function escapeRegExp(text: string): string {
 
 /** Split a field line into its content and a trailing `% comment` (with the space before it). */
 function splitComment(line: string): { body: string; comment: string } {
-  const m = line.match(/^([^%]*?)(\s*%.*)?$/);
-  return { body: m?.[1] ?? line, comment: m?.[2] ?? '' };
+  // Plain string scanning: a regular expression here backtracks badly on long runs of spaces
+  const at = line.indexOf('%');
+  if (at < 0) return { body: line, comment: '' };
+  const body = line.slice(0, at).trimEnd();
+  return { body, comment: line.slice(body.length) };
 }
 
 /** A K: line with its clef (`clef=perc`, bare `bass`, or none) set to `name`. */
@@ -516,7 +519,9 @@ function withKeyFieldClef(line: string, name: string): string {
 function withVoiceFieldClef(line: string, name: string): string {
   const { body, comment } = splitComment(line);
   if (VOICE_CLEF_RE.test(body)) return body.replace(VOICE_CLEF_RE, `clef=${name}`) + comment;
-  const close = body.match(/\s*\]\s*$/)?.[0] ?? '';
+  // The closing "]" of an inline marker, with the spaces around it
+  const trimmed = body.trimEnd();
+  const close = trimmed.endsWith(']') ? body.slice(trimmed.slice(0, -1).trimEnd().length) : '';
   return body.slice(0, body.length - close.length).trimEnd() + ` clef=${name}` + close + comment;
 }
 

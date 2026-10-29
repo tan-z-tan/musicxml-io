@@ -633,6 +633,20 @@ describe('ABC 2.1 syntax coverage', () => {
       serializeAbc(score);
       expect(performance.now() - start).toBeLessThan(2000);
     });
+
+    it.each([
+      ['spaces in K:', `K:C${' '.repeat(50_000)}x`],
+      ['percent signs in K:', `K:C %${'%'.repeat(50_000)}`],
+      ['spaces in V:', `V:1${' '.repeat(50_000)}x\nK:C`],
+    ])('should rewrite a kept header line with %s in linear time', (_, header) => {
+      // Splitting off a "% comment" or a closing "]" with a regular expression
+      // took seconds on these (CodeQL: polynomial regular expression)
+      const score = parseAbc(`X:1\nL:1/4\n${header}\nCDEF|]`);
+      const edited = insertClefChange(score, { partIndex: 0, measureIndex: 0, position: 0, clef: { sign: 'F', line: 4 } });
+      const start = performance.now();
+      serializeAbc(edited.data!);
+      expect(performance.now() - start).toBeLessThan(2000);
+    });
   });
 
   describe('Multi-tune files', () => {
