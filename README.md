@@ -637,6 +637,15 @@ This feature enables:
 |------|----------|
 | ABC → Score → ABC | High (49 fixtures passing) |
 | ABC → MusicXML → ABC | Musical content preserved |
+| ABC → Score → edit → ABC | Edits always written; the rest keeps its original text |
+
+Parsing ABC keeps notes on how the tune was written — header lines, voice
+layout, line breaks, comments — in `metadata.miscellaneous` (the `abc-*`
+fields), so that an unedited tune is written back as it was. They never
+override the score: after an edit, `serializeAbc` writes what changed from the
+score (a header field, the voices of added or removed parts, the line breaks
+around inserted or deleted measures, a tempo or meter change) and keeps
+everything else as written.
 
 ## Contributing
 

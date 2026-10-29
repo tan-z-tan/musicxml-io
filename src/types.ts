@@ -96,7 +96,8 @@ export interface PageMargins {
   rightMargin?: number;
   topMargin?: number;
   bottomMargin?: number;
-  // Original string values for roundtrip fidelity
+  // Original string values for roundtrip fidelity, written while they still
+  // parse to the number beside them
   leftMarginRaw?: string;
   rightMarginRaw?: string;
   topMarginRaw?: string;
@@ -107,7 +108,8 @@ export interface SystemLayout {
   systemMargins?: {
     leftMargin?: number;
     rightMargin?: number;
-    // Original string values for roundtrip fidelity
+    // Original string values for roundtrip fidelity, written while they still
+    // parse to the number beside them
     leftMarginRaw?: string;
     rightMarginRaw?: string;
   };

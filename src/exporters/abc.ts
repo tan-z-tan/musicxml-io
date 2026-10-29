@@ -17,7 +17,7 @@ import type {
   Barline,
   Notation,
   MeasureEntry,
-  Clef,
+  PartInfo,
 } from '../types';
 import {
   ABC_BODY_FIELD_MARKER,
@@ -25,7 +25,8 @@ import {
   abcDecorationFor,
   type AbcDecorationTarget,
 } from '../abc-decorations';
-import { locateAbcClefSpec } from '../abc-fields';
+import { locateAbcClefSpec, hasKeyTonic, parseKeySignature, parseTimeSignature, withKeyTonic } from '../abc-fields';
+import { reconcileAbcHints, staffOneClef, type AbcHeaderWriters } from '../abc-hints';
 
 // ============================================================
 // Options
@@ -78,6 +79,13 @@ let partVerses: number[] = [];
 let verseState = new Map<number, { wordOpen: boolean; held: boolean }>();
 /** ABC name of the clef in effect in the part being written, so only real changes are written. */
 let currentClefName: string | null = null;
+/** Meter in effect in the part being written, as ABC writes it. */
+let currentMeter: string | null = null;
+/** Key and meter the header declares; a voice that starts otherwise says so itself. */
+let headerKey: KeySignature | undefined;
+let headerTime: TimeSignature | undefined;
+/** The tempo the header's Q: line writes, so the body does not write it again. */
+let headerTempo: DirectionEntry | undefined;
 
 function startPartLyrics(part: Part) {
   const verses = new Set<number>();
@@ -160,6 +168,14 @@ function musicXmlClefToAbc(clef: { sign: string; line?: number; clefOctaveChange
   const steps = Math.abs(shift) === 2 ? '15' : '8';
   return `${name}${shift > 0 ? '+' : '-'}${steps}`;
 }
+
+/** How round-trip hints write the header values they rewrite. */
+const HEADER_WRITERS: AbcHeaderWriters = {
+  key: key => serializeKey(key),
+  time: time => serializeTimeSignature(time),
+  tempo: measure => findTempoInMeasure(measure),
+  clef: clef => musicXmlClefToAbc(clef),
+};
 
 function serializeKey(key: KeySignature): string {
   const mode = key.mode || 'major';
@@ -553,8 +569,10 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
 
   openWedge = null;
   voiceOctaveShift = 0;
-  // Header lines kept from the parsed ABC must not undo a clef changed since
-  score = withCurrentClefs(score);
+  // Round-trip hints from parsing ABC must not undo edits made since
+  score = reconcileAbcHints(score, HEADER_WRITERS);
+  headerKey = score.parts[0]?.measures[0]?.attributes?.key;
+  headerTime = score.parts[0]?.measures[0]?.attributes?.time;
 
   // Set module-level flag for explicit /2 duration format
   useExplicitHalf = score.metadata.miscellaneous?.find(m => m.name === 'abc-explicit-half')?.value === 'true';
@@ -670,6 +688,16 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
     lines.push(`K:${attrs?.key ? serializeKey(attrs.key) : 'C'}${clefSuffix}`);
   }
 
+  // Clef the K: line gives every voice that names none
+  const kLine = lines.find(l => /^K:/.test(l));
+  const kClef = kLine ? locateAbcClefSpec(kLine.slice(2).replace(/%.*$/, ''))?.clef : undefined;
+  const headerClefName = kClef ? musicXmlClefToAbc(kClef) : 'treble';
+
+  // The first tempo of the tune is the one a header Q: line stands for
+  headerTempo = lines.some(l => /^Q:/.test(l))
+    ? firstMeasure?.entries.find((e): e is DirectionEntry => e.type === 'direction' && serializeTempo(e) !== null)
+    : undefined;
+
   // Read line break positions from metadata
   const lineBreaksStr = score.metadata.miscellaneous?.find(m => m.name === 'abc-line-breaks')?.value;
   const lineBreaks: number[] = lineBreaksStr ? JSON.parse(lineBreaksStr) : [];
@@ -699,6 +727,17 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
         lines.push(vl);
       }
     }
+    // A voice the parsed tune did not have (an added part) is defined here,
+    // so that its [V:] marker finds its clef
+    score.parts.forEach((part, partIdx) => {
+      const voiceId = storedVoiceIds[partIdx] || String(partIdx + 1);
+      if (inlineVoiceMarkers[voiceId] || lines.some(l => l.match(/^V:\s*(\S+)/)?.[1] === voiceId)) return;
+      // A V: line after K: with no parameters would read as a switch to the voice
+      const clef = staffOneClef(part.measures[0]?.attributes?.clef);
+      const clefName = (clef ? musicXmlClefToAbc(clef) : null) ?? 'treble';
+      const name = score.partList.find((e): e is PartInfo => e.type === 'score-part' && e.id === part.id)?.name;
+      lines.push(`V:${voiceId} clef=${clefName}${name ? ` name="${name.replace(/"/g, '')}"` : ''}`);
+    });
   }
 
   // Read body comments, directives, W: fields, and voice interleave pattern
@@ -727,15 +766,18 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
   // Pre-compute serialized measures for each part
   const partMeasureStrings: string[][] = [];
   const partDivisions: number[] = [];
+  const partLyrics: PartLyrics[] = [];
   for (let partIdx = 0; partIdx < score.parts.length; partIdx++) {
     const part = score.parts[partIdx];
     voiceOctaveShift = readVoiceOctaveShift(score, partIdx);
     tiedFrom = null;
     currentClefName = null;
+    currentMeter = null;
     startPartLyrics(part);
     const divisions = getPartDivisions(part);
     partDivisions.push(divisions);
     const measStrings: string[] = [];
+    const lyrics: PartLyrics = new Map();
     let currentUnitNote = { ...unitNote };
     let currentKey: KeySignature | undefined = part.measures[0]?.attributes?.key;
     // Measures absorbed into a preceding Zn multi-measure rest
@@ -767,18 +809,22 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
       const kField = mi > 0 && !hasInlineKeyMarker(measure) ? joinKeyField(keyField, clefField) : '';
       if (kField) measureStr += '\nK:' + kField + '\n';
 
+      if (mi === 0) measureStr += voiceStartFields(measure);
+
       // Left barline
       const leftBarline = measure.barlines?.find(b => b.location === 'left');
       if (leftBarline) {
         measureStr += serializeBarline(leftBarline);
       }
+      measureStr += measureMeterChange(measure, mi);
 
       // Entries
       // A mid-bar [K:] marker switches the key where it stands
       const startKey = hasInlineKeyMarker(measure) ? keyBefore : currentKey;
-      const { noteStr, updatedUnitNote } = serializeMeasureEntries(measure, measDivisions, currentUnitNote, opts, startKey);
+      const { noteStr, lyrics: measureLyrics, updatedUnitNote } = serializeMeasureEntries(measure, measDivisions, currentUnitNote, opts, startKey);
+      if (measureLyrics.size > 0) lyrics.set(mi, measureLyrics);
       if (updatedUnitNote) currentUnitNote = updatedUnitNote;
-      const collapsed = applyMultiMeasureRest(measure, noteStr);
+      const collapsed = applyMultiMeasureRest(measure, isEmptyBar(measure) ? noteStr + 'Z' : noteStr, part.measures.slice(mi + 1));
       for (let k = 1; k <= collapsed.absorbed; k++) absorbedMeasures.add(mi + k);
       measureStr += collapsed.text;
 
@@ -809,6 +855,7 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
       measStrings.push(measureStr);
     }
     partMeasureStrings.push(measStrings);
+    partLyrics.push(lyrics);
   }
 
   // Determine how to output: interleaved or sequential
@@ -866,7 +913,8 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
           const partClef = score.parts[partIdx]?.measures[0]?.attributes?.clef?.[0];
           if (partClef) {
             const clefName = musicXmlClefToAbc(partClef);
-            if (clefName && clefName !== 'treble') {
+            // A voice that names no clef takes the one on K:
+            if (clefName && clefName !== headerClefName) {
               voiceLine += ` clef=${clefName}`;
             }
           }
@@ -891,7 +939,14 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
         // Get within-voice comments for this voice
         const thisVoiceComments = voiceCommentsData[voiceId] || [];
 
+        // Each line of this voice's music is followed by its w: lines
         let groupMusic = '';
+        let lineStart = startMeasure;
+        const lyricsUpTo = (mi: number) => {
+          const text = opts.includeLyrics ? partLyricLines(partLyrics[partIdx], lineStart, mi) : [];
+          lineStart = mi + 1;
+          return text.length > 0 ? '\n' + text.join('\n') : '';
+        };
         for (let mi = startMeasure; mi < endMeasure; mi++) {
           // Check for within-voice comments before this measure
           for (const vc of thisVoiceComments) {
@@ -906,10 +961,11 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
             if (voiceLineContinuationSet.has(absMeasureNum)) {
               groupMusic += '\\\n';
             } else if (voiceLineBreakSet.has(absMeasureNum)) {
-              groupMusic += '\n';
+              groupMusic += lyricsUpTo(mi) + '\n';
             }
           }
         }
+        groupMusic += lyricsUpTo(endMeasure - 1);
         voiceMeasureCursor[voiceId] = endMeasure;
         lines.push(stripLeadingBlankLines(groupMusic));
       }
@@ -935,7 +991,8 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
           const partClef = part.measures[0]?.attributes?.clef?.[0];
           if (partClef) {
             const clefName = musicXmlClefToAbc(partClef);
-            if (clefName && clefName !== 'treble') {
+            // A voice that names no clef takes the one on K:
+            if (clefName && clefName !== headerClefName) {
               voiceLine += ` clef=${clefName}`;
             }
           }
@@ -947,6 +1004,7 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
       voiceOctaveShift = readVoiceOctaveShift(score, partIdx);
       tiedFrom = null;
       currentClefName = null;
+      currentMeter = null;
       startPartLyrics(part);
       const bodyResult = serializePartBody(part, divisions, unitNote, opts, lineBreaks, lyricsAfterAll, lyricsLineCounts, lyricsLineVerses);
 
@@ -1050,6 +1108,8 @@ function serializePartBody(
 ): PartBodyResult {
   let unitNote = { ...initialUnitNote };
   const musicParts: string[] = [];
+  // Measure index -> index in musicParts of the line break written after it
+  const lineEnds = new Map<number, number>();
   // measureIndex -> verse number -> syllables
   const allLyrics: Map<number, Map<number, string[]>> = new Map();
 
@@ -1086,11 +1146,14 @@ function serializePartBody(
       musicParts.push((atLineStart ? '' : '\n') + 'K:' + kField + '\n');
     }
 
+    if (mi === 0) musicParts.push(voiceStartFields(measure));
+
     // Check for left barline (repeats, etc.)
     const leftBarline = measure.barlines?.find(b => b.location === 'left');
     if (leftBarline) {
       musicParts.push(serializeBarline(leftBarline));
     }
+    musicParts.push(measureMeterChange(measure, mi));
 
     // Serialize entries (pass mutable unitNote reference for inline L: tracking)
     const { noteStr, lyrics, updatedUnitNote } = serializeMeasureEntries(
@@ -1102,7 +1165,7 @@ function serializePartBody(
     if (updatedUnitNote) {
       unitNote = updatedUnitNote;
     }
-    const collapsed = applyMultiMeasureRest(measure, noteStr);
+    const collapsed = applyMultiMeasureRest(measure, isEmptyBar(measure) ? noteStr + 'Z' : noteStr, part.measures.slice(mi + 1));
     for (let k = 1; k <= collapsed.absorbed; k++) absorbedMeasures.add(mi + k);
     musicParts.push(collapsed.text);
 
@@ -1139,8 +1202,10 @@ function serializePartBody(
     if (mi < part.measures.length - 1) {
       if (lineBreaks.includes(mi + 1)) {
         musicParts.push('\n');
+        lineEnds.set(mi, musicParts.length - 1);
       } else if (lineBreaks.includes(-(mi + 1))) {
         musicParts.push('\\\n');
+        lineEnds.set(mi, musicParts.length - 1);
       }
     }
   }
@@ -1154,25 +1219,9 @@ function serializePartBody(
     return { music: musicStr, lyrics: null };
   }
 
-  // Verse numbers present anywhere in this part, in ascending order
-  const verses = new Set<number>();
-  for (const byVerse of allLyrics.values()) {
-    for (const verse of byVerse.keys()) verses.add(verse);
-  }
-  const sortedVerses = Array.from(verses).sort((a, b) => a - b);
-
-  /** Syllables of one verse across the measure range [from, to]. */
-  /** Whether w: tokens contain an actual syllable (not only skips / holds). */
-  const hasSyllable = (tokens: string[]) => tokens.some(t => t !== '*' && t !== '_' && t !== '-');
-
-  function syllablesIn(verse: number, from: number, to: number): string[] {
-    const syllables: string[] = [];
-    for (let m = from; m <= to; m++) {
-      const forVerse = allLyrics.get(m)?.get(verse);
-      if (forVerse) syllables.push(...forVerse);
-    }
-    return syllables;
-  }
+  const sortedVerses = versesOf(allLyrics);
+  const syllablesIn = (verse: number, from: number, to: number) => partSyllables(allLyrics, verse, from, to);
+  const lyricLinesFor = (from: number, to: number) => partLyricLines(allLyrics, from, to);
 
   // Group lyrics by line break positions
   // Each "line" spans from one line break to the next
@@ -1188,39 +1237,6 @@ function serializePartBody(
       }
       lineStart = mi + 1;
     }
-  }
-
-  // Format lyrics with proper hyphenation
-  function formatLyrics(tokens: string[]): string {
-    // Trailing skips carry no information
-    let n = tokens.length;
-    while (n > 0 && tokens[n - 1] === '*') n--;
-    const syllables = tokens.slice(0, n);
-    let result = 'w:';
-    for (let i = 0; i < syllables.length; i++) {
-      const syllable = syllables[i];
-      if (i > 0) {
-        // Don't add space if previous syllable ends with '-' (hyphenated word)
-        const prev = syllables[i - 1];
-        if (prev.endsWith('-')) {
-          // No space - hyphen connects syllables within a word
-        } else {
-          result += ' ';
-        }
-      }
-      result += syllable;
-    }
-    return result;
-  }
-
-  /** One `w:` line per verse for the measure range [from, to]. */
-  function lyricLinesFor(from: number, to: number): string[] {
-    const out: string[] = [];
-    for (const verse of sortedVerses) {
-      const syllables = syllablesIn(verse, from, to);
-      if (hasSyllable(syllables)) out.push(formatLyrics(syllables));
-    }
-    return out;
   }
 
   const lastMeasure = part.measures.length - 1;
@@ -1252,34 +1268,83 @@ function serializePartBody(
     return { music: musicStr, lyrics: lyricLinesFor(0, lastMeasure).join('\n') };
   }
 
-  // If there are line breaks, interleave lyrics
+  // If there are line breaks, interleave lyrics: each line's w: lines go
+  // right after the line break that ends it (or after the last line)
   if (lyricLineRanges.length > 0 && lineBreaks.length > 0) {
-    // Split music string by newlines
-    const musicLines = musicStr.split('\n');
-    const resultLines: string[] = [];
-    let lyricIdx = 0;
-
-    for (let li = 0; li < musicLines.length; li++) {
-      resultLines.push(musicLines[li]);
-      // Check if there are lyrics for this music line
-      if (lyricIdx < lyricLineRanges.length) {
-        const range = lyricLineRanges[lyricIdx];
-        resultLines.push(...lyricLinesFor(range.startMeasure, range.endMeasure));
-        lyricIdx++;
-      }
+    const withLyrics = [...musicParts];
+    let tail = '';
+    for (const range of lyricLineRanges) {
+      const text = lyricLinesFor(range.startMeasure, range.endMeasure).join('\n');
+      if (!text) continue;
+      const at = lineEnds.get(range.endMeasure);
+      if (at === undefined) tail += '\n' + text;
+      else withLyrics[at] = withLyrics[at] + text + '\n';
     }
-    // Any remaining lyrics
-    while (lyricIdx < lyricLineRanges.length) {
-      const range = lyricLineRanges[lyricIdx];
-      resultLines.push(...lyricLinesFor(range.startMeasure, range.endMeasure));
-      lyricIdx++;
-    }
-
-    return { music: resultLines.join('\n'), lyrics: null };
+    return { music: withLyrics.join('') + tail, lyrics: null };
   }
 
   // No line breaks - output all lyrics after music
   return { music: musicStr, lyrics: lyricLinesFor(0, lastMeasure).join('\n') };
+}
+
+/** Syllables of a part (w: tokens) by measure index, then verse number. */
+type PartLyrics = Map<number, Map<number, string[]>>;
+
+/** Verse numbers present anywhere in a part, in ascending order. */
+function versesOf(lyrics: PartLyrics): number[] {
+  const verses = new Set<number>();
+  for (const byVerse of lyrics.values()) {
+    for (const verse of byVerse.keys()) verses.add(verse);
+  }
+  return Array.from(verses).sort((a, b) => a - b);
+}
+
+/** Whether w: tokens contain an actual syllable (not only skips / holds). */
+function hasSyllable(tokens: string[]): boolean {
+  return tokens.some(t => t !== '*' && t !== '_' && t !== '-');
+}
+
+/** Syllables of one verse across the measure range [from, to]. */
+function partSyllables(lyrics: PartLyrics, verse: number, from: number, to: number): string[] {
+  const syllables: string[] = [];
+  for (let m = from; m <= to; m++) {
+    const forVerse = lyrics.get(m)?.get(verse);
+    if (forVerse) syllables.push(...forVerse);
+  }
+  return syllables;
+}
+
+/** Format lyrics with proper hyphenation */
+function formatLyrics(tokens: string[]): string {
+  // Trailing skips carry no information
+  let n = tokens.length;
+  while (n > 0 && tokens[n - 1] === '*') n--;
+  const syllables = tokens.slice(0, n);
+  let result = 'w:';
+  for (let i = 0; i < syllables.length; i++) {
+    const syllable = syllables[i];
+    if (i > 0) {
+      // Don't add space if previous syllable ends with '-' (hyphenated word)
+      const prev = syllables[i - 1];
+      if (prev.endsWith('-')) {
+        // No space - hyphen connects syllables within a word
+      } else {
+        result += ' ';
+      }
+    }
+    result += syllable;
+  }
+  return result;
+}
+
+/** One `w:` line per verse for the measure range [from, to]. */
+function partLyricLines(lyrics: PartLyrics, from: number, to: number): string[] {
+  const out: string[] = [];
+  for (const verse of versesOf(lyrics)) {
+    const syllables = partSyllables(lyrics, verse, from, to);
+    if (hasSyllable(syllables)) out.push(formatLyrics(syllables));
+  }
+  return out;
 }
 
 function serializeMeasureEntries(
@@ -1313,6 +1378,8 @@ function serializeMeasureEntries(
   // decorations, chord symbols or grace notes of the next note.
   let prev: NoteEntry | null = null;
   let prevEnd = 0;
+  const tempoOfMarker = pairTempoMarkers(measure.entries);
+  const tempoByMarker = new Set(tempoOfMarker.values());
 
   const flushChord = () => {
     parts.push('[' + chordPitches.join('') + ']' + chordDurationStr + chordTieStr + chordSlurEnd);
@@ -1590,16 +1657,22 @@ function serializeMeasureEntries(
           }
           // Whole-line body field (P:, s:, r:, ...) kept verbatim
           if (dt.text.startsWith(ABC_BODY_FIELD_MARKER)) {
+            const field = dt.text.slice(ABC_BODY_FIELD_MARKER.length);
+            const tempo = /^Q:/.test(field) ? markerTempo(field.slice(2), tempoOfMarker.get(entry)) : field.slice(2);
             // The newline that follows comes from the line break token that
             // separates the field from the music line below it
-            parts.push('\n' + dt.text.slice(ABC_BODY_FIELD_MARKER.length));
+            if (tempo !== null) parts.push('\n' + field.slice(0, 2) + tempo);
             prev = null;
             handledAsSpecial = true;
             break;
           }
           const inlineField = dt.text.match(/^\[([A-Za-z]):([^\]]*)\]$/);
           if (inlineField) {
-            parts.push(dt.text);
+            if (inlineField[1] !== 'Q') parts.push(currentInlineField(measure, inlineField[1], inlineField[2], dt.text));
+            else {
+              const tempo = markerTempo(inlineField[2], tempoOfMarker.get(entry));
+              if (tempo !== null) parts.push(`[Q:${tempo}]`);
+            }
             if (inlineField[1] === 'K' && measure.attributes?.key && /^\s*([A-Ga-g]|none\b)/i.test(inlineField[2])) {
               keyAlters = keyAltersFor(measure.attributes.key.fifths);
             }
@@ -1616,6 +1689,15 @@ function serializeMeasureEntries(
           }
         }
         if (handledAsSpecial) break;
+
+        // A tempo change with no field of its own (one added by an edit) is
+        // written as an inline [Q:]; the header's Q: already writes the first
+        const tempo = serializeTempo(entry);
+        if (tempo && entry !== headerTempo && !tempoByMarker.has(entry)) {
+          parts.push(`[Q:${tempo}]`);
+          prev = null;
+          break;
+        }
 
         const text = serializeDirectionText(entry, opts);
         if (text) {
@@ -1700,10 +1782,20 @@ function multipleRestCount(measure: Measure): number {
  *
  * @returns The measure text, and how many following measures it absorbed.
  */
-function applyMultiMeasureRest(measure: Measure, noteStr: string): { text: string; absorbed: number } {
-  const count = multipleRestCount(measure);
+function applyMultiMeasureRest(measure: Measure, noteStr: string, following: Measure[]): { text: string; absorbed: number } {
+  let count = multipleRestCount(measure);
+  // Only bars that still hold nothing but their rest can be absorbed: an
+  // edit that put something into one ends the run before it
+  const plain = following.slice(0, count - 1).findIndex(m => !isPlainRestBar(m));
+  if (plain >= 0) count = plain + 1;
   if (count < 2 || noteStr.trim() !== 'Z') return { text: noteStr, absorbed: 0 };
   return { text: `Z${count}`, absorbed: count - 1 };
+}
+
+/** True for a bar holding a single rest and nothing else. */
+function isPlainRestBar(measure: Measure): boolean {
+  return measure.entries.length <= 1 && measure.entries.every(e => e.type === 'note' && e.rest) &&
+    !measure.attributes && !measure.barlines?.length;
 }
 
 /** True when a measure already writes its key change as an inline [K:...] field. */
@@ -1711,127 +1803,6 @@ function hasInlineKeyMarker(measure: Measure): boolean {
   return measure.entries.some(e =>
     e.type === 'direction' &&
     e.directionTypes.some(dt => dt.kind === 'words' && /^\[K:/.test(dt.text)));
-}
-
-/**
- * The score with the K: and V: lines it kept from the parsed ABC (written
- * back verbatim for round-trip) brought in line with the clef each part now
- * starts with, so a clef changed after parsing is not lost. Lines whose clef
- * still matches are left untouched.
- */
-function withCurrentClefs(score: Score): Score {
-  const misc = score.metadata.miscellaneous;
-  if (!misc) return score;
-  const read = <T>(name: string): T | undefined => {
-    const value = misc.find(m => m.name === name)?.value;
-    return value ? JSON.parse(value) as T : undefined;
-  };
-  const headerOrder = read<string[]>('abc-header-order');
-  const fullLines = read<Record<string, string>>('abc-voice-full-lines');
-  const declLines = read<string[]>('abc-voice-declaration-lines');
-  const bodyLines = read<string[]>('abc-body-voice-lines');
-  const voiceIds = read<string[]>('abc-voice-ids') ?? [];
-  if (!headerOrder && !fullLines && !declLines && !bodyLines) return score;
-
-  // A clef on K: applies to every voice that names none (treble when K: has none either)
-  const kIdx = headerOrder?.findIndex(l => /^K:/.test(l)) ?? -1;
-  const kClef = kIdx >= 0 ? locateAbcClefSpec(splitComment(headerOrder![kIdx].slice(2)).body)?.clef : undefined;
-  const kName = musicXmlClefToAbc(kClef ?? { sign: 'G', line: 2 });
-  let changed = false;
-
-  score.parts.forEach((part, partIdx) => {
-    const first = part.measures[0];
-    const clef = staffOneClef(first?.attributes?.clef);
-    const wanted = clef ? musicXmlClefToAbc(clef) : null;
-    if (!wanted) return;
-    // An inline [K:bass] inside the first bar also sets that bar's clef; the
-    // marker writes it back, so the clef in the header is not the one changed
-    if (first && inlineKeyMarkerClefs(first).includes(wanted)) return;
-
-    // Lines that define this voice: in the header, or its first V: in the body
-    const voiceId = voiceIds[partIdx] ?? String(partIdx + 1);
-    const isVoiceLine = (l: string) => new RegExp(`^\\[?V:\\s*${escapeRegExp(voiceId)}(?=[\\s\\]%]|$)`).test(l);
-    const defs: Array<{ get: () => string; set: (l: string) => void; inHeader: boolean }> = [];
-    headerOrder?.forEach((l, i) => {
-      if (isVoiceLine(l)) defs.push({ get: () => headerOrder[i], set: v => { headerOrder[i] = v; }, inHeader: true });
-    });
-    if (fullLines?.[voiceId] !== undefined) {
-      defs.push({ get: () => fullLines[voiceId], set: v => { fullLines[voiceId] = v; }, inHeader: true });
-    }
-    for (const list of [declLines, bodyLines]) {
-      const i = list?.findIndex(isVoiceLine) ?? -1;
-      if (i >= 0) defs.push({ get: () => list![i], set: v => { list![i] = v; }, inHeader: false });
-    }
-
-    const voiceClef = defs.map(d => VOICE_CLEF_RE.exec(splitComment(d.get()).body)?.[1]).find(Boolean);
-    const stored = voiceClef ? musicXmlClefToAbc(locateAbcClefSpec(`clef=${voiceClef}`)!.clef) : kName;
-    if (stored === wanted) return;
-    changed = true;
-
-    if (!voiceClef && (score.parts.length === 1 || defs.length === 0) && kIdx >= 0) {
-      headerOrder![kIdx] = withKeyFieldClef(headerOrder![kIdx], wanted);
-    } else {
-      // Replace the clef where the voice names one; otherwise add it to the
-      // header definition, or to the body V: line when there is none
-      const hasHeaderDef = defs.some(d => d.inHeader);
-      for (const d of defs) {
-        const named = VOICE_CLEF_RE.test(splitComment(d.get()).body);
-        if (voiceClef ? named : d.inHeader || !hasHeaderDef) d.set(withVoiceFieldClef(d.get(), wanted));
-      }
-    }
-  });
-  if (!changed) return score;
-
-  const patched: Record<string, unknown> = {
-    'abc-header-order': headerOrder,
-    'abc-voice-full-lines': fullLines,
-    'abc-voice-declaration-lines': declLines,
-    'abc-body-voice-lines': bodyLines,
-  };
-  return {
-    ...score,
-    metadata: {
-      ...score.metadata,
-      miscellaneous: misc.map(m => patched[m.name] ? { ...m, value: JSON.stringify(patched[m.name]) } : m),
-    },
-  };
-}
-
-/** `clef=` parameter of a V: field (the only clef form a voice definition is read with). */
-const VOICE_CLEF_RE = /clef\s*=\s*([^\s\]]+)/i;
-
-function escapeRegExp(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-/** Split a field line into its content and a trailing `% comment` (with the space before it). */
-function splitComment(line: string): { body: string; comment: string } {
-  const m = line.match(/^([^%]*?)(\s*%.*)?$/);
-  return { body: m?.[1] ?? line, comment: m?.[2] ?? '' };
-}
-
-/** A K: line with its clef (`clef=perc`, bare `bass`, or none) set to `name`. */
-function withKeyFieldClef(line: string, name: string): string {
-  const { body, comment } = splitComment(line);
-  const value = body.slice(2);
-  const found = locateAbcClefSpec(value);
-  const newValue = found
-    ? value.slice(0, found.start) + `clef=${name}` + value.slice(found.end)
-    : value.trimEnd() + (value.trim() ? ' ' : '') + `clef=${name}`;
-  return body.slice(0, 2) + newValue + comment;
-}
-
-/** A V: line (or inline [V:...] marker) with its `clef=` set to `name`. */
-function withVoiceFieldClef(line: string, name: string): string {
-  const { body, comment } = splitComment(line);
-  if (VOICE_CLEF_RE.test(body)) return body.replace(VOICE_CLEF_RE, `clef=${name}`) + comment;
-  const close = body.match(/\s*\]\s*$/)?.[0] ?? '';
-  return body.slice(0, body.length - close.length).trimEnd() + ` clef=${name}` + close + comment;
-}
-
-/** The clef of the first (or only) staff, which is the one an ABC voice shows. */
-function staffOneClef(clefs?: Clef[]): Clef | undefined {
-  return clefs?.find(c => (c.staff ?? 1) === 1);
 }
 
 /**
@@ -1846,29 +1817,127 @@ function measureClefChange(measure: Measure): string {
   return `clef=${name}`;
 }
 
+/**
+ * `[M:...]` when the measure starts in a meter other than the one in effect
+ * (and makes it the one in effect), or '' when the meter stays. The first
+ * measure's meter is written in the header, or by voiceStartFields.
+ */
+function measureMeterChange(measure: Measure, mi: number): string {
+  const time = measure.attributes?.time;
+  if (!time) return '';
+  const meter = serializeTimeSignature(time);
+  if (meter === currentMeter) return '';
+  currentMeter = meter;
+  // An inline [M:...] marker already writes the change in place
+  return mi > 0 && !hasInlineFieldMarker(measure, 'M') ? `[M:${meter}]` : '';
+}
+
+/**
+ * Text for an inline [K:...] / [M:...] field kept from parsing: as written
+ * while it still names the measure's key or meter, or with the score's value
+ * once that was edited. A measure with several such fields keeps them all.
+ */
+function currentInlineField(measure: Measure, field: string, value: string, text: string): string {
+  const fieldsInMeasure = measure.entries.filter(e => e.type === 'direction' &&
+    e.directionTypes.some(dt => dt.kind === 'words' && dt.text.startsWith(`[${field}:`))).length;
+  if (fieldsInMeasure !== 1) return text;
+  const key = measure.attributes?.key;
+  if (field === 'K' && key && hasKeyTonic(value)) {
+    const written = parseKeySignature(value);
+    if (written.fifths !== key.fifths || (written.mode || 'major') !== (key.mode || 'major')) {
+      return `[K:${withKeyTonic(value, serializeKey(key))}]`;
+    }
+  }
+  const time = measure.attributes?.time;
+  if (field === 'M' && time && serializeTimeSignature(parseTimeSignature(value)) !== serializeTimeSignature(time)) {
+    return `[M:${serializeTimeSignature(time)}]`;
+  }
+  return text;
+}
+
+/**
+ * Inline [K:] / [M:] fields for a voice whose first measure starts in another
+ * key or meter than the header declares (a part added with its own, say).
+ */
+function voiceStartFields(measure: Measure): string {
+  const key = measure.attributes?.key;
+  const time = measure.attributes?.time;
+  let fields = '';
+  if (key && headerKey && !hasInlineFieldMarker(measure, 'K') &&
+      (key.fifths !== headerKey.fifths || (key.mode || 'major') !== (headerKey.mode || 'major'))) {
+    fields += `[K:${serializeKey(key)}]`;
+  }
+  if (time && headerTime && !hasInlineFieldMarker(measure, 'M') &&
+      serializeTimeSignature(time) !== serializeTimeSignature(headerTime)) {
+    fields += `[M:${serializeTimeSignature(time)}]`;
+  }
+  return fields;
+}
+
+/** True when a measure already writes an inline [K:...] / [M:...] field of its own. */
+function hasInlineFieldMarker(measure: Measure, field: 'K' | 'M'): boolean {
+  return measure.entries.some(e =>
+    e.type === 'direction' &&
+    e.directionTypes.some(dt => dt.kind === 'words' && dt.text.startsWith(`[${field}:`)));
+}
+
 /** Value of a K: field changing the key and/or the clef: "G", "clef=bass" or "G clef=bass". */
 function joinKeyField(key: string, clef: string): string {
   return [key, clef].filter(Boolean).join(' ');
 }
 
-/** ABC names of the clefs set by inline [K:...] markers in a measure. */
-function inlineKeyMarkerClefs(measure: Measure): string[] {
-  const names: string[] = [];
-  for (const e of measure.entries) {
-    if (e.type !== 'direction') continue;
-    for (const dt of e.directionTypes) {
-      const field = dt.kind === 'words' ? dt.text.match(/^\[K:([^\]]*)\]$/) : null;
-      const clef = field ? locateAbcClefSpec(field[1])?.clef : undefined;
-      const name = clef ? musicXmlClefToAbc(clef) : null;
-      if (name) names.push(name);
-    }
-  }
-  return names;
+/**
+ * The tempo each [Q:] / body Q: field of a measure was parsed into: the
+ * importer puts it right after the field's marker. That tempo is what the
+ * field writes, so an edited tempo is not undone by the kept text.
+ */
+function pairTempoMarkers(entries: MeasureEntry[]): Map<MeasureEntry, DirectionEntry> {
+  const pairs = new Map<MeasureEntry, DirectionEntry>();
+  entries.forEach((e, i) => {
+    const isMarker = e.type === 'direction' && e.directionTypes.some(dt => dt.kind === 'words' &&
+      (dt.text.startsWith('[Q:') || dt.text.startsWith(ABC_BODY_FIELD_MARKER + 'Q:')));
+    const next = entries[i + 1];
+    if (isMarker && next?.type === 'direction' && serializeTempo(next) !== null) pairs.set(e, next);
+  });
+  return pairs;
 }
 
-/** True when a measure carries any note or rest (as opposed to markers only). */
+/**
+ * Value to write for a kept Q: field: its own text while it still names the
+ * tempo the score has, the score's tempo when that was changed, or null when
+ * the tempo was removed. A field naming no rate ("Allegro") is kept as is.
+ */
+function markerTempo(value: string, tempo: DirectionEntry | undefined): string | null {
+  const current = tempo ? serializeTempo(tempo) : null;
+  if (current === null) return tempoRate(value) === null ? value : null;
+  if (tempoRate(value) === tempoRate(current)) return value;
+  // Keep any text ("Allegro") around the rate
+  const rate = value.match(/\d{1,4}\/\d{1,4}\s*=\s*\d{1,6}/) ?? value.match(/\d{1,6}/);
+  return rate ? value.slice(0, rate.index) + current + value.slice(rate.index! + rate[0].length) : current;
+}
+
+/** Beat length and rate a Q: value names ("1/4=120", or a bare "120"), comparable as a string. */
+function tempoRate(text: string): string | null {
+  const withUnit = text.match(/(\d{1,4})\/(\d{1,4})\s*=\s*(\d{1,6})/);
+  if (withUnit) return `${parseInt(withUnit[1], 10) / parseInt(withUnit[2], 10)}=${parseInt(withUnit[3], 10)}`;
+  const bare = text.match(/\d{1,6}/);
+  return bare ? `0.25=${parseInt(bare[0], 10)}` : null;
+}
+
+/**
+ * True when a measure is written as a bar: it carries a note or rest, or
+ * nothing at all (written as a bar rest), as opposed to markers only.
+ */
 function measureHasNotes(measure: Measure): boolean {
-  return measure.entries.some(e => e.type === 'note');
+  return measure.entries.some(e => e.type === 'note') || isEmptyBar(measure);
+}
+
+/**
+ * True for a measure with no notes and no markers, such as one just
+ * inserted: it is written as a bar rest (Z) so that the bar is not lost.
+ */
+function isEmptyBar(measure: Measure): boolean {
+  return !measure.entries.some(e => e.type === 'note' || e.type === 'direction');
 }
 
 /** True when the entry at `index` is the first note of a chord. */
@@ -2069,10 +2138,17 @@ function serializeNote(
     }
     durationStr = '';
   } else if (note.pitch) {
-    if (tiedFrom && !note.chord && tiedFrom.step === note.pitch.step && tiedFrom.octave === note.pitch.octave) {
-      barAlters.set(`${note.pitch.step}${note.pitch.octave}`, tiedFrom.alter ?? 0);
-    }
+    const tiedOver = tiedFrom && !note.chord && tiedFrom.step === note.pitch.step && tiedFrom.octave === note.pitch.octave;
+    const barKey = `${note.pitch.step}${note.pitch.octave}`;
+    const before = barAlters.get(barKey);
+    // A note tied across the bar keeps its accidental, but only for itself:
+    // the rest of the bar still follows the key (as the parser reads it)
+    if (tiedOver) barAlters.set(barKey, tiedFrom!.alter ?? 0);
     pitchStr = serializePitch(note.pitch, note.accidental?.value);
+    if (tiedOver && !/^[\^_=]/.test(pitchStr)) {
+      if (before === undefined) barAlters.delete(barKey);
+      else barAlters.set(barKey, before);
+    }
     const { num, den } = durationToAbcFraction(writtenDuration(note), divisions, unitNote);
     durationStr = formatAbcDuration(num, den);
   }

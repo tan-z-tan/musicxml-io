@@ -4,10 +4,15 @@
  * lines when the score's clef has changed.
  */
 
-import type { Clef } from './types';
+import type { Clef, KeySignature, TimeSignature } from './types';
+
+const KEY_FIFTHS: Record<string, number> = {
+  'Cb': -7, 'Gb': -6, 'Db': -5, 'Ab': -4, 'Eb': -3, 'Bb': -2, 'F': -1,
+  'C': 0, 'G': 1, 'D': 2, 'A': 3, 'E': 4, 'B': 5, 'F#': 6, 'C#': 7,
+};
 
 // Mode to fifths offset (from major)
-export const MODE_OFFSET: Record<string, number> = {
+const MODE_OFFSET: Record<string, number> = {
   'major': 0, 'maj': 0, 'ion': 0, 'ionian': 0, '': 0,
   'minor': -3, 'min': -3, 'm': -3,
   'dorian': -2, 'dor': -2,
@@ -16,6 +21,17 @@ export const MODE_OFFSET: Record<string, number> = {
   'mixolydian': -1, 'mix': -1,
   'aeolian': -3, 'aeo': -3,
   'locrian': -5, 'loc': -5,
+};
+
+const MODE_NAME: Record<string, KeySignature['mode']> = {
+  'major': 'major', 'maj': 'major', 'ion': 'ionian', 'ionian': 'ionian', '': 'major',
+  'minor': 'minor', 'min': 'minor', 'm': 'minor',
+  'dorian': 'dorian', 'dor': 'dorian',
+  'phrygian': 'phrygian', 'phr': 'phrygian',
+  'lydian': 'lydian', 'lyd': 'lydian',
+  'mixolydian': 'mixolydian', 'mix': 'mixolydian',
+  'aeolian': 'aeolian', 'aeo': 'aeolian',
+  'locrian': 'locrian', 'loc': 'locrian',
 };
 
 /**
@@ -95,4 +111,86 @@ export function locateAbcClefSpec(fieldValue: string): { clef: Clef; start: numb
     }
   }
   return undefined;
+}
+
+export function parseKeySignature(keyStr: string): KeySignature {
+  if (!keyStr || keyStr.trim() === '' || keyStr.trim().toLowerCase() === 'none' || !hasKeyTonic(keyStr)) {
+    return { fifths: 0, mode: 'major' };
+  }
+
+  const trimmed = keyStr.trim();
+
+  // Match key note (e.g., C, C#, Cb, c, c#)
+  const keyMatch = trimmed.match(/^([A-Ga-g])(#|b)?/);
+  if (!keyMatch) {
+    return { fifths: 0, mode: 'major' };
+  }
+
+  const keyNote = keyMatch[1].toUpperCase();
+  const keyAccidental = keyMatch[2] || '';
+  const keyName = keyNote + keyAccidental;
+
+  // Extract mode
+  const remainder = trimmed.slice(keyMatch[0].length).trim().toLowerCase();
+  // Only the first three letters of a mode name count (ABC 2.1 §3.1.14), so
+  // "mix" must not be read as "m" (minor)
+  const word = remainder.match(/^[a-z]+/)?.[0] ?? '';
+  const abbrev = word === 'm' ? 'm' : word.slice(0, 3);
+  const mode = abbrev in MODE_OFFSET ? abbrev : '';
+
+  // Get base fifths for the key note
+  const baseFifths = KEY_FIFTHS[keyName];
+  if (baseFifths === undefined) {
+    return { fifths: 0, mode: 'major' };
+  }
+
+  const modeOffset = MODE_OFFSET[mode] ?? 0;
+  const fifths = baseFifths + modeOffset;
+  const modeValue = MODE_NAME[mode] ?? 'major';
+
+  return { fifths, mode: modeValue };
+}
+
+export function parseTimeSignature(meterStr: string): TimeSignature {
+  if (!meterStr || meterStr.trim() === '') {
+    return { beats: '4', beatType: 4 };
+  }
+
+  const trimmed = meterStr.trim();
+
+  if (trimmed === 'C' || trimmed.toLowerCase() === 'common') {
+    return { beats: '4', beatType: 4, symbol: 'common' };
+  }
+  if (trimmed === 'C|' || trimmed.toLowerCase() === 'cut') {
+    return { beats: '2', beatType: 2, symbol: 'cut' };
+  }
+  if (trimmed.toLowerCase() === 'none') {
+    return { beats: '4', beatType: 4, senzaMisura: true };
+  }
+
+  const match = trimmed.match(/^(\d+)\/(\d+)$/);
+  if (match) {
+    return { beats: match[1], beatType: parseInt(match[2], 10) };
+  }
+
+  // Additive meters: (2+3+2)/8 or 3+2/8
+  const additive = trimmed.match(/^\(?\s*(\d+(?:\s*\+\s*\d+)+)\s*\)?\/(\d+)$/);
+  if (additive) {
+    const groups = additive[1].split('+').map(g => parseInt(g.trim(), 10));
+    return {
+      beats: groups.join('+'),
+      beatType: parseInt(additive[2], 10),
+      beatsList: groups,
+    };
+  }
+
+  return { beats: '4', beatType: 4 };
+}
+
+/** A K: value with its key set to `tonic` ("G", "Ador"), keeping its clef and other parameters. */
+export function withKeyTonic(value: string, tonic: string): string {
+  const m = value.match(/^(\s*)(\S*)(.*)$/s)!;
+  return hasKeyTonic(value)
+    ? m[1] + tonic + m[3]
+    : m[1] + tonic + (value.trim() ? ' ' + value.trimStart() : '');
 }
