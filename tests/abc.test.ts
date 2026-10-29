@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
-import { parseAbc, parseAbcTunes, serializeAbc, serializeAbcTunes, serialize, parse } from '../src';
+import { parseAbc, parseAbcTunes, serializeAbc, serializeAbcTunes, serialize, parse, insertClefChange } from '../src';
 
 const fixturesPath = join(__dirname, 'fixtures', 'abc');
 
@@ -1767,5 +1767,50 @@ describe('ABC bars with no notes', () => {
     expect(s.parts[0].measures.length).toBe(1);
     const back = parseAbc(serializeAbc(s));
     expect(back.parts[0].measures[0].entries.some(e => e.type === 'direction')).toBe(true);
+  });
+});
+
+describe('ABC clef changes (issue #119)', () => {
+  it('writes a clef changed after parsing into the kept K: line', () => {
+    const score = parseAbc('X:1\nM:4/4\nL:1/8\nK:none clef=perc\nBB B/B/B/B/ B/BB/ B/B/B|]');
+    const result = insertClefChange(score, { partIndex: 0, measureIndex: 0, position: 0, clef: { sign: 'G' } });
+    expect(serializeAbc(result.data!)).toBe('X:1\nM:4/4\nL:1/8\nK:none clef=treble\nBB B/B/B/B/ B/BB/ B/B/B|]\n');
+  });
+
+  it('replaces a bare clef name and keeps a trailing comment', () => {
+    const score = parseAbc('X:1\nL:1/4\nK:G bass % low\nCDEF|]');
+    const result = insertClefChange(score, { partIndex: 0, measureIndex: 0, position: 0, clef: { sign: 'C', line: 3 } });
+    expect(serializeAbc(result.data!)).toContain('K:G clef=alto % low\n');
+  });
+
+  it('leaves the header as written while the clef is unchanged', () => {
+    for (const abc of [
+      'X:1\nL:1/4\nK:G bass % low\nCDEF|]\n',
+      'X:1\nL:1/4\nK:C\nCD[K:bass]EF|CDEF|]\n',
+      'X:1\nL:1/4\nV:1 clef=treble\nV:2 clef=bass\nK:C\nV:1\nCDEF|]\nV:2\nCDEF|]\n',
+    ]) {
+      expect(serializeAbc(parseAbc(abc))).toBe(abc);
+    }
+  });
+
+  it('writes a clef changed after parsing into the voice definition', () => {
+    const score = parseAbc('X:1\nL:1/4\nV:1 clef=treble\nV:2 clef=bass\nK:C\nV:1\nCDEF|]\nV:2\nCDEF|]');
+    const result = insertClefChange(score, { partIndex: 1, measureIndex: 0, position: 0, clef: { sign: 'C', line: 3 } });
+    expect(serializeAbc(result.data!)).toBe('X:1\nL:1/4\nV:1 clef=treble\nV:2 clef=alto\nK:C\nV:1\nCDEF|]\nV:2\nCDEF|]\n');
+  });
+
+  it('keeps a K: clef change at the start of a later bar', () => {
+    const abc = 'X:1\nL:1/4\nK:C\nCDEF|\nK:bass\nCDEF|]';
+    const out = serializeAbc(parseAbc(abc));
+    expect(out).toBe('X:1\nL:1/4\nK:C\nCDEF|\nK:clef=bass\nCDEF|]\n');
+    expect(parseAbc(out).parts[0].measures[1].attributes?.clef?.[0]).toEqual({ sign: 'F', line: 4 });
+  });
+
+  it('writes clef changes inserted at a later bar or inside a bar', () => {
+    const score = parseAbc('X:1\nL:1/4\nK:C\nCDEF|CDEF|]');
+    const atBar = insertClefChange(score, { partIndex: 0, measureIndex: 1, position: 0, clef: { sign: 'F', line: 4 } });
+    expect(serializeAbc(atBar.data!)).toBe('X:1\nL:1/4\nK:C\nCDEF|\nK:clef=bass\nCDEF|]\n');
+    const midBar = insertClefChange(score, { partIndex: 0, measureIndex: 0, position: 1920, clef: { sign: 'F', line: 4 } });
+    expect(serializeAbc(midBar.data!)).toBe('X:1\nL:1/4\nK:C\nCD[K:clef=bass]EF|CDEF|]\n');
   });
 });

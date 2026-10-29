@@ -17,6 +17,7 @@ import type {
   Barline,
   Notation,
   MeasureEntry,
+  Clef,
 } from '../types';
 import {
   ABC_BODY_FIELD_MARKER,
@@ -24,6 +25,7 @@ import {
   abcDecorationFor,
   type AbcDecorationTarget,
 } from '../abc-decorations';
+import { locateAbcClefSpec } from '../abc-fields';
 
 // ============================================================
 // Options
@@ -74,6 +76,8 @@ let tiedFrom: Pitch | null = null;
 /** Lyric verses of the part being written, and per verse whether a word or a held syllable is open. */
 let partVerses: number[] = [];
 let verseState = new Map<number, { wordOpen: boolean; held: boolean }>();
+/** ABC name of the clef in effect in the part being written, so only real changes are written. */
+let currentClefName: string | null = null;
 
 function startPartLyrics(part: Part) {
   const verses = new Set<number>();
@@ -549,6 +553,8 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
 
   openWedge = null;
   voiceOctaveShift = 0;
+  // Header lines kept from the parsed ABC must not undo a clef changed since
+  score = withCurrentClefs(score);
 
   // Set module-level flag for explicit /2 duration format
   useExplicitHalf = score.metadata.miscellaneous?.find(m => m.name === 'abc-explicit-half')?.value === 'true';
@@ -725,6 +731,7 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
     const part = score.parts[partIdx];
     voiceOctaveShift = readVoiceOctaveShift(score, partIdx);
     tiedFrom = null;
+    currentClefName = null;
     startPartLyrics(part);
     const divisions = getPartDivisions(part);
     partDivisions.push(divisions);
@@ -744,18 +751,21 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
       const keyBefore = currentKey;
 
       // Detect inline key change
+      let keyField = '';
       if (mi > 0 && measure.attributes?.key) {
         const newKey = measure.attributes.key;
         if (currentKey === undefined ||
             newKey.fifths !== currentKey.fifths ||
             (newKey.mode || 'major') !== (currentKey.mode || 'major')) {
-          // An inline [K:...] marker already writes the change in place
-          if (!hasInlineKeyMarker(measure)) {
-            measureStr += '\nK:' + serializeKey(newKey) + '\n';
-          }
+          keyField = serializeKey(newKey);
           currentKey = newKey;
         }
       }
+      // The first measure's clef is written in the header
+      const clefField = measureClefChange(measure);
+      // An inline [K:...] marker already writes the change in place
+      const kField = mi > 0 && !hasInlineKeyMarker(measure) ? joinKeyField(keyField, clefField) : '';
+      if (kField) measureStr += '\nK:' + kField + '\n';
 
       // Left barline
       const leftBarline = measure.barlines?.find(b => b.location === 'left');
@@ -936,6 +946,7 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
       const divisions = partDivisions[partIdx];
       voiceOctaveShift = readVoiceOctaveShift(score, partIdx);
       tiedFrom = null;
+      currentClefName = null;
       startPartLyrics(part);
       const bodyResult = serializePartBody(part, divisions, unitNote, opts, lineBreaks, lyricsAfterAll, lyricsLineCounts, lyricsLineVerses);
 
@@ -1055,19 +1066,24 @@ function serializePartBody(
     const keyBefore = currentKey;
 
     // Detect inline key change by comparing with previous key
+    let keyField = '';
     if (mi > 0 && measure.attributes?.key) {
       const newKey = measure.attributes.key;
       if (currentKey === undefined ||
           newKey.fifths !== currentKey.fifths ||
           (newKey.mode || 'major') !== (currentKey.mode || 'major')) {
-        // An inline [K:...] marker already writes the change in place
-        if (!hasInlineKeyMarker(measure)) {
-          // Own line, but never a blank line before it: that would end the tune
-          const atLineStart = musicParts.length === 0 || musicParts[musicParts.length - 1].endsWith('\n');
-          musicParts.push((atLineStart ? '' : '\n') + 'K:' + serializeKey(newKey) + '\n');
-        }
+        keyField = serializeKey(newKey);
         currentKey = newKey;
       }
+    }
+    // The first measure's clef is written in the header
+    const clefField = measureClefChange(measure);
+    // An inline [K:...] marker already writes the change in place
+    const kField = mi > 0 && !hasInlineKeyMarker(measure) ? joinKeyField(keyField, clefField) : '';
+    if (kField) {
+      // Own line, but never a blank line before it: that would end the tune
+      const atLineStart = musicParts.length === 0 || musicParts[musicParts.length - 1].endsWith('\n');
+      musicParts.push((atLineStart ? '' : '\n') + 'K:' + kField + '\n');
     }
 
     // Check for left barline (repeats, etc.)
@@ -1587,6 +1603,8 @@ function serializeMeasureEntries(
             if (inlineField[1] === 'K' && measure.attributes?.key && /^\s*([A-Ga-g]|none\b)/i.test(inlineField[2])) {
               keyAlters = keyAltersFor(measure.attributes.key.fifths);
             }
+            const inlineClef = inlineField[1] === 'K' ? locateAbcClefSpec(inlineField[2])?.clef : undefined;
+            if (inlineClef) currentClefName = musicXmlClefToAbc(inlineClef) ?? currentClefName;
             if (inlineField[1] === 'L') {
               const lMatch = inlineField[2].trim().match(/^(\d+)\/(\d+)$/);
               if (lMatch) {
@@ -1606,6 +1624,18 @@ function serializeMeasureEntries(
           }
         }
         // Tempo is handled in header, skip here
+        break;
+      }
+
+      case 'attributes': {
+        // A clef change inside the bar is written as an inline [K:clef=...] field
+        const clef = staffOneClef(entry.attributes.clef);
+        const name = clef ? musicXmlClefToAbc(clef) : null;
+        if (name && name !== currentClefName) {
+          parts.push(`[K:clef=${name}]`);
+          currentClefName = name;
+          prev = null;
+        }
         break;
       }
 
@@ -1681,6 +1711,159 @@ function hasInlineKeyMarker(measure: Measure): boolean {
   return measure.entries.some(e =>
     e.type === 'direction' &&
     e.directionTypes.some(dt => dt.kind === 'words' && /^\[K:/.test(dt.text)));
+}
+
+/**
+ * The score with the K: and V: lines it kept from the parsed ABC (written
+ * back verbatim for round-trip) brought in line with the clef each part now
+ * starts with, so a clef changed after parsing is not lost. Lines whose clef
+ * still matches are left untouched.
+ */
+function withCurrentClefs(score: Score): Score {
+  const misc = score.metadata.miscellaneous;
+  if (!misc) return score;
+  const read = <T>(name: string): T | undefined => {
+    const value = misc.find(m => m.name === name)?.value;
+    return value ? JSON.parse(value) as T : undefined;
+  };
+  const headerOrder = read<string[]>('abc-header-order');
+  const fullLines = read<Record<string, string>>('abc-voice-full-lines');
+  const declLines = read<string[]>('abc-voice-declaration-lines');
+  const bodyLines = read<string[]>('abc-body-voice-lines');
+  const voiceIds = read<string[]>('abc-voice-ids') ?? [];
+  if (!headerOrder && !fullLines && !declLines && !bodyLines) return score;
+
+  // A clef on K: applies to every voice that names none (treble when K: has none either)
+  const kIdx = headerOrder?.findIndex(l => /^K:/.test(l)) ?? -1;
+  const kClef = kIdx >= 0 ? locateAbcClefSpec(splitComment(headerOrder![kIdx].slice(2)).body)?.clef : undefined;
+  const kName = musicXmlClefToAbc(kClef ?? { sign: 'G', line: 2 });
+  let changed = false;
+
+  score.parts.forEach((part, partIdx) => {
+    const first = part.measures[0];
+    const clef = staffOneClef(first?.attributes?.clef);
+    const wanted = clef ? musicXmlClefToAbc(clef) : null;
+    if (!wanted) return;
+    // An inline [K:bass] inside the first bar also sets that bar's clef; the
+    // marker writes it back, so the clef in the header is not the one changed
+    if (first && inlineKeyMarkerClefs(first).includes(wanted)) return;
+
+    // Lines that define this voice: in the header, or its first V: in the body
+    const voiceId = voiceIds[partIdx] ?? String(partIdx + 1);
+    const isVoiceLine = (l: string) => new RegExp(`^\\[?V:\\s*${escapeRegExp(voiceId)}(?=[\\s\\]%]|$)`).test(l);
+    const defs: Array<{ get: () => string; set: (l: string) => void; inHeader: boolean }> = [];
+    headerOrder?.forEach((l, i) => {
+      if (isVoiceLine(l)) defs.push({ get: () => headerOrder[i], set: v => { headerOrder[i] = v; }, inHeader: true });
+    });
+    if (fullLines?.[voiceId] !== undefined) {
+      defs.push({ get: () => fullLines[voiceId], set: v => { fullLines[voiceId] = v; }, inHeader: true });
+    }
+    for (const list of [declLines, bodyLines]) {
+      const i = list?.findIndex(isVoiceLine) ?? -1;
+      if (i >= 0) defs.push({ get: () => list![i], set: v => { list![i] = v; }, inHeader: false });
+    }
+
+    const voiceClef = defs.map(d => VOICE_CLEF_RE.exec(splitComment(d.get()).body)?.[1]).find(Boolean);
+    const stored = voiceClef ? musicXmlClefToAbc(locateAbcClefSpec(`clef=${voiceClef}`)!.clef) : kName;
+    if (stored === wanted) return;
+    changed = true;
+
+    if (!voiceClef && (score.parts.length === 1 || defs.length === 0) && kIdx >= 0) {
+      headerOrder![kIdx] = withKeyFieldClef(headerOrder![kIdx], wanted);
+    } else {
+      // Replace the clef where the voice names one; otherwise add it to the
+      // header definition, or to the body V: line when there is none
+      const hasHeaderDef = defs.some(d => d.inHeader);
+      for (const d of defs) {
+        const named = VOICE_CLEF_RE.test(splitComment(d.get()).body);
+        if (voiceClef ? named : d.inHeader || !hasHeaderDef) d.set(withVoiceFieldClef(d.get(), wanted));
+      }
+    }
+  });
+  if (!changed) return score;
+
+  const patched: Record<string, unknown> = {
+    'abc-header-order': headerOrder,
+    'abc-voice-full-lines': fullLines,
+    'abc-voice-declaration-lines': declLines,
+    'abc-body-voice-lines': bodyLines,
+  };
+  return {
+    ...score,
+    metadata: {
+      ...score.metadata,
+      miscellaneous: misc.map(m => patched[m.name] ? { ...m, value: JSON.stringify(patched[m.name]) } : m),
+    },
+  };
+}
+
+/** `clef=` parameter of a V: field (the only clef form a voice definition is read with). */
+const VOICE_CLEF_RE = /clef\s*=\s*([^\s\]]+)/i;
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** Split a field line into its content and a trailing `% comment` (with the space before it). */
+function splitComment(line: string): { body: string; comment: string } {
+  const m = line.match(/^([^%]*?)(\s*%.*)?$/);
+  return { body: m?.[1] ?? line, comment: m?.[2] ?? '' };
+}
+
+/** A K: line with its clef (`clef=perc`, bare `bass`, or none) set to `name`. */
+function withKeyFieldClef(line: string, name: string): string {
+  const { body, comment } = splitComment(line);
+  const value = body.slice(2);
+  const found = locateAbcClefSpec(value);
+  const newValue = found
+    ? value.slice(0, found.start) + `clef=${name}` + value.slice(found.end)
+    : value.trimEnd() + (value.trim() ? ' ' : '') + `clef=${name}`;
+  return body.slice(0, 2) + newValue + comment;
+}
+
+/** A V: line (or inline [V:...] marker) with its `clef=` set to `name`. */
+function withVoiceFieldClef(line: string, name: string): string {
+  const { body, comment } = splitComment(line);
+  if (VOICE_CLEF_RE.test(body)) return body.replace(VOICE_CLEF_RE, `clef=${name}`) + comment;
+  const close = body.match(/\s*\]\s*$/)?.[0] ?? '';
+  return body.slice(0, body.length - close.length).trimEnd() + ` clef=${name}` + close + comment;
+}
+
+/** The clef of the first (or only) staff, which is the one an ABC voice shows. */
+function staffOneClef(clefs?: Clef[]): Clef | undefined {
+  return clefs?.find(c => (c.staff ?? 1) === 1);
+}
+
+/**
+ * `clef=...` when the measure starts with a clef other than the one in
+ * effect (and makes it the one in effect), or '' when the clef stays.
+ */
+function measureClefChange(measure: Measure): string {
+  const clef = staffOneClef(measure.attributes?.clef);
+  const name = clef ? musicXmlClefToAbc(clef) : null;
+  if (!name || name === currentClefName) return '';
+  currentClefName = name;
+  return `clef=${name}`;
+}
+
+/** Value of a K: field changing the key and/or the clef: "G", "clef=bass" or "G clef=bass". */
+function joinKeyField(key: string, clef: string): string {
+  return [key, clef].filter(Boolean).join(' ');
+}
+
+/** ABC names of the clefs set by inline [K:...] markers in a measure. */
+function inlineKeyMarkerClefs(measure: Measure): string[] {
+  const names: string[] = [];
+  for (const e of measure.entries) {
+    if (e.type !== 'direction') continue;
+    for (const dt of e.directionTypes) {
+      const field = dt.kind === 'words' ? dt.text.match(/^\[K:([^\]]*)\]$/) : null;
+      const clef = field ? locateAbcClefSpec(field[1])?.clef : undefined;
+      const name = clef ? musicXmlClefToAbc(clef) : null;
+      if (name) names.push(name);
+    }
+  }
+  return names;
 }
 
 /** True when a measure carries any note or rest (as opposed to markers only). */
