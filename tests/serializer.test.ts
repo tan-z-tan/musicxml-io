@@ -523,3 +523,27 @@ describe('Serializer', () => {
     expect(reparsed.credits![0].creditImage).toEqual(credit.creditImage);
   });
 });
+
+describe('Layout numbers kept as written', () => {
+  const xml = `<score-partwise version="4.0">
+  <defaults><page-layout><page-margins type="both">
+    <left-margin>70.0</left-margin><right-margin>70.0</right-margin>
+    <top-margin>88.0</top-margin><bottom-margin>88.0</bottom-margin>
+  </page-margins></page-layout></defaults>
+  <part-list><score-part id="P1"><part-name>Music</part-name></score-part></part-list>
+  <part id="P1"><measure number="1"><attributes><divisions>1</divisions></attributes>
+    <note><rest/><duration>4</duration></note></measure></part>
+</score-partwise>`;
+
+  it('writes a margin as the file wrote it while it is unchanged', () => {
+    expect(serialize(parse(xml))).toContain('<left-margin>70.0</left-margin>');
+  });
+
+  it('writes the new value once a margin is changed', () => {
+    const score = parse(xml);
+    score.defaults!.pageLayout!.pageMargins![0].leftMargin = 50;
+    const out = serialize(score);
+    expect(out).toContain('<left-margin>50</left-margin>');
+    expect(out).toContain('<right-margin>70.0</right-margin>');
+  });
+});

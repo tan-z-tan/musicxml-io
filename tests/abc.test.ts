@@ -1,7 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
-import { parseAbc, parseAbcTunes, serializeAbc, serializeAbcTunes, serialize, parse } from '../src';
+import {
+  parseAbc, parseAbcTunes, serializeAbc, serializeAbcTunes, serialize, parse, insertClefChange,
+  changeKey, changeTime, modifyTempo, removeTempo, addTempo, addPart, removePart, insertMeasure, deleteMeasure,
+} from '../src';
 
 const fixturesPath = join(__dirname, 'fixtures', 'abc');
 
@@ -486,6 +489,26 @@ describe('ABC 2.1 syntax coverage', () => {
         .toContain('Z3');
     });
 
+    it('should stop collapsing rests before an added tempo', () => {
+      const score = parseAbc('X:1\nL:1/4\nK:C\nZ3|CDEF|]');
+      const edited = addTempo(score, { partIndex: 0, measureIndex: 1, position: 0, bpm: 99 }).data!;
+      const out = serializeAbc(edited);
+      expect(out).toBe('X:1\nL:1/4\nK:C\nZ|[Q:1/4=99]Z|Z|CDEF|]\n');
+      const back = parseAbc(out);
+      expect(back.parts[0].measures).toHaveLength(4);
+      expect(back.parts[0].measures[1].entries).toContainEqual(expect.objectContaining({
+        type: 'direction', sound: { tempo: 99 },
+      }));
+    });
+
+    it('should not restore rest measures deleted from the end of a run', () => {
+      const score = parseAbc('X:1\nL:1/4\nK:C\nZ4|]');
+      const edited = deleteMeasure(deleteMeasure(score, '4'), '3');
+      const out = serializeAbc(edited);
+      expect(out).toContain('Z2');
+      expect(parseAbc(out).parts[0].measures).toHaveLength(2);
+    });
+
     it('should preserve the y spacer', () => {
       expect(roundTrip('X:1\nK:C\nC y D E|\n')).toContain('y');
     });
@@ -614,6 +637,21 @@ describe('ABC 2.1 syntax coverage', () => {
   });
 
   describe('Pathological input', () => {
+    it('should serialize a large score without scanning every remaining measure', () => {
+      const score = parseAbc('X:1\nL:1/4\nK:C\nCDEF|');
+      score.metadata.miscellaneous = [];
+      const measure = score.parts[0].measures[0];
+      const measureCount = 64_000;
+      score.parts[0].measures = Array.from({ length: measureCount }, (_, i) => ({
+        ...measure, _id: `measure-${i}`, number: String(i + 1),
+      }));
+
+      const start = performance.now();
+      const out = serializeAbc(score);
+      expect(performance.now() - start).toBeLessThan(2000);
+      expect(out.match(/\|/g)).toHaveLength(measureCount);
+    });
+
     it('should serialize an unterminated inline field marker in linear time', () => {
       // A <words> direction carries arbitrary text from MusicXML, including
       // text that opens an ABC inline field and never closes it. Matching that
@@ -628,6 +666,20 @@ describe('ABC 2.1 syntax coverage', () => {
 
       const start = performance.now();
       serializeAbc(score);
+      expect(performance.now() - start).toBeLessThan(2000);
+    });
+
+    it.each([
+      ['spaces in K:', `K:C${' '.repeat(50_000)}x`],
+      ['percent signs in K:', `K:C %${'%'.repeat(50_000)}`],
+      ['spaces in V:', `V:1${' '.repeat(50_000)}x\nK:C`],
+    ])('should rewrite a kept header line with %s in linear time', (_, header) => {
+      // Splitting off a "% comment" or a closing "]" with a regular expression
+      // took seconds on these (CodeQL: polynomial regular expression)
+      const score = parseAbc(`X:1\nL:1/4\n${header}\nCDEF|]`);
+      const edited = insertClefChange(score, { partIndex: 0, measureIndex: 0, position: 0, clef: { sign: 'F', line: 4 } });
+      const start = performance.now();
+      serializeAbc(edited.data!);
       expect(performance.now() - start).toBeLessThan(2000);
     });
   });
@@ -1767,5 +1819,202 @@ describe('ABC bars with no notes', () => {
     expect(s.parts[0].measures.length).toBe(1);
     const back = parseAbc(serializeAbc(s));
     expect(back.parts[0].measures[0].entries.some(e => e.type === 'direction')).toBe(true);
+  });
+});
+
+describe('ABC clef changes (issue #119)', () => {
+  it('writes a clef changed after parsing into the kept K: line', () => {
+    const score = parseAbc('X:1\nM:4/4\nL:1/8\nK:none clef=perc\nBB B/B/B/B/ B/BB/ B/B/B|]');
+    const result = insertClefChange(score, { partIndex: 0, measureIndex: 0, position: 0, clef: { sign: 'G' } });
+    expect(serializeAbc(result.data!)).toBe('X:1\nM:4/4\nL:1/8\nK:none clef=treble\nBB B/B/B/B/ B/BB/ B/B/B|]\n');
+  });
+
+  it('replaces a bare clef name and keeps a trailing comment', () => {
+    const score = parseAbc('X:1\nL:1/4\nK:G bass % low\nCDEF|]');
+    const result = insertClefChange(score, { partIndex: 0, measureIndex: 0, position: 0, clef: { sign: 'C', line: 3 } });
+    expect(serializeAbc(result.data!)).toContain('K:G clef=alto % low\n');
+  });
+
+  it('leaves the header as written while the clef is unchanged', () => {
+    for (const abc of [
+      'X:1\nL:1/4\nK:G bass % low\nCDEF|]\n',
+      'X:1\nL:1/4\nK:C\nCD[K:bass]EF|CDEF|]\n',
+      'X:1\nL:1/4\nV:1 clef=treble\nV:2 clef=bass\nK:C\nV:1\nCDEF|]\nV:2\nCDEF|]\n',
+    ]) {
+      expect(serializeAbc(parseAbc(abc))).toBe(abc);
+    }
+  });
+
+  it('writes a clef changed after parsing into the voice definition', () => {
+    const score = parseAbc('X:1\nL:1/4\nV:1 clef=treble\nV:2 clef=bass\nK:C\nV:1\nCDEF|]\nV:2\nCDEF|]');
+    const result = insertClefChange(score, { partIndex: 1, measureIndex: 0, position: 0, clef: { sign: 'C', line: 3 } });
+    expect(serializeAbc(result.data!)).toBe('X:1\nL:1/4\nV:1 clef=treble\nV:2 clef=alto\nK:C\nV:1\nCDEF|]\nV:2\nCDEF|]\n');
+  });
+
+  it('keeps a K: clef change at the start of a later bar', () => {
+    const abc = 'X:1\nL:1/4\nK:C\nCDEF|\nK:bass\nCDEF|]';
+    const out = serializeAbc(parseAbc(abc));
+    expect(out).toBe('X:1\nL:1/4\nK:C\nCDEF|\nK:clef=bass\nCDEF|]\n');
+    expect(parseAbc(out).parts[0].measures[1].attributes?.clef?.[0]).toEqual({ sign: 'F', line: 4 });
+  });
+
+  it('writes clef changes inserted at a later bar or inside a bar', () => {
+    const score = parseAbc('X:1\nL:1/4\nK:C\nCDEF|CDEF|]');
+    const atBar = insertClefChange(score, { partIndex: 0, measureIndex: 1, position: 0, clef: { sign: 'F', line: 4 } });
+    expect(serializeAbc(atBar.data!)).toBe('X:1\nL:1/4\nK:C\nCDEF|\nK:clef=bass\nCDEF|]\n');
+    const midBar = insertClefChange(score, { partIndex: 0, measureIndex: 0, position: 1920, clef: { sign: 'F', line: 4 } });
+    expect(serializeAbc(midBar.data!)).toBe('X:1\nL:1/4\nK:C\nCD[K:clef=bass]EF|CDEF|]\n');
+  });
+});
+
+describe('ABC written after editing a parsed tune', () => {
+  it.each([
+    'A minor', 'A m', 'D dorian', 'G mix', 'C major', 'A\tMINOR', 'Am',
+  ])('replaces the whole key in a header K:%s and keeps its clef and comment', key => {
+    const score = parseAbc(`X:1\nL:1/4\nK:${key} clef=bass % low\nABcd|]`);
+    const edited = changeKey(score, { fifths: 1, mode: 'major' }, { fromMeasure: '1' });
+    const out = serializeAbc(edited);
+    expect(out).toContain('K:G clef=bass % low\n');
+
+    const back = parseAbc(out).parts[0].measures[0];
+    expect(back.attributes?.key).toEqual({ fifths: 1, mode: 'major' });
+    expect(back.entries.filter(e => e.type === 'note').map(e => e.pitch))
+      .toEqual(edited.parts[0].measures[0].entries.filter(e => e.type === 'note').map(e => e.pitch));
+  });
+
+  it.each(['A minor', 'D dorian', 'G mix'])('replaces the whole key in an inline [K:%s] and keeps its clef', key => {
+    const score = parseAbc(`X:1\nL:1/4\nK:C\nCDEF|[K:${key} clef=bass]ABcd|]`);
+    const edited = changeKey(score, { fifths: 1, mode: 'major' }, { fromMeasure: '2' });
+    const out = serializeAbc(edited);
+    expect(out).toContain('[K:G clef=bass]');
+
+    const back = parseAbc(out).parts[0].measures[1];
+    expect(back.attributes?.key).toEqual({ fifths: 1, mode: 'major' });
+    expect(back.entries.filter(e => e.type === 'note').map(e => e.pitch))
+      .toEqual(edited.parts[0].measures[1].entries.filter(e => e.type === 'note').map(e => e.pitch));
+  });
+
+  it('rewrites the header lines of edited values and keeps the rest as written', () => {
+    const score = parseAbc('X:1\nT:Old % keep\nC:Someone\nM:6/8 %Meter\nL:1/8\nQ:3/8=60\nK:G clef=bass % low\nGAB cde|]');
+    let edited = changeTime(score, { beats: '3', beatType: 4 }, { fromMeasure: '1' });
+    edited = changeKey(edited, { fifths: 2, mode: 'major' }, { fromMeasure: '1' });
+    edited = { ...edited, metadata: { ...edited.metadata, movementTitle: 'New', creators: [] } };
+    expect(serializeAbc(edited)).toBe('X:1\nT:New\nM:3/4\nL:1/8\nQ:3/8=60\nK:D clef=bass % low\nGAB =cde|]\n');
+  });
+
+  it('writes an edited header tempo', () => {
+    const score = parseAbc('X:1\nL:1/8\nQ:3/8=60\nK:G\nGAB cde|]');
+    const result = modifyTempo(score, { partIndex: 0, measureIndex: 0, bpm: 90 });
+    expect(serializeAbc(result.data!)).toBe('X:1\nL:1/8\nQ:3/8=90\nK:G\nGAB cde|]\n');
+  });
+
+  it('keeps inline tempo fields in line with their tempo', () => {
+    const score = parseAbc('X:1\nL:1/4\nK:C\nCDEF|[Q:"Allegro" 1/4=120]GABc|\nQ:1/4=90\nCDEF|]');
+    expect(serializeAbc(modifyTempo(score, { partIndex: 0, measureIndex: 1, bpm: 140 }).data!))
+      .toBe('X:1\nL:1/4\nK:C\nCDEF|[Q:"Allegro" 1/4=140]GABc|\nQ:1/4=90\nCDEF|]\n');
+    expect(serializeAbc(removeTempo(score, { partIndex: 0, measureIndex: 1 }).data!))
+      .toBe('X:1\nL:1/4\nK:C\nCDEF|GABc|\nQ:1/4=90\nCDEF|]\n');
+    expect(serializeAbc(removeTempo(score, { partIndex: 0, measureIndex: 2 }).data!))
+      .toBe('X:1\nL:1/4\nK:C\nCDEF|[Q:"Allegro" 1/4=120]GABc|\nCDEF|]\n');
+  });
+
+  it('writes a tempo change added to a later bar', () => {
+    const score = parseAbc('X:1\nL:1/4\nK:C\nCDEF|GABc|]');
+    const result = addTempo(score, { partIndex: 0, measureIndex: 1, position: 0, bpm: 100 });
+    expect(serializeAbc(result.data!)).toBe('X:1\nL:1/4\nK:C\nCDEF|[Q:1/4=100]GABc|]\n');
+  });
+
+  it.each([
+    [0, '[Q:1/4=99]"^Allegro"GABc'],
+    [1920, 'GA[Q:1/4=99]"^Allegro"Bc'],
+  ] as const)('keeps text on a tempo added at position %i', (position, music) => {
+    const score = parseAbc('X:1\nL:1/4\nK:C\nCDEF|GABc|]');
+    const result = addTempo(score, { partIndex: 0, measureIndex: 1, position, bpm: 99, text: 'Allegro' });
+    const out = serializeAbc(result.data!);
+    expect(out).toBe(`X:1\nL:1/4\nK:C\nCDEF|${music}|]\n`);
+    const back = parseAbc(out).parts[0].measures[1];
+    const directions = back.entries.flatMap(e => e.type === 'direction' ? e.directionTypes : []);
+    expect(directions).toContainEqual(expect.objectContaining({ kind: 'metronome', perMinute: 99 }));
+    expect(directions).toContainEqual(expect.objectContaining({ kind: 'words', text: 'Allegro' }));
+  });
+
+  it('keeps inline key and meter fields in line with the measure', () => {
+    const key = parseAbc('X:1\nL:1/4\nK:C\nCDEF|G[K:G]ABc|]');
+    expect(serializeAbc(changeKey(key, { fifths: 2, mode: 'major' }, { fromMeasure: '2' })))
+      // The C stays natural, which in D now needs its accidental
+      .toBe('X:1\nL:1/4\nK:C\nCDEF|G[K:D]AB=c|]\n');
+    const meter = parseAbc('X:1\nL:1/4\nM:4/4\nK:C\nCDEF|[M:3/4]GAB|c3|]');
+    expect(serializeAbc(changeTime(meter, { beats: '2', beatType: 4 }, { fromMeasure: '2' })))
+      .toBe('X:1\nL:1/4\nM:4/4\nK:C\nCDEF|[M:2/4]GAB|c3|]\n');
+  });
+
+  it('writes a meter change made in the score', () => {
+    const score = parseAbc('X:1\nL:1/4\nK:C\nCDEF|GABc|\ncdef|gabc|]');
+    expect(serializeAbc(changeTime(score, { beats: '3', beatType: 4 }, { fromMeasure: '3' })))
+      .toBe('X:1\nL:1/4\nK:C\nCDEF|GABc|\n[M:3/4]cdef|gabc|]\n');
+  });
+
+  it('keeps line breaks with their measures when measures are inserted or deleted', () => {
+    const score = parseAbc('X:1\nL:1/4\nK:C\nCDEF|GABc|\ncdef|gabc|]');
+    // An inserted (empty) measure is written as a bar rest
+    expect(serializeAbc(insertMeasure(score, { afterMeasure: '1' })))
+      .toBe('X:1\nL:1/4\nK:C\nCDEF|Z|GABc|\ncdef|gabc|]\n');
+    // A line that ended on a deleted measure ends on the one before it
+    expect(serializeAbc(deleteMeasure(score, '2'))).toBe('X:1\nL:1/4\nK:C\nCDEF|\ncdef|gabc|]\n');
+  });
+
+  describe('voices', () => {
+    const abc = 'X:1\nL:1/4\nV:1 clef=treble\nV:2 clef=bass octave=-1\nK:C\nV:1\nCDEF|GABc|\nV:2\nCDEF|GABc|\n% second\nV:1\ncdef|]\nV:2\ncdef|]';
+
+    it('keeps the voice groups when a measure is inserted', () => {
+      expect(serializeAbc(insertMeasure(parseAbc(abc), { afterMeasure: '1' }))).toBe(
+        'X:1\nL:1/4\nV:1 clef=treble\nV:2 clef=bass octave=-1\nK:C\nV:1\nCDEF|Z|GABc|\nV:2\nCDEF|Z|GABc|\n% second\nV:1\ncdef|]\nV:2\ncdef|]\n');
+    });
+
+    it('drops what belonged to a removed part, and keeps the octave= of the one left', () => {
+      const score = parseAbc(abc);
+      const out = serializeAbc(removePart(score, score.parts[0].id).data!);
+      expect(out).toBe('X:1\nL:1/4\nV:2 clef=bass octave=-1\nK:C\nCDEF|GABc|\ncdef|]\n');
+      expect(parseAbc(out).parts[0].measures[0].entries[0]).toMatchObject({ pitch: { step: 'C', octave: 3 } });
+    });
+
+    it('writes an added part after the others, with its own clef', () => {
+      const score = parseAbc(abc);
+      const out = serializeAbc(addPart(score, { id: 'P9', name: 'Cello', clef: { sign: 'F', line: 4 } }).data!);
+      expect(out).toContain('% second\nV:1\ncdef|]\nV:2\ncdef|]\nV:3 clef=bass\n');
+      const back = parseAbc(out);
+      expect(back.parts).toHaveLength(3);
+      expect(back.parts[2].measures[0].attributes?.clef?.[0]).toEqual({ sign: 'F', line: 4 });
+      expect(back.parts[0].measures[0].attributes?.clef?.[0]).toEqual({ sign: 'G', line: 2 });
+    });
+
+    it('starts a voice in its own key and meter when they differ from the header', () => {
+      const score = parseAbc('X:1\nL:1/4\nM:4/4\nK:G\nGABc|]');
+      const result = addPart(score, { id: 'P2', name: 'B', key: { fifths: 0 }, time: { beats: '3', beatType: 4 } });
+      const back = parseAbc(serializeAbc(result.data!));
+      expect(back.parts[1].measures[0].attributes).toMatchObject({ key: { fifths: 0 }, time: { beats: '3', beatType: 4 } });
+      expect(back.parts[0].measures[0].attributes).toMatchObject({ key: { fifths: 1 }, time: { beats: '4', beatType: 4 } });
+    });
+  });
+
+  it('reads a clef from the V: line that first defines a voice in the body', () => {
+    const score = parseAbc('X:1\nL:1/4\nK:C\nV:1\nCDEF|\nV:2 clef=bass\nC,D,E,F,|');
+    expect(score.parts.map(p => p.measures[0].attributes?.clef?.[0])).toEqual([
+      { sign: 'G', line: 2 }, { sign: 'F', line: 4 },
+    ]);
+  });
+
+  it('writes the accidental a note needs after a tie carried its own across the bar', () => {
+    const score = parseAbc('X:1\nL:1/4\nK:D\nAB c2-|c2 Bc|]');
+    const out = serializeAbc(changeKey(score, { fifths: 0, mode: 'major' }, { fromMeasure: '2' }));
+    expect(out).toBe('X:1\nL:1/4\nK:D\nABc2-|\nK:C\nc2B^c|]\n');
+    const bar = parseAbc(out).parts[0].measures[1].entries.filter(e => e.type === 'note');
+    expect(bar.map(n => n.type === 'note' && n.pitch?.alter)).toEqual([1, undefined, 1]);
+  });
+
+  it('places w: lines after their music line when a key change line splits it', () => {
+    const score = parseAbc('X:1\nL:1/4\nK:C\nCCGG|AAG2|\nw:Twin-kle twin-kle lit-tle star\nFFEE|DDC2|\nw:How I won-der what you are');
+    const out = serializeAbc(changeKey(score, { fifths: -2, mode: 'major' }, { fromMeasure: '3' }));
+    expect(out).toBe('X:1\nL:1/4\nK:C\nCCGG|AAG2|\nw:Twin-kle twin-kle lit-tle star\nK:Bb\nFF=EE|DDC2|\nw:How I won-der what you are\n');
   });
 });

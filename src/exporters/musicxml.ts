@@ -334,16 +334,16 @@ function serializePageLayout(layout: PageLayout, indent: string, out: string[]):
       const typeAttr = m.type ? ` type="${m.type}"` : '';
       out.push(`${indent}  <page-margins${typeAttr}>`);
       if (m.leftMargin !== undefined) {
-        out.push(`${indent}    <left-margin>${m.leftMarginRaw ?? m.leftMargin}</left-margin>`);
+        out.push(`${indent}    <left-margin>${keptNumber(m.leftMargin, m.leftMarginRaw)}</left-margin>`);
       }
       if (m.rightMargin !== undefined) {
-        out.push(`${indent}    <right-margin>${m.rightMarginRaw ?? m.rightMargin}</right-margin>`);
+        out.push(`${indent}    <right-margin>${keptNumber(m.rightMargin, m.rightMarginRaw)}</right-margin>`);
       }
       if (m.topMargin !== undefined) {
-        out.push(`${indent}    <top-margin>${m.topMarginRaw ?? m.topMargin}</top-margin>`);
+        out.push(`${indent}    <top-margin>${keptNumber(m.topMargin, m.topMarginRaw)}</top-margin>`);
       }
       if (m.bottomMargin !== undefined) {
-        out.push(`${indent}    <bottom-margin>${m.bottomMarginRaw ?? m.bottomMargin}</bottom-margin>`);
+        out.push(`${indent}    <bottom-margin>${keptNumber(m.bottomMargin, m.bottomMarginRaw)}</bottom-margin>`);
       }
       out.push(`${indent}  </page-margins>`);
     }
@@ -352,26 +352,34 @@ function serializePageLayout(layout: PageLayout, indent: string, out: string[]):
   out.push(`${indent}</page-layout>`);
 }
 
+/**
+ * A layout number as the file wrote it ("10.0"), kept while it still has the
+ * value the score holds; once the value is changed, the new value.
+ */
+function keptNumber(value: number, raw?: string): string {
+  return raw !== undefined && parseFloat(raw) === value ? raw : String(value);
+}
+
 function serializeSystemLayout(layout: SystemLayout, indent: string, out: string[]): void {
   out.push(`${indent}<system-layout>`);
 
   if (layout.systemMargins) {
     out.push(`${indent}  <system-margins>`);
     if (layout.systemMargins.leftMargin !== undefined) {
-      out.push(`${indent}    <left-margin>${layout.systemMargins.leftMarginRaw ?? layout.systemMargins.leftMargin}</left-margin>`);
+      out.push(`${indent}    <left-margin>${keptNumber(layout.systemMargins.leftMargin, layout.systemMargins.leftMarginRaw)}</left-margin>`);
     }
     if (layout.systemMargins.rightMargin !== undefined) {
-      out.push(`${indent}    <right-margin>${layout.systemMargins.rightMarginRaw ?? layout.systemMargins.rightMargin}</right-margin>`);
+      out.push(`${indent}    <right-margin>${keptNumber(layout.systemMargins.rightMargin, layout.systemMargins.rightMarginRaw)}</right-margin>`);
     }
     out.push(`${indent}  </system-margins>`);
   }
 
   if (layout.systemDistance !== undefined) {
-    out.push(`${indent}  <system-distance>${layout.systemDistanceRaw ?? layout.systemDistance}</system-distance>`);
+    out.push(`${indent}  <system-distance>${keptNumber(layout.systemDistance, layout.systemDistanceRaw)}</system-distance>`);
   }
 
   if (layout.topSystemDistance !== undefined) {
-    out.push(`${indent}  <top-system-distance>${layout.topSystemDistanceRaw ?? layout.topSystemDistance}</top-system-distance>`);
+    out.push(`${indent}  <top-system-distance>${keptNumber(layout.topSystemDistance, layout.topSystemDistanceRaw)}</top-system-distance>`);
   }
 
   if (layout.systemDividers) {

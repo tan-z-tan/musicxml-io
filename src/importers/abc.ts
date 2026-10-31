@@ -38,6 +38,14 @@ import type {
   Lyric,
 } from '../types';
 import { generateId } from '../id';
+import { abcSnapshotField } from '../abc-hints';
+import {
+  hasKeyTonic,
+  abcClefToMusicXml,
+  parseAbcClefSpec,
+  parseKeySignature,
+  parseTimeSignature,
+} from '../abc-fields';
 import { applyBeamGroup, beamLevel } from '../beams';
 import {
   ABC_BODY_FIELD_MARKER,
@@ -162,34 +170,6 @@ const NOTE_TYPE_ENTRIES: [number, NoteType][] = /* @__PURE__ */ Object.entries(N
   .map(([quarterNotes, type]) => [parseFloat(quarterNotes), type]);
 
 // Key signature mapping
-const KEY_FIFTHS: Record<string, number> = {
-  'Cb': -7, 'Gb': -6, 'Db': -5, 'Ab': -4, 'Eb': -3, 'Bb': -2, 'F': -1,
-  'C': 0, 'G': 1, 'D': 2, 'A': 3, 'E': 4, 'B': 5, 'F#': 6, 'C#': 7,
-};
-
-// Mode to fifths offset (from major)
-const MODE_OFFSET: Record<string, number> = {
-  'major': 0, 'maj': 0, 'ion': 0, 'ionian': 0, '': 0,
-  'minor': -3, 'min': -3, 'm': -3,
-  'dorian': -2, 'dor': -2,
-  'phrygian': -4, 'phr': -4,
-  'lydian': 1, 'lyd': 1,
-  'mixolydian': -1, 'mix': -1,
-  'aeolian': -3, 'aeo': -3,
-  'locrian': -5, 'loc': -5,
-};
-
-const MODE_NAME: Record<string, KeySignature['mode']> = {
-  'major': 'major', 'maj': 'major', 'ion': 'ionian', 'ionian': 'ionian', '': 'major',
-  'minor': 'minor', 'min': 'minor', 'm': 'minor',
-  'dorian': 'dorian', 'dor': 'dorian',
-  'phrygian': 'phrygian', 'phr': 'phrygian',
-  'lydian': 'lydian', 'lyd': 'lydian',
-  'mixolydian': 'mixolydian', 'mix': 'mixolydian',
-  'aeolian': 'aeolian', 'aeo': 'aeolian',
-  'locrian': 'locrian', 'loc': 'locrian',
-};
-
 const DYNAMICS_VALUES = ABC_DYNAMICS;
 
 /**
@@ -229,6 +209,27 @@ function appendToHeaderField(header: AbcHeader, field: string, text: string) {
 function stripAbcComment(text: string): string {
   const m = text.match(/(^|[^\\])%/);
   return m ? text.slice(0, m.index! + m[1].length).trimEnd() : text;
+}
+
+/**
+ * Parameters of a V: field value ("1 clef=bass name=\"Bass\" octave=-1").
+ * `hasParams` tells a voice definition from a bare switch to the voice.
+ */
+function readVoiceField(value: string): { id: string; name?: string; clef?: string; octave?: number; hasParams: boolean } {
+  const voiceValue = stripAbcComment(value).trim();
+  const id = voiceValue.split(/\s+/)[0];
+  const nameMatch = voiceValue.match(/name=["']?([^"'\s]+)["']?/i);
+  const nmMatch = voiceValue.match(/nm=["']([^"']*)["']/i);
+  const clefMatch = voiceValue.match(/clef=(\S+)/i);
+  const octaveMatch = voiceValue.match(/octave\s*=\s*(-?\d+)/i);
+  return {
+    id,
+    name: nameMatch ? nameMatch[1] : nmMatch ? nmMatch[1] : undefined,
+    clef: clefMatch?.[1],
+    octave: octaveMatch ? parseInt(octaveMatch[1], 10) : undefined,
+    hasParams: !!(clefMatch || nameMatch || nmMatch) ||
+      /\b(Program|merge|up|down|bass|treble|alto|tenor|soprano|octave|snm|stem)\b/i.test(voiceValue),
+  };
 }
 
 function parseHeader(lines: string[]): { header: AbcHeader; bodyStartIndex: number; headerFieldOrder: string[] } {
@@ -336,20 +337,14 @@ function parseHeader(lines: string[]): { header: AbcHeader; bodyStartIndex: numb
           headerFieldOrder.push(line);
           break;
         case 'V': {
-          const voiceValue = value.trim();
-          const voiceId = voiceValue.split(/\s+/)[0];
-          const nameMatch = voiceValue.match(/name=["']?([^"'\s]+)["']?/i);
-          const nmMatch = voiceValue.match(/nm=["']([^"']*)["']/i);
-          const clefMatch = voiceValue.match(/clef=(\S+)/i);
-          const octaveMatch = voiceValue.match(/octave\s*=\s*(-?\d+)/i);
-          const displayName = nameMatch ? nameMatch[1] : nmMatch ? nmMatch[1] : voiceId;
+          const voice = readVoiceField(value);
+          const voiceId = voice.id;
+          const displayName = voice.name ?? voiceId;
 
           // After K:, determine if this V: line is a header definition or body voice switch
           // V: lines with parameters (clef=, nm=, name=, Program, etc.) are definitions
           // V: lines with just an ID (possibly + comment) are body voice switches
-          const hasParams = clefMatch || nameMatch || nmMatch ||
-            /\b(Program|merge|up|down|bass|treble|alto|tenor|soprano|octave|snm|stem)\b/i.test(voiceValue);
-          const isBodyVoiceSwitch = foundKey && !hasParams;
+          const isBodyVoiceSwitch = foundKey && !voice.hasParams;
 
           if (isBodyVoiceSwitch) {
             // This is a body voice switch, mark post-K: header as done
@@ -359,17 +354,17 @@ function parseHeader(lines: string[]): { header: AbcHeader; bodyStartIndex: numb
           // Update existing or add new voice entry
           const existingVoice = header.voices!.find(v => v.id === voiceId);
           if (existingVoice) {
-            if (nameMatch || nmMatch) existingVoice.name = displayName;
-            if (clefMatch) existingVoice.clef = clefMatch[1];
-            if (octaveMatch) existingVoice.octave = parseInt(octaveMatch[1], 10);
+            if (voice.name !== undefined) existingVoice.name = displayName;
+            if (voice.clef !== undefined) existingVoice.clef = voice.clef;
+            if (voice.octave !== undefined) existingVoice.octave = voice.octave;
             // Keep the most detailed full line (post-K: definitions typically have more detail)
             if (foundKey && !isBodyVoiceSwitch) existingVoice.fullLine = lines[i];
           } else {
             header.voices!.push({
               id: voiceId,
               name: displayName,
-              clef: clefMatch ? clefMatch[1] : undefined,
-              octave: octaveMatch ? parseInt(octaveMatch[1], 10) : undefined,
+              clef: voice.clef,
+              octave: voice.octave,
               fullLine: lines[i],
             });
           }
@@ -406,95 +401,9 @@ function parseHeader(lines: string[]): { header: AbcHeader; bodyStartIndex: numb
 // Key Signature Parsing
 // ============================================================
 
-/**
- * Whether a K: value names a key (tonic + optional mode) rather than only
- * parameters: "K:bass" or "K:clef=treble-8" change the clef and keep the key.
- */
-function hasKeyTonic(keyStr: string): boolean {
-  const word = keyStr.trim().split(/\s+/)[0] ?? '';
-  const m = word.match(/^[A-Ga-g][#b]?([A-Za-z]*)$/);
-  if (!m) return /^(none|HP|Hp)$/.test(word);
-  const mode = m[1].toLowerCase();
-  return mode === '' || mode === 'm' || mode.slice(0, 3) in MODE_OFFSET;
-}
-
-function parseKeySignature(keyStr: string): KeySignature {
-  if (!keyStr || keyStr.trim() === '' || keyStr.trim().toLowerCase() === 'none' || !hasKeyTonic(keyStr)) {
-    return { fifths: 0, mode: 'major' };
-  }
-
-  const trimmed = keyStr.trim();
-
-  // Match key note (e.g., C, C#, Cb, c, c#)
-  const keyMatch = trimmed.match(/^([A-Ga-g])(#|b)?/);
-  if (!keyMatch) {
-    return { fifths: 0, mode: 'major' };
-  }
-
-  const keyNote = keyMatch[1].toUpperCase();
-  const keyAccidental = keyMatch[2] || '';
-  const keyName = keyNote + keyAccidental;
-
-  // Extract mode
-  const remainder = trimmed.slice(keyMatch[0].length).trim().toLowerCase();
-  // Only the first three letters of a mode name count (ABC 2.1 §3.1.14), so
-  // "mix" must not be read as "m" (minor)
-  const word = remainder.match(/^[a-z]+/)?.[0] ?? '';
-  const abbrev = word === 'm' ? 'm' : word.slice(0, 3);
-  const mode = abbrev in MODE_OFFSET ? abbrev : '';
-
-  // Get base fifths for the key note
-  const baseFifths = KEY_FIFTHS[keyName];
-  if (baseFifths === undefined) {
-    return { fifths: 0, mode: 'major' };
-  }
-
-  const modeOffset = MODE_OFFSET[mode] ?? 0;
-  const fifths = baseFifths + modeOffset;
-  const modeValue = MODE_NAME[mode] ?? 'major';
-
-  return { fifths, mode: modeValue };
-}
-
 // ============================================================
 // Time Signature Parsing
 // ============================================================
-
-function parseTimeSignature(meterStr: string): TimeSignature {
-  if (!meterStr || meterStr.trim() === '') {
-    return { beats: '4', beatType: 4 };
-  }
-
-  const trimmed = meterStr.trim();
-
-  if (trimmed === 'C' || trimmed.toLowerCase() === 'common') {
-    return { beats: '4', beatType: 4, symbol: 'common' };
-  }
-  if (trimmed === 'C|' || trimmed.toLowerCase() === 'cut') {
-    return { beats: '2', beatType: 2, symbol: 'cut' };
-  }
-  if (trimmed.toLowerCase() === 'none') {
-    return { beats: '4', beatType: 4, senzaMisura: true };
-  }
-
-  const match = trimmed.match(/^(\d+)\/(\d+)$/);
-  if (match) {
-    return { beats: match[1], beatType: parseInt(match[2], 10) };
-  }
-
-  // Additive meters: (2+3+2)/8 or 3+2/8
-  const additive = trimmed.match(/^\(?\s*(\d+(?:\s*\+\s*\d+)+)\s*\)?\/(\d+)$/);
-  if (additive) {
-    const groups = additive[1].split('+').map(g => parseInt(g.trim(), 10));
-    return {
-      beats: groups.join('+'),
-      beatType: parseInt(additive[2], 10),
-      beatsList: groups,
-    };
-  }
-
-  return { beats: '4', beatType: 4 };
-}
 
 /**
  * Total measure length of a meter, in units of a whole note.
@@ -1551,13 +1460,15 @@ function buildScore(header: AbcHeader, voiceTokensList: AbcToken[][], voiceIds: 
     miscellaneous.push({ name: 'abc-voice-full-lines', value: JSON.stringify(voiceFullLines) });
   }
 
+  const matchById = voiceIds.some(id => header.voices?.some(v => v.id === id));
   for (let voiceIndex = 0; voiceIndex < voiceTokensList.length; voiceIndex++) {
     const tokens = voiceTokensList[voiceIndex];
     const partId = `P${voiceIndex + 1}`;
     // Match voice by ID (from tokenizer) to header voice definitions
     const voiceId = voiceIds[voiceIndex];
+    // By ID; by position only when the body names none of the defined voices
     const headerVoice = header.voices?.find(v => v.id === voiceId)
-      || (header.voices && header.voices[voiceIndex]);
+      || (matchById ? undefined : header.voices?.[voiceIndex]);
     const voiceName = headerVoice
       ? headerVoice.name || `Voice ${voiceIndex + 1}`
       : voiceTokensList.length > 1
@@ -1702,60 +1613,6 @@ function parseTempoToDirection(tempoStr: string): DirectionEntry | null {
     placement: 'above',
     sound: { tempo: Math.round(perMinute * quarterNotes * 1000) / 1000 },
   };
-}
-
-/** Base clef names accepted in K: and V: fields (ABC v2.1 §4.6). */
-const ABC_CLEF_NAMES: Record<string, Clef> = {
-  'treble': { sign: 'G', line: 2 },
-  'bass': { sign: 'F', line: 4 },
-  'bass3': { sign: 'F', line: 3 },
-  'alto': { sign: 'C', line: 3 },
-  'tenor': { sign: 'C', line: 4 },
-  'soprano': { sign: 'C', line: 1 },
-  'mezzo': { sign: 'C', line: 2 },
-  'mezzo-soprano': { sign: 'C', line: 2 },
-  'baritone': { sign: 'C', line: 5 },
-  'perc': { sign: 'percussion' },
-  'percussion': { sign: 'percussion' },
-  'none': { sign: 'G', line: 2 },
-};
-
-function abcClefToMusicXml(abcClef?: string): Clef {
-  if (!abcClef) return { sign: 'G', line: 2 };
-
-  // Split off an octave shift suffix: treble-8, bass+8, treble-8va, ...
-  const match = abcClef.trim().toLowerCase().match(/^([a-z-]*?)\s*([+-])?(8|15)(?:va|vb)?$/);
-  const baseName = match ? match[1] : abcClef.trim().toLowerCase();
-  const base = ABC_CLEF_NAMES[baseName] ?? ABC_CLEF_NAMES[abcClef.trim().toLowerCase()];
-  if (!base) return { sign: 'G', line: 2 };
-
-  const clef: Clef = { ...base };
-  if (match && match[3]) {
-    // -8 sounds an octave lower, +8 an octave higher; 15 is two octaves
-    const octaves = match[3] === '15' ? 2 : 1;
-    clef.clefOctaveChange = (match[2] === '+' ? octaves : -octaves);
-  }
-  return clef;
-}
-
-/**
- * Clef specification carried by a K: or V: field, e.g. `clef=bass`,
- * `clef=treble-8`, or the bare form `K:C bass` (ABC v2.1 §4.6).
- *
- * @returns The clef, or undefined when the field names none.
- */
-function parseAbcClefSpec(fieldValue: string): Clef | undefined {
-  const explicit = fieldValue.match(/clef\s*=\s*(\S+)/i);
-  if (explicit) return abcClefToMusicXml(explicit[1]);
-
-  // Bare clef name, as in "K:C bass", "K:bass" or "V:1 treble-8"
-  const words = fieldValue.trim().split(/\s+/);
-  for (const word of hasKeyTonic(fieldValue) ? words.slice(1) : words) {
-    if (word.includes('=')) continue;
-    const bare = word.toLowerCase().replace(/([+-]?(?:8|15)(?:va|vb)?)$/, '');
-    if (ABC_CLEF_NAMES[bare] && bare !== 'none') return abcClefToMusicXml(word);
-  }
-  return undefined;
 }
 
 function buildMeasures(
@@ -2426,6 +2283,10 @@ function buildMeasures(
         // Whole-line body fields (P:, s:, r:, ...) are carried through verbatim
         if (token.value.startsWith(ABC_BODY_FIELD_MARKER)) {
           currentEntries.push(createRawWordsDirection(token.value));
+          // A tempo line is also modelled, as an inline [Q:] is
+          const tempoLine = token.value.slice(ABC_BODY_FIELD_MARKER.length).match(/^Q:(.*)$/);
+          const tempoDirection = tempoLine ? parseTempoToDirection(tempoLine[1].trim()) : null;
+          if (tempoDirection) currentEntries.push(tempoDirection);
           break;
         }
 
@@ -3060,6 +2921,23 @@ function parseTune(lines: string[], defaults: string[] = []): Score {
   }
   const bodyLines = lines.slice(bodyStartIndex);
   const { tokens: voiceTokensList, voiceIds, inlineVoiceMarkers, voiceDeclarationLines, bodyComments, bodyDirectives, wFields, voiceInterleavePattern, groupBarCounts, voiceComments, preVoiceComments, trailingComments } = tokenizeBody(bodyLines, header.voices?.[0]?.id ?? '1');
+  // A voice may be defined where it first appears in the body ("V:2 clef=bass"):
+  // its parameters count as long as the header did not set them
+  const seenInBody = new Set<string>();
+  for (const line of voiceDeclarationLines) {
+    const voice = readVoiceField(line.replace(/^V:/, ''));
+    if (seenInBody.has(voice.id)) continue;
+    seenInBody.add(voice.id);
+    if (!voice.hasParams) continue;
+    header.voices ??= [];
+    const existing = header.voices.find(v => v.id === voice.id);
+    if (existing) {
+      existing.clef ??= voice.clef;
+      existing.octave ??= voice.octave;
+    } else {
+      header.voices.push({ id: voice.id, name: voice.name, clef: voice.clef, octave: voice.octave });
+    }
+  }
   const score = buildScore(header, voiceTokensList, voiceIds, headerFieldOrder, inlineVoiceMarkers, voiceDeclarationLines, bodyComments, bodyDirectives, wFields, voiceInterleavePattern, groupBarCounts, voiceComments, preVoiceComments, trailingComments);
 
   // Detect if the file uses explicit /2 duration form (e.g., "f/2") vs shorthand "f/"
@@ -3070,6 +2948,10 @@ function parseTune(lines: string[], defaults: string[] = []): Score {
     if (!score.metadata.miscellaneous) score.metadata.miscellaneous = [];
     score.metadata.miscellaneous.push({ name: 'abc-explicit-half', value: 'true' });
   }
+
+  // What the round-trip hints above were written for, so that serializing
+  // can tell which of them an edit has made stale
+  score.metadata.miscellaneous = [...(score.metadata.miscellaneous ?? []), abcSnapshotField(score)];
 
   return score;
 }
