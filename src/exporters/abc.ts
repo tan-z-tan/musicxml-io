@@ -824,7 +824,7 @@ export function serializeAbc(score: Score, options?: AbcSerializeOptions): strin
       const { noteStr, lyrics: measureLyrics, updatedUnitNote } = serializeMeasureEntries(measure, measDivisions, currentUnitNote, opts, startKey);
       if (measureLyrics.size > 0) lyrics.set(mi, measureLyrics);
       if (updatedUnitNote) currentUnitNote = updatedUnitNote;
-      const collapsed = applyMultiMeasureRest(measure, isEmptyBar(measure) ? noteStr + 'Z' : noteStr, part.measures.slice(mi + 1));
+      const collapsed = applyMultiMeasureRest(part.measures, mi, isEmptyBar(measure) ? noteStr + 'Z' : noteStr);
       for (let k = 1; k <= collapsed.absorbed; k++) absorbedMeasures.add(mi + k);
       measureStr += collapsed.text;
 
@@ -1165,7 +1165,7 @@ function serializePartBody(
     if (updatedUnitNote) {
       unitNote = updatedUnitNote;
     }
-    const collapsed = applyMultiMeasureRest(measure, isEmptyBar(measure) ? noteStr + 'Z' : noteStr, part.measures.slice(mi + 1));
+    const collapsed = applyMultiMeasureRest(part.measures, mi, isEmptyBar(measure) ? noteStr + 'Z' : noteStr);
     for (let k = 1; k <= collapsed.absorbed; k++) absorbedMeasures.add(mi + k);
     musicParts.push(collapsed.text);
 
@@ -1696,7 +1696,6 @@ function serializeMeasureEntries(
         if (tempo && entry !== headerTempo && !tempoByMarker.has(entry)) {
           parts.push(`[Q:${tempo}]`);
           prev = null;
-          break;
         }
 
         const text = serializeDirectionText(entry, opts);
@@ -1705,7 +1704,6 @@ function serializeMeasureEntries(
             parts.push(text);
           }
         }
-        // Tempo is handled in header, skip here
         break;
       }
 
@@ -1782,14 +1780,17 @@ function multipleRestCount(measure: Measure): number {
  *
  * @returns The measure text, and how many following measures it absorbed.
  */
-function applyMultiMeasureRest(measure: Measure, noteStr: string, following: Measure[]): { text: string; absorbed: number } {
-  let count = multipleRestCount(measure);
+function applyMultiMeasureRest(measures: Measure[], startIndex: number, noteStr: string): { text: string; absorbed: number } {
+  const requested = multipleRestCount(measures[startIndex]);
+  if (requested < 2 || noteStr.trim() !== 'Z') return { text: noteStr, absorbed: 0 };
+
   // Only bars that still hold nothing but their rest can be absorbed: an
-  // edit that put something into one ends the run before it
-  const plain = following.slice(0, count - 1).findIndex(m => !isPlainRestBar(m));
-  if (plain >= 0) count = plain + 1;
-  if (count < 2 || noteStr.trim() !== 'Z') return { text: noteStr, absorbed: 0 };
-  return { text: `Z${count}`, absorbed: count - 1 };
+  // edit that put something into one ends the run before it. Read the
+  // original array so ordinary bars do not copy or scan the rest of the part.
+  const end = Math.min(measures.length, startIndex + requested);
+  let count = 1;
+  while (startIndex + count < end && isPlainRestBar(measures[startIndex + count])) count++;
+  return count > 1 ? { text: `Z${count}`, absorbed: count - 1 } : { text: noteStr, absorbed: 0 };
 }
 
 /** True for a bar holding a single rest and nothing else. */

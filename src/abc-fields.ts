@@ -190,7 +190,17 @@ export function parseTimeSignature(meterStr: string): TimeSignature {
 /** A K: value with its key set to `tonic` ("G", "Ador"), keeping its clef and other parameters. */
 export function withKeyTonic(value: string, tonic: string): string {
   const m = value.match(/^(\s*)(\S*)(.*)$/s)!;
-  return hasKeyTonic(value)
-    ? m[1] + tonic + m[3]
-    : m[1] + tonic + (value.trim() ? ' ' + value.trimStart() : '');
+  if (!hasKeyTonic(value)) return m[1] + tonic + (value.trim() ? ' ' + value.trimStart() : '');
+
+  let suffix = m[3];
+  // A mode can be a separate word ("A minor"); it belongs to the key,
+  // while the clef and other parameters that follow belong to the suffix.
+  if (/^[A-Ga-g][#b]?$/.test(m[2])) {
+    const mode = suffix.match(/^\s+([A-Za-z]+)(?=\s|$)/);
+    if (mode) {
+      const word = mode[1].toLowerCase();
+      if (word === 'm' || word.slice(0, 3) in MODE_OFFSET) suffix = suffix.slice(mode[0].length);
+    }
+  }
+  return m[1] + tonic + suffix;
 }

@@ -489,6 +489,26 @@ describe('ABC 2.1 syntax coverage', () => {
         .toContain('Z3');
     });
 
+    it('should stop collapsing rests before an added tempo', () => {
+      const score = parseAbc('X:1\nL:1/4\nK:C\nZ3|CDEF|]');
+      const edited = addTempo(score, { partIndex: 0, measureIndex: 1, position: 0, bpm: 99 }).data!;
+      const out = serializeAbc(edited);
+      expect(out).toBe('X:1\nL:1/4\nK:C\nZ|[Q:1/4=99]Z|Z|CDEF|]\n');
+      const back = parseAbc(out);
+      expect(back.parts[0].measures).toHaveLength(4);
+      expect(back.parts[0].measures[1].entries).toContainEqual(expect.objectContaining({
+        type: 'direction', sound: { tempo: 99 },
+      }));
+    });
+
+    it('should not restore rest measures deleted from the end of a run', () => {
+      const score = parseAbc('X:1\nL:1/4\nK:C\nZ4|]');
+      const edited = deleteMeasure(deleteMeasure(score, '4'), '3');
+      const out = serializeAbc(edited);
+      expect(out).toContain('Z2');
+      expect(parseAbc(out).parts[0].measures).toHaveLength(2);
+    });
+
     it('should preserve the y spacer', () => {
       expect(roundTrip('X:1\nK:C\nC y D E|\n')).toContain('y');
     });
@@ -617,6 +637,21 @@ describe('ABC 2.1 syntax coverage', () => {
   });
 
   describe('Pathological input', () => {
+    it('should serialize a large score without scanning every remaining measure', () => {
+      const score = parseAbc('X:1\nL:1/4\nK:C\nCDEF|');
+      score.metadata.miscellaneous = [];
+      const measure = score.parts[0].measures[0];
+      const measureCount = 64_000;
+      score.parts[0].measures = Array.from({ length: measureCount }, (_, i) => ({
+        ...measure, _id: `measure-${i}`, number: String(i + 1),
+      }));
+
+      const start = performance.now();
+      const out = serializeAbc(score);
+      expect(performance.now() - start).toBeLessThan(2000);
+      expect(out.match(/\|/g)).toHaveLength(measureCount);
+    });
+
     it('should serialize an unterminated inline field marker in linear time', () => {
       // A <words> direction carries arbitrary text from MusicXML, including
       // text that opens an ABC inline field and never closes it. Matching that
@@ -1833,6 +1868,32 @@ describe('ABC clef changes (issue #119)', () => {
 });
 
 describe('ABC written after editing a parsed tune', () => {
+  it.each([
+    'A minor', 'A m', 'D dorian', 'G mix', 'C major', 'A\tMINOR', 'Am',
+  ])('replaces the whole key in a header K:%s and keeps its clef and comment', key => {
+    const score = parseAbc(`X:1\nL:1/4\nK:${key} clef=bass % low\nABcd|]`);
+    const edited = changeKey(score, { fifths: 1, mode: 'major' }, { fromMeasure: '1' });
+    const out = serializeAbc(edited);
+    expect(out).toContain('K:G clef=bass % low\n');
+
+    const back = parseAbc(out).parts[0].measures[0];
+    expect(back.attributes?.key).toEqual({ fifths: 1, mode: 'major' });
+    expect(back.entries.filter(e => e.type === 'note').map(e => e.pitch))
+      .toEqual(edited.parts[0].measures[0].entries.filter(e => e.type === 'note').map(e => e.pitch));
+  });
+
+  it.each(['A minor', 'D dorian', 'G mix'])('replaces the whole key in an inline [K:%s] and keeps its clef', key => {
+    const score = parseAbc(`X:1\nL:1/4\nK:C\nCDEF|[K:${key} clef=bass]ABcd|]`);
+    const edited = changeKey(score, { fifths: 1, mode: 'major' }, { fromMeasure: '2' });
+    const out = serializeAbc(edited);
+    expect(out).toContain('[K:G clef=bass]');
+
+    const back = parseAbc(out).parts[0].measures[1];
+    expect(back.attributes?.key).toEqual({ fifths: 1, mode: 'major' });
+    expect(back.entries.filter(e => e.type === 'note').map(e => e.pitch))
+      .toEqual(edited.parts[0].measures[1].entries.filter(e => e.type === 'note').map(e => e.pitch));
+  });
+
   it('rewrites the header lines of edited values and keeps the rest as written', () => {
     const score = parseAbc('X:1\nT:Old % keep\nC:Someone\nM:6/8 %Meter\nL:1/8\nQ:3/8=60\nK:G clef=bass % low\nGAB cde|]');
     let edited = changeTime(score, { beats: '3', beatType: 4 }, { fromMeasure: '1' });
@@ -1861,6 +1922,20 @@ describe('ABC written after editing a parsed tune', () => {
     const score = parseAbc('X:1\nL:1/4\nK:C\nCDEF|GABc|]');
     const result = addTempo(score, { partIndex: 0, measureIndex: 1, position: 0, bpm: 100 });
     expect(serializeAbc(result.data!)).toBe('X:1\nL:1/4\nK:C\nCDEF|[Q:1/4=100]GABc|]\n');
+  });
+
+  it.each([
+    [0, '[Q:1/4=99]"^Allegro"GABc'],
+    [1920, 'GA[Q:1/4=99]"^Allegro"Bc'],
+  ] as const)('keeps text on a tempo added at position %i', (position, music) => {
+    const score = parseAbc('X:1\nL:1/4\nK:C\nCDEF|GABc|]');
+    const result = addTempo(score, { partIndex: 0, measureIndex: 1, position, bpm: 99, text: 'Allegro' });
+    const out = serializeAbc(result.data!);
+    expect(out).toBe(`X:1\nL:1/4\nK:C\nCDEF|${music}|]\n`);
+    const back = parseAbc(out).parts[0].measures[1];
+    const directions = back.entries.flatMap(e => e.type === 'direction' ? e.directionTypes : []);
+    expect(directions).toContainEqual(expect.objectContaining({ kind: 'metronome', perMinute: 99 }));
+    expect(directions).toContainEqual(expect.objectContaining({ kind: 'words', text: 'Allegro' }));
   });
 
   it('keeps inline key and meter fields in line with the measure', () => {
