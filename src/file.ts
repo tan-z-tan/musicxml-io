@@ -3,6 +3,7 @@ import { parse } from './importers/musicxml';
 import { serialize } from './exporters/musicxml';
 import type { SerializeOptions } from './exporters/musicxml';
 import type { MidiExportOptions } from './exporters/midi';
+import type { LilyPondSerializeOptions } from './exporters/lilypond';
 import type { Score } from './types';
 
 /**
@@ -62,7 +63,7 @@ export function decodeBuffer(buffer: Buffer): string {
 /**
  * Export options combining all format options
  */
-export interface ExportOptions extends SerializeOptions, MidiExportOptions { }
+export interface ExportOptions extends SerializeOptions, MidiExportOptions, LilyPondSerializeOptions { }
 
 /**
  * Serialize a Score to a file
@@ -71,6 +72,7 @@ export interface ExportOptions extends SerializeOptions, MidiExportOptions { }
  * - .xml/.musicxml: Uncompressed MusicXML
  * - .mid/.midi: Standard MIDI File
  * - .abc: ABC notation
+ * - .ly: LilyPond source
  * @param score - The Score to serialize
  * @param filePath - Path to write the file
  * @param options - Serialization options
@@ -86,6 +88,9 @@ export async function serializeToFile(
     const { serializeAbc } = await import('./exporters/abc');
     const abcString = serializeAbc(score);
     await writeFile(filePath, abcString, 'utf-8');
+  } else if (lowerPath.endsWith('.ly')) {
+    const { serializeLilyPond } = await import('./exporters/lilypond');
+    await writeFile(filePath, serializeLilyPond(score, options), 'utf-8');
   } else if (lowerPath.endsWith('.mxl')) {
     const { serializeCompressed } = await import('./exporters/musicxml-compressed');
     const data = serializeCompressed(score, options);

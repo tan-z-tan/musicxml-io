@@ -9,6 +9,7 @@ export default defineConfig({
     'musicxml-compressed': 'src/entry-musicxml-compressed.ts',
     abc: 'src/entry-abc.ts',
     midi: 'src/exporters/midi.ts',
+    lilypond: 'src/exporters/lilypond.ts',
     file: 'src/file.ts',
     'accessors/index': 'src/entry-accessors.ts',
     'operations/index': 'src/operations/index.ts',

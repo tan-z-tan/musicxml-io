@@ -90,6 +90,7 @@ for (const load of [specifier => import(specifier), specifier => require(specifi
   const compressed = await load('musicxml-io/musicxml-compressed');
   const abc = await load('musicxml-io/abc');
   const midi = await load('musicxml-io/midi');
+  const lilypond = await load('musicxml-io/lilypond');
   const file = await load('musicxml-io/file');
   assert.equal(api.parse, core.parse);
   assert.equal(full.serializeUnchecked, core.serializeUnchecked);
@@ -97,8 +98,9 @@ for (const load of [specifier => import(specifier), specifier => require(specifi
   assert.equal(full.parseAbc, abc.parseAbc);
   assert.equal(browser.serializeAbc, abc.serializeAbc);
   assert.equal(full.exportMidi, midi.exportMidi);
+  assert.equal(full.serializeLilyPond, lilypond.serializeLilyPond);
   assert.equal(full.parseFile, file.parseFile);
-  assert.ok(!('parseAbc' in api) && !('exportMidi' in api) && !('parseFile' in api));
+  assert.ok(!('parseAbc' in api) && !('exportMidi' in api) && !('serializeLilyPond' in api) && !('parseFile' in api));
   const score = core.parse(xml);
   assert.equal(core.serializeUnchecked(score), core.serialize(score));
   assert.equal(core.parse(core.serialize(score)).metadata.workTitle, 'Single Note');
@@ -106,6 +108,7 @@ for (const load of [specifier => import(specifier), specifier => require(specifi
   assert.ok(abc.parseAbc(abc.serializeAbc(score)).parts.length > 0);
   assert.ok(abc.parseAbcTunes(abc.serializeAbcTunes([score])).length > 0);
   assert.equal(Buffer.from(midi.exportMidi(score)).subarray(0, 4).toString(), 'MThd');
+  assert.match(lilypond.serializeLilyPond(score), /^\\version /);
   assert.equal((await file.parseFile(resolve(cwd, 'tests/fixtures/basic/single-note.xml'))).metadata.workTitle, 'Single Note');
   assert.ok((await file.parseFile(resolve(cwd, 'tests/fixtures/abc/twinkle.abc'))).parts.length > 0);
 }

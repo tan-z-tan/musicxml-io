@@ -1,7 +1,7 @@
 {
   "name": "musicxml-io",
   "version": "0.13.0",
-  "description": "Parse and serialize MusicXML (.xml/.mxl) and ABC notation with high round-trip fidelity",
+  "description": "Parse and serialize MusicXML (.xml/.mxl) and ABC notation with high round-trip fidelity; export to MIDI and LilyPond",
   "author": "tan-z-tan",
   "license": "MIT",
   "repository": {
@@ -70,6 +70,11 @@
       "import": "./dist/midi.mjs",
       "require": "./dist/midi.js"
     },
+    "./lilypond": {
+      "types": "./dist/lilypond.d.ts",
+      "import": "./dist/lilypond.mjs",
+      "require": "./dist/lilypond.js"
+    },
     "./file": {
       "types": "./dist/file.d.ts",
       "import": "./dist/file.mjs",
@@ -111,7 +116,8 @@
     "midi",
     "mxl",
     "abc",
-    "abc-notation"
+    "abc-notation",
+    "lilypond"
   ],
   "devDependencies": {
     "@types/node": "^25.6.0",

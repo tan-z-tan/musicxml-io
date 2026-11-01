@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/musicxml-io.svg)](https://www.npmjs.com/package/musicxml-io)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
-TypeScript library for parsing and serializing MusicXML and ABC notation.
+TypeScript library for parsing and serializing MusicXML and ABC notation, with export to MIDI and LilyPond.
 
 ## Architecture
 
@@ -23,6 +23,11 @@ TypeScript library for parsing and serializing MusicXML and ABC notation.
                          │                 │─────▶│   .mid          │
                          │                 │      └─────────────────┘
                          │                 │ exportMidi
+                         │                 │      ┌─────────────────┐
+                         │                 │      │    LilyPond     │
+                         │                 │─────▶│   .ly           │
+                         │                 │      └─────────────────┘
+                         │                 │ serializeLilyPond
                          └────────┬────────┘
                                   │
               ┌───────────────────┼───────────────────┐
@@ -110,11 +115,12 @@ load optional formats dynamically, use the format-specific entry points:
 
 | Import | Contents |
 |--------|----------|
-| `musicxml-io/core` | MusicXML/XML/MXL, query, operations, accessors, validation, IDs and their types; no ABC, MIDI or file I/O |
+| `musicxml-io/core` | MusicXML/XML/MXL, query, operations, accessors, validation, IDs and their types; no ABC, MIDI, LilyPond or file I/O |
 | `musicxml-io/musicxml` | `parse`, `serialize`, `serializeUnchecked`, serialization options and score types; no ZIP dependency |
 | `musicxml-io/musicxml-compressed` | `parseAuto`, `parseCompressed`, `isCompressed`, `serializeCompressed` |
 | `musicxml-io/abc` | `parseAbc`, `parseAbcTunes`, `serializeAbc`, `serializeAbcTunes`, `AbcSerializeOptions` |
 | `musicxml-io/midi` | `exportMidi`, `exportMidiWithTimingMap` and MIDI export types |
+| `musicxml-io/lilypond` | `serializeLilyPond` and `LilyPondSerializeOptions` |
 | `musicxml-io/file` | Node.js `parseFile`, `serializeToFile`, `decodeBuffer`; optional codecs load on demand |
 
 The existing `/query`, `/operations` and `/accessors` entry points remain available.
@@ -141,7 +147,7 @@ async function saveMidi(score: Score): Promise<Uint8Array> {
 
 For reliable code splitting, migrate **all runtime imports** in the relevant
 application graph from the full root/browser entry to `/core` or narrower
-entry points. A full entry also re-exports ABC and MIDI; some bundlers can
+entry points. A full entry also re-exports ABC, MIDI and LilyPond; some bundlers can
 hoist those into an initially loaded shared chunk when a dynamic import of
 the same format exists elsewhere. Type-only root imports do not add runtime code.
 Dynamic imports need code-splitting support in the consuming bundler.
@@ -240,6 +246,8 @@ import { parseFile, serializeToFile } from 'musicxml-io';
 
 const score = await parseFile('input.mxl');
 await serializeToFile(score, 'output.xml');
+// The extension picks the format: .xml/.musicxml, .mxl, .abc, .mid/.midi, .ly
+await serializeToFile(score, 'output.ly');
 ```
 
 ### Operations
@@ -373,6 +381,53 @@ import { exportMidi } from 'musicxml-io';
 const midi = exportMidi(score, { tempo: 120 });
 ```
 
+### LilyPond Export
+
+`serializeLilyPond` writes a LilyPond (`.ly`) source file for engraving with
+[LilyPond](https://lilypond.org). It is export only — there is no LilyPond
+importer.
+
+```typescript
+import { serializeLilyPond } from 'musicxml-io/lilypond';
+
+const ly = serializeLilyPond(score, { includeLayoutBreaks: true });
+// then: lilypond score.ly  →  score.pdf
+```
+
+The output targets LilyPond 2.24 and later, and keeps one music variable per
+voice (`partAStaffAVoiceA = { ... }`) with one line per measure, so it is
+meant to be read and edited by hand. MusicXML voices, which are interleaved
+in a measure with `<backup>`/`<forward>`, become separate simultaneous
+LilyPond voices padded with spacer rests.
+
+| Option | Default | |
+|--------|---------|---|
+| `version` | `"2.24.0"` | Value of the `\version` statement |
+| `includeHeader` | `true` | Title, subtitle, composer, poet, arranger, copyright |
+| `includeChordSymbols` | `true` | Chord symbols as a `ChordNames` context |
+| `includeLyrics` | `true` | Lyrics, one `Lyrics` context per verse |
+| `includeDynamics` | `true` | Dynamics and hairpins |
+| `includeLayoutBreaks` | `false` | MusicXML system/page breaks as `\break` / `\pageBreak` |
+| `preserveBeams` | `true` | Use the score's beams instead of LilyPond's automatic beaming |
+| `midi` | `false` | Add a `\midi { }` block |
+
+What is written: parts, staves (multi-staff parts as `PianoStaff`, part
+groups as `StaffGroup` / `GrandStaff` / `ChoirStaff`), TAB staves with their
+tuning, instrument names, transposing instruments, clefs, keys and modes,
+time signatures (including compound and additive ones), pickups and
+irregular measures, notes, rests, chords, ties, dots, tuplets (nested ones
+too), grace notes, beams, slurs, articulations, ornaments, fermatas,
+tremolos, arpeggios, glissandi, fingerings and string numbers, noteheads,
+cautionary accidentals, dynamics, hairpins, text, tempo marks, rehearsal
+marks, segno/coda, pedals, octave shifts, bar lines, repeats and volta
+brackets, chord symbols and lyrics.
+
+Known limits: a slur, tie or beam whose ends are in different voices or
+staves (cross-staff writing) is left out or broken at the voice boundary,
+because LilyPond spanners live in one voice; a tie across a grace note is
+kept but LilyPond cannot draw it. Repeats are written as bar lines and
+volta brackets (`repeatCommands`), so `\midi` output does not unfold them.
+
 #### Playback timeline (for audio alignment)
 
 `generatePlaybackTimeline` returns a **timing sidecar** mapping playback time
@@ -437,6 +492,7 @@ const { valid, errors } = validate(score);
 | `serializeAbcTunes(scores, options?)` | Several Scores → one multi-tune ABC file |
 | `exportMidi(score)` | To MIDI |
 | `exportMidiWithTimingMap(score)` | To MIDI + a MIDI↔(measure, beat) timing sidecar for audio alignment |
+| `serializeLilyPond(score, options?)` | To LilyPond (`.ly`) source |
 
 ### Operations
 
@@ -578,7 +634,7 @@ esbuild against the published ESM build):
 | `parse` + `serializeUnchecked` | ~93 KB / ~23 KB |
 | everything (browser entry) | ~324 KB / ~81 KB |
 
-The ABC notation codecs (`parseAbc`, `serializeAbc`), MIDI export, query
+The ABC notation codecs (`parseAbc`, `serializeAbc`), MIDI and LilyPond export, query
 helpers, operations, and the validator are all separate modules — they only
 end up in your bundle if you import them.
 
