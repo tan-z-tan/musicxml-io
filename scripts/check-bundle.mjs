@@ -11,8 +11,27 @@ import { build } from 'esbuild';
 const root = new URL('../', import.meta.url);
 const cwd = fileURLToPath(root);
 const abcMarker = /abc-reference-number|spellings|__abc_field__/;
+const lilypondMarker = /ly:make-moment|repeatCommands|lyricsto/;
+// Source files of the optional formats. When a consumer bundles from src/, any
+// byte of these in the initial bundle means the format leaked in.
+const optionalSources = /src\/(exporters\/(lilypond|abc|midi)|importers\/abc|abc-[\w-]+)\.ts$/;
 
-async function bundle(name, contents, { noZip = false, noValidation = false, lazy = false } = {}) {
+// Treat every module as having side effects, like a bundler that does not
+// honour "sideEffects": false. Unused code then only goes if its top level is
+// free of calls (or the calls are marked /* @__PURE__ */).
+const keepSideEffects = {
+  name: 'keep-side-effects',
+  setup(b) {
+    b.onResolve({ filter: /.*/ }, async args => {
+      if (args.pluginData?.inner) return undefined;
+      const r = await b.resolve(args.path, { kind: args.kind, importer: args.importer, resolveDir: args.resolveDir, pluginData: { inner: true } });
+      if (r.errors.length) return { errors: r.errors };
+      return { path: r.path, namespace: r.namespace, external: r.external, sideEffects: true };
+    });
+  },
+};
+
+async function bundle(name, contents, { noZip = false, noValidation = false, lazy = false, lazyLilypond = false, ignoreSideEffects = false } = {}) {
   const result = await build({
     absWorkingDir: cwd,
     stdin: { contents, resolveDir: cwd, sourcefile: 'consumer.js' },
@@ -23,6 +42,7 @@ async function bundle(name, contents, { noZip = false, noValidation = false, laz
     splitting: true,
     write: false,
     metafile: true,
+    plugins: ignoreSideEffects ? [keepSideEffects] : [],
     outdir: 'bundle-check',
     // tsup emits redundant bare imports of shared chunks; sideEffects:false
     // correctly removes them when bundling the published package.
@@ -43,6 +63,12 @@ async function bundle(name, contents, { noZip = false, noValidation = false, laz
   const initialFiles = result.outputFiles.filter(file => initial.has(relative(cwd, file.path)));
   const initialText = initialFiles.map(file => file.text).join('\n');
   assert.ok(!abcMarker.test(initialText), `${name}: no ABC code in initial bundle`);
+  assert.ok(!lilypondMarker.test(initialText), `${name}: no LilyPond code in initial bundle`);
+  for (const key of initial) {
+    for (const [input, { bytesInOutput }] of Object.entries(outputs[key].inputs)) {
+      assert.ok(!(bytesInOutput > 0 && optionalSources.test(input)), `${name}: ${input} is in the initial bundle`);
+    }
+  }
   if (noValidation) {
     assert.ok(!/MISSING_DIVISIONS|INVALID_DURATION|Score validation failed/.test(initialText), `${name}: no validator`);
   }
@@ -55,6 +81,10 @@ async function bundle(name, contents, { noZip = false, noValidation = false, laz
   if (lazy) {
     const deferred = result.outputFiles.filter(file => !initial.has(relative(cwd, file.path)));
     assert.ok(deferred.some(file => abcMarker.test(file.text)), 'ABC is available in a deferred chunk');
+  }
+  if (lazyLilypond) {
+    const deferred = result.outputFiles.filter(file => !initial.has(relative(cwd, file.path)));
+    assert.ok(deferred.some(file => lilypondMarker.test(file.text)), 'LilyPond is available in a deferred chunk');
   }
   const bytes = initialFiles.reduce((sum, file) => sum + file.contents.length, 0);
   const gzip = initialFiles.reduce((sum, file) => sum + gzipSync(file.contents).length, 0);
@@ -76,8 +106,22 @@ await bundle('core with lazy ABC', `
   }
 `, { lazy: true });
 
+await bundle('core with lazy LilyPond', `
+  export { parseAuto, serialize } from 'musicxml-io/core';
+  export async function toLilyPond(score) {
+    const { serializeLilyPond } = await import('musicxml-io/lilypond');
+    return serializeLilyPond(score);
+  }
+`, { lazyLilypond: true });
+
 // Source consumers (e.g. a bundler alias) must also eliminate ABC initialization.
 await bundle('source: parse', 'export { parse } from "./src/browser.ts";', { noZip: true });
+
+// Optional formats must not leave top-level code behind even when the bundler
+// ignores "sideEffects": false (the full entries re-export them).
+await bundle('root: parse, sideEffects ignored', 'export { parse } from "musicxml-io";', { ignoreSideEffects: true });
+await bundle('root: MusicXML, sideEffects ignored', 'export { parseAuto, serialize } from "musicxml-io";', { ignoreSideEffects: true });
+await bundle('source: parse, sideEffects ignored', 'export { parse } from "./src/browser.ts";', { ignoreSideEffects: true });
 
 // Check the actual ESM and CJS exports, not just TypeScript source modules.
 const require = createRequire(import.meta.url);

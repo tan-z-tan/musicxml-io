@@ -101,11 +101,13 @@ const isZero = (a: Frac) => a.n === 0;
 // Durations
 // ============================================================
 
+// Plain literals, not frac() calls: a top-level call would keep this module in
+// bundles that only use MusicXML when the bundler ignores "sideEffects".
 const NOTE_TYPE_VALUE: Record<NoteType, Frac> = {
-  maxima: frac(8), long: frac(4), breve: frac(2), whole: frac(1), half: frac(1, 2),
-  quarter: frac(1, 4), eighth: frac(1, 8), '16th': frac(1, 16), '32nd': frac(1, 32),
-  '64th': frac(1, 64), '128th': frac(1, 128), '256th': frac(1, 256), '512th': frac(1, 512),
-  '1024th': frac(1, 1024),
+  maxima: { n: 8, d: 1 }, long: { n: 4, d: 1 }, breve: { n: 2, d: 1 }, whole: { n: 1, d: 1 },
+  half: { n: 1, d: 2 }, quarter: { n: 1, d: 4 }, eighth: { n: 1, d: 8 }, '16th': { n: 1, d: 16 },
+  '32nd': { n: 1, d: 32 }, '64th': { n: 1, d: 64 }, '128th': { n: 1, d: 128 },
+  '256th': { n: 1, d: 256 }, '512th': { n: 1, d: 512 }, '1024th': { n: 1, d: 1024 },
 };
 
 const NOTE_TYPE_LY: Record<NoteType, string> = {
