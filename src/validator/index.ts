@@ -5,6 +5,7 @@ import type {
   TimeSignature,
   Pitch,
 } from '../types';
+import { parseTimeSignatureBeats } from '../utils';
 
 // ============================================================
 // Validation Error Types
@@ -325,9 +326,9 @@ export function validateMeasureDuration(
   }
 
   // Calculate expected duration
-  const beats = parseInt(time.beats, 10);
+  const beats = parseTimeSignatureBeats(time.beats);
   if (isNaN(beats)) {
-    return errors; // Complex beats string, skip validation
+    return errors; // Unparseable beats string, skip validation
   }
 
   const expectedDuration = (beats / time.beatType) * 4 * divisions;
@@ -427,9 +428,9 @@ export function validateMeasureFullness(
   }
 
   // Calculate expected duration
-  const beats = parseInt(time.beats, 10);
+  const beats = parseTimeSignatureBeats(time.beats);
   if (isNaN(beats)) {
-    return errors; // Complex beats string, skip validation
+    return errors; // Unparseable beats string, skip validation
   }
 
   const expectedDuration = (beats / time.beatType) * 4 * divisions;

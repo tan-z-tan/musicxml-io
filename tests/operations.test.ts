@@ -2628,6 +2628,10 @@ describe('Beam Operations', () => {
       expect(beamAbc('X:1\nM:4/4\nL:1/8\nK:C\nCDEFGABc|\n')).toContain('CD EF GA Bc|');
     });
 
+    it('beams by additive groups in additive meters', () => {
+      expect(beamAbc('X:1\nM:3+2+2/8\nL:1/8\nK:C\nCDEFGAB|\n')).toContain('CDE FG AB|');
+    });
+
     it('should automatically beam notes in a measure', () => {
       const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
       const score = parse(xml);

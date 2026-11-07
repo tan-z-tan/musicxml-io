@@ -39,6 +39,7 @@ import {
   getAccidentalsInMeasure,
   determineAccidental,
   getAbsolutePositionForNote,
+  parseTimeSignatureBeats,
 } from '../utils';
 import {
   validate,
@@ -234,7 +235,7 @@ function clonePartWithNewIds(part: Part): Part {
  * Calculate measure duration from time signature
  */
 function getMeasureDuration(divisions: number, time: TimeSignature): number {
-  const beats = parseInt(time.beats, 10);
+  const beats = parseTimeSignatureBeats(time.beats);
   if (isNaN(beats)) return divisions * 4; // Default to 4/4
   return (beats / time.beatType) * 4 * divisions;
 }

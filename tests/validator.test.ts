@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { parse } from '../src';
+import { parse, parseAbc } from '../src';
 import type { Score, NoteEntry, Measure, Part } from '../src/types';
 import {
   validate,
@@ -1199,5 +1199,14 @@ describe('Validator', () => {
       expect(capturedResult.valid).toBe(false);
       expect(capturedResult.errors.length).toBeGreaterThan(0);
     });
+  });
+});
+
+describe('Additive time signatures', () => {
+  it('sums additive numerators like 3+2+2 when checking measure duration', () => {
+    const full = parseAbc('X:1\nM:3+2+2/8\nL:1/8\nK:C\nCDEFGAB|\n');
+    expect(validate(full).errors.filter(e => e.code.startsWith('MEASURE_DURATION'))).toEqual([]);
+    const over = parseAbc('X:1\nM:3+2+2/8\nL:1/8\nK:C\nCDEFGABc|\n');
+    expect(validate(over).errors.some(e => e.code === 'MEASURE_DURATION_OVERFLOW')).toBe(true);
   });
 });
