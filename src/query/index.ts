@@ -47,7 +47,7 @@ import type {
   ClefChangeInfo,
   StructuralChanges,
 } from '../types';
-import { getAbsolutePositionForNote, createPositionState, updatePositionForEntry, pitchToSemitone } from '../utils';
+import { getAbsolutePositionForNote, createPositionState, updatePositionForEntry, pitchToSemitone, parseTimeSignatureBeats } from '../utils';
 
 /**
  * Filter options for voice/staff selection
@@ -2337,7 +2337,7 @@ export function getDuration(score: Score): number {
     // Use time signature to calculate expected duration if available
     const attrs = getAttributesAtMeasure(score, { part: 0, measure: measure.number });
     if (attrs.time) {
-      const beats = parseInt(attrs.time.beats, 10) || 4;
+      const beats = parseTimeSignatureBeats(attrs.time.beats) || 4;
       const expectedDuration = (beats / attrs.time.beatType) * 4 * divisions;
       measureDuration = Math.max(measureDuration, expectedDuration);
     }

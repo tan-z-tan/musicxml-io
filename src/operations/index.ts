@@ -39,6 +39,7 @@ import {
   getAccidentalsInMeasure,
   determineAccidental,
   getAbsolutePositionForNote,
+  parseTimeSignatureBeats,
 } from '../utils';
 import {
   validate,
@@ -234,7 +235,7 @@ function clonePartWithNewIds(part: Part): Part {
  * Calculate measure duration from time signature
  */
 function getMeasureDuration(divisions: number, time: TimeSignature): number {
-  const beats = parseInt(time.beats, 10);
+  const beats = parseTimeSignatureBeats(time.beats);
   if (isNaN(beats)) return divisions * 4; // Default to 4/4
   return (beats / time.beatType) * 4 * divisions;
 }
@@ -2920,6 +2921,43 @@ export interface AutoBeamOptions {
 }
 
 /**
+ * Compute the beat start positions (in divisions) of a measure for beaming.
+ * - Simple meters (2/4, 3/4, 4/4, 3/8...): one beat per denominator unit.
+ * - Compound meters (numerator divisible by 3 and greater than 3, e.g. 6/8,
+ *   9/8, 12/8, 6/4): beats are dotted, each spanning three denominator units.
+ * - Additive meters (e.g. "3+2+2"/8): one beat per additive group.
+ */
+function getBeatStarts(
+  divisions: number,
+  time: TimeSignature
+): { starts: number[]; beatDuration: number } {
+  const unit = (4 / time.beatType) * divisions;
+  const beatsStr = String(time.beats ?? '4').trim();
+
+  let groups: number[];
+  if (/^\d+(\s*\+\s*\d+)+$/.test(beatsStr)) {
+    groups = beatsStr.split('+').map(g => parseInt(g, 10));
+  } else {
+    const n = parseInt(beatsStr, 10);
+    if (isNaN(n) || n <= 0) {
+      groups = [1, 1, 1, 1];
+    } else if (n > 3 && n % 3 === 0) {
+      groups = Array(n / 3).fill(3);
+    } else {
+      groups = Array(n).fill(1);
+    }
+  }
+
+  const starts: number[] = [];
+  let pos = 0;
+  for (const g of groups) {
+    starts.push(pos);
+    pos += g * unit;
+  }
+  return { starts, beatDuration: Math.min(...groups) * unit };
+}
+
+/**
  * Automatically beam notes based on time signature and beat groupings.
  * Groups eighth notes and shorter notes by beat.
  */
@@ -2943,7 +2981,15 @@ export function autoBeam(
   const context = getMeasureContext(result, options.partIndex, options.measureIndex);
   const divisions = context.divisions;
   const time = context.time ?? { beats: '4', beatType: 4 };
-  const beatDuration = (4 / time.beatType) * divisions; // Duration of one beat in divisions
+  const beatStarts = getBeatStarts(divisions, time);
+  // Long beats (e.g. dotted halves in 6/4, halves in 2/2) are still only
+  // beamed for notes shorter than a quarter
+  const beamableBelow = Math.min(beatStarts.beatDuration, divisions);
+  const beatIndexAt = (pos: number): number => {
+    let idx = 0;
+    while (idx + 1 < beatStarts.starts.length && pos >= beatStarts.starts[idx + 1]) idx++;
+    return idx;
+  };
 
   // First, remove all existing beams
   for (const entry of measure.entries) {
@@ -2987,7 +3033,7 @@ export function autoBeam(
     for (const { note, position: notePos } of notes) {
       // Only beam eighth notes and shorter, dotted ones included (a dotted
       // eighth + 16th fills one beat); grace notes are beamed separately
-      const beamable = note.noteType ? beamLevel(note) > 0 : note.duration < beatDuration;
+      const beamable = note.noteType ? beamLevel(note) > 0 : note.duration < beamableBelow;
       if (!beamable || note.grace) {
         // This note is too long to beam
         if (currentGroup.length >= 2) {
@@ -2998,7 +3044,7 @@ export function autoBeam(
         continue;
       }
 
-      const beat = Math.floor(notePos / beatDuration);
+      const beat = beatIndexAt(notePos);
 
       if (options.groupByBeat !== false && beat !== currentBeat) {
         // New beat - save current group if valid

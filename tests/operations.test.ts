@@ -2609,6 +2609,29 @@ describe('Beam Operations', () => {
       expect(serializeAbc(result.data!)).toContain('C<D E/FG/ A>B cd');
     });
 
+    const beamAbc = (abc: string): string => {
+      const score = parseAbc(abc);
+      const result = autoBeam(score, { partIndex: 0, measureIndex: 0 });
+      expect(result.success).toBe(true);
+      return serializeAbc(result.data!);
+    };
+
+    it('beams by dotted beats in compound meters (#121)', () => {
+      expect(beamAbc('X:1\nM:9/8\nL:1/8\nK:none\nBB2BBBB2B|\n')).toContain('BB2 BBB B2B|');
+      expect(beamAbc('X:1\nM:6/8\nL:1/8\nK:C\nCDEFGA|\n')).toContain('CDE FGA|');
+      expect(beamAbc('X:1\nM:12/8\nL:1/8\nK:C\nCDEFGABcdcBA|\n')).toContain('CDE FGA Bcd cBA|');
+      expect(beamAbc('X:1\nM:6/4\nL:1/8\nK:C\nCDEFGABcdcBA|\n')).toContain('CDEFGA Bcdc');
+    });
+
+    it('keeps simple-meter beaming by beat', () => {
+      expect(beamAbc('X:1\nM:3/4\nL:1/8\nK:C\nCDEFGA|\n')).toContain('CD EF GA|');
+      expect(beamAbc('X:1\nM:4/4\nL:1/8\nK:C\nCDEFGABc|\n')).toContain('CD EF GA Bc|');
+    });
+
+    it('beams by additive groups in additive meters', () => {
+      expect(beamAbc('X:1\nM:3+2+2/8\nL:1/8\nK:C\nCDEFGAB|\n')).toContain('CDE FG AB|');
+    });
+
     it('should automatically beam notes in a measure', () => {
       const xml = readFileSync(join(fixturesPath, 'basic/scale.xml'), 'utf-8');
       const score = parse(xml);

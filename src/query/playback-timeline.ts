@@ -16,6 +16,7 @@
  */
 import type { Score, Part, Measure, NoteEntry } from '../types';
 import { generatePlaybackSequence } from './playback-sequence';
+import { parseTimeSignatureBeats } from '../utils';
 
 /**
  * Expressive-timing options shared by the MIDI exporter and the timeline query.
@@ -217,7 +218,7 @@ function findTimeSignature(
     if (!isNaN(targetMeasure) && !isNaN(mNum) && mNum > targetMeasure) break;
     if (measure.attributes?.time) {
       time = {
-        beats: parseInt(measure.attributes.time.beats, 10) || 4,
+        beats: parseTimeSignatureBeats(measure.attributes.time.beats) || 4,
         beatType: measure.attributes.time.beatType,
       };
     }

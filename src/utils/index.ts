@@ -272,3 +272,16 @@ export function getMeasureEndPosition(measure: Measure): number {
   for (const entry of measure.entries) updatePositionForEntry(state, entry);
   return state.position;
 }
+
+/**
+ * Parse a time-signature numerator string into its total beat count.
+ * Additive numerators such as "3+2+2" are summed (→ 7).
+ * Returns NaN when the string is not a number or an additive sum of numbers.
+ */
+export function parseTimeSignatureBeats(beats: string): number {
+  const s = String(beats).trim();
+  if (/^\d+(\s*\+\s*\d+)+$/.test(s)) {
+    return s.split('+').reduce((sum, g) => sum + parseInt(g, 10), 0);
+  }
+  return parseInt(s, 10);
+}
