@@ -89,6 +89,24 @@ describe('File Operations', () => {
       expect(score.parts[0].measures[0].entries[0].type).toBe('note');
     });
 
+    it('should parse a .mxl file with a UTF-16 LE root file via parseFile', async () => {
+      const { zipSync, strToU8 } = await import('fflate');
+      const utf8Content = readFileSync(join(fixturesPath, 'basic/single-note.xml'), 'utf-8');
+      const archive = zipSync({
+        'META-INF/container.xml': strToU8('<container><rootfiles><rootfile full-path="score.musicxml"/></rootfiles></container>'),
+        'score.musicxml': new Uint8Array(Buffer.from('\uFEFF' + utf8Content, 'utf16le')),
+      });
+
+      const tmpPath = join(__dirname, 'temp', 'single-note-utf16le.mxl');
+      const { writeFileSync } = await import('fs');
+      writeFileSync(tmpPath, archive);
+      cleanupFiles.push(tmpPath);
+
+      const score = await parseFile(tmpPath);
+      expect(score.metadata.workTitle).toBe('Single Note');
+      expect(score.parts[0].measures[0].entries[0].type).toBe('note');
+    });
+
     it('should parse a UTF-16 LE Uint8Array via parseAuto', () => {
       const utf16leBytes = new Uint8Array(Buffer.from('\uFEFF' + minimalXml, 'utf16le'));
       const score = parseAuto(utf16leBytes);
