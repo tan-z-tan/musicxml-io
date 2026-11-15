@@ -76,6 +76,38 @@ describe('Compressed MusicXML (.mxl)', () => {
       expect(() => parseCompressed(archive)).toThrow('Could not find MusicXML file');
     });
 
+    describe('UTF-16 root files', () => {
+      // Non-ASCII title catches lossy decoding (e.g. stripping NULs would turn
+      // U+2019 into U+0019).
+      const title = 'Flûte ’ Sonate';
+      const utf16Xml = xml
+        .replace('encoding="UTF-8"', 'encoding="UTF-16"')
+        .replace('Single Note', title);
+      const encodeUtf16 = (endian: 'le' | 'be'): Uint8Array => {
+        const buf = Buffer.from('\uFEFF' + utf16Xml, 'utf16le');
+        if (endian === 'be') buf.swap16();
+        return new Uint8Array(buf);
+      };
+      const archiveFor = (endian: 'le' | 'be') =>
+        zipSync({
+          'META-INF/container.xml': strToU8(
+            '<?xml version="1.0" encoding="UTF-8"?><container><rootfiles><rootfile full-path="score.musicxml"/></rootfiles></container>',
+          ),
+          'score.musicxml': encodeUtf16(endian),
+        });
+
+      it.each(['le', 'be'] as const)('parseCompressed decodes a UTF-16%s root file', (endian) => {
+        const score = parseCompressed(archiveFor(endian));
+        expect(score.metadata.workTitle).toBe(title);
+        expect(score.parts).toHaveLength(1);
+        expect(score.parts[0].measures[0].entries[0].type).toBe('note');
+      });
+
+      it.each(['le', 'be'] as const)('parseAuto matches parse() for a UTF-16%s root file', (endian) => {
+        expect(parseAuto(archiveFor(endian)).metadata.workTitle).toBe(parse(encodeUtf16(endian)).metadata.workTitle);
+      });
+    });
+
     it('should parse .mxl file from LilyPond test suite', () => {
       const mxlPath = join(lilypondPath, '90a-Compressed-MusicXML.mxl');
       const data = readFileSync(mxlPath);

@@ -61,9 +61,9 @@ export function parseCompressed(data: Uint8Array): Score {
   if (!xmlData) {
     throw new Error('Could not find MusicXML file in compressed archive');
   }
-  const xmlString = strFromU8(xmlData);
-
-  return parse(xmlString);
+  // Pass the raw bytes so parse() can detect UTF-16 BOMs (the .mxl spec allows
+  // UTF-8 or UTF-16 root files; Finale commonly writes UTF-16).
+  return parse(xmlData);
 }
 
 /**
