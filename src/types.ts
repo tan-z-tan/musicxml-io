@@ -206,6 +206,8 @@ export interface DisplayText {
    * reads as "Clarinet in B♭".
    */
   accidentalText?: string;
+  /** `smufl` on `<accidental-text>`: the glyph name, needed when the value is `other`. */
+  accidentalSmufl?: string;
   /** MusicXML `color` attribute on `<display-text>`. */
   color?: Color;
 }

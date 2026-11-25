@@ -489,7 +489,8 @@ function serializeDisplayTexts(texts: DisplayText[], indent: string, out: string
     if (dt.xmlSpace) attrs += ` xml:space="${escapeXml(dt.xmlSpace)}"`;
     if (dt.color) attrs += ` color="${escapeXml(dt.color)}"`;
     if (dt.accidentalText !== undefined) {
-      out.push(`${indent}<accidental-text${attrs}>${escapeXml(dt.accidentalText)}</accidental-text>`);
+      const smufl = dt.accidentalSmufl ? ` smufl="${escapeXml(dt.accidentalSmufl)}"` : '';
+      out.push(`${indent}<accidental-text${attrs}${smufl}>${escapeXml(dt.accidentalText)}</accidental-text>`);
     } else {
       out.push(`${indent}<display-text${attrs}>${escapeXml(dt.text)}</display-text>`);
     }
@@ -1376,8 +1377,14 @@ function serializeOrnamentsGroup(ornaments: Notation[], indent: string, out: str
         }
       } else {
         let ornAttrs = placementAttr;
-        if (orn.long) ornAttrs += ' long="yes"';
-        if (orn.slash) ornAttrs += ' slash="yes"';
+        // Only on the elements whose schema has them, so retyping an ornament
+        // cannot leave an invalid attribute behind.
+        if (orn.long !== undefined && (orn.ornament === 'mordent' || orn.ornament === 'inverted-mordent')) {
+          ornAttrs += ` long="${orn.long ? 'yes' : 'no'}"`;
+        }
+        if (orn.slash !== undefined && ['turn', 'inverted-turn', 'delayed-turn', 'delayed-inverted-turn'].includes(orn.ornament)) {
+          ornAttrs += ` slash="${orn.slash ? 'yes' : 'no'}"`;
+        }
         ornAttrs += positionAttrs(orn);
         ornAttrs += colorAttr(orn.color);
         out.push(`${indent}    <${orn.ornament}${ornAttrs}/>`);

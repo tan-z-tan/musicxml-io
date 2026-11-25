@@ -4290,7 +4290,7 @@ export interface AddPedalOptions {
   /** Position in divisions */
   position: number;
   /** Pedal type */
-  pedalType: 'start' | 'stop' | 'change' | 'continue';
+  pedalType: 'start' | 'stop' | 'change' | 'continue' | 'sostenuto' | 'discontinue' | 'resume';
   /** Show as line or Ped/star symbols */
   line?: boolean;
   /** Placement */

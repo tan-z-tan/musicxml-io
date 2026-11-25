@@ -103,6 +103,20 @@ describe('notation attributes added for layout', () => {
       expect(orns[2].long).toBeUndefined();
     }
   });
+
+  it('keeps explicit long="no" / slash="no" and never writes them on other ornaments', () => {
+    const xml = wrap(note('<notations><ornaments><mordent long="no"/></ornaments></notations>') + note('<notations><ornaments><turn slash="no"/></ornaments></notations>'));
+    expect(roundtrip(xml)).toContain('<mordent long="no"/>');
+    expect(roundtrip(xml)).toContain('<turn slash="no"/>');
+    const score = parse(wrap(note('<notations><ornaments><turn slash="yes"/></ornaments></notations>')));
+    ((score.parts[0].measures[0].entries as any[])[0].notations[0]).ornament = 'vertical-turn';
+    expect(serialize(score)).toContain('<vertical-turn/>');
+  });
+
+  it('keeps the smufl glyph of an accidental-text', () => {
+    const xml = wrap(note(), '<part-name-display><display-text>X</display-text><accidental-text smufl="accidentalFlatSmall">other</accidental-text></part-name-display>');
+    expect(roundtrip(xml)).toContain('<accidental-text smufl="accidentalFlatSmall">other</accidental-text>');
+  });
 });
 
 describe('score-timewise', () => {
@@ -136,6 +150,26 @@ describe('score-timewise', () => {
     expect(out).toContain('<score-partwise');
     const again = parse(out);
     expect(again.parts.map((p) => p.measures.length)).toEqual([2, 2]);
+  });
+
+  it('orders parts by the part-list, keeps measures aligned when a part is absent, and keeps measure ids unique', () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<score-timewise version="4.0">
+  <part-list><score-part id="P1"><part-name>A</part-name></score-part><score-part id="P2"><part-name>B</part-name></score-part></part-list>
+  <measure number="1" id="m1">
+    <part id="P2"><attributes><divisions>1</divisions></attributes>${note()}${note()}</part>
+    <part id="P1"><attributes><divisions>1</divisions></attributes>${note()}</part>
+  </measure>
+  <measure number="2"><part id="P1">${note()}</part></measure>
+  <measure number="3"><part id="P1">${note()}</part><part id="P2">${note()}${note()}${note()}</part></measure>
+</score-timewise>`;
+    const score = parse(xml);
+    expect(score.parts.map((p) => p.id)).toEqual(['P1', 'P2']);
+    expect(score.parts.map((p) => p.measures.map((m) => m.number))).toEqual([['1', '2', '3'], ['1', '2', '3']]);
+    const count = (p: number, m: number) => score.parts[p].measures[m].entries.filter((e) => e.type === 'note').length;
+    expect([count(1, 0), count(1, 1), count(1, 2)]).toEqual([2, 0, 3]);
+    expect(score.parts[0].measures[0]._id).toBe('m1');
+    expect(score.parts[1].measures[0]._id).not.toBe('m1');
   });
 
   it('still rejects an unrelated root', () => {

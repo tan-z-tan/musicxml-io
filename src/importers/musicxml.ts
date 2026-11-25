@@ -587,20 +587,43 @@ function assignBezier(target: BezierTarget, attrs: Record<string, string>): void
  */
 function timewiseToPartwise(elements: XmlChild[]): XmlChild[] {
   const out: XmlChild[] = [];
-  const parts = new Map<string, XmlNode>();
+  const measures: XmlNode[] = [];
+  // Part order comes from the part-list, not from the order parts happen to
+  // appear in the first measure (everything indexes score.parts against it).
+  const partIds: string[] = [];
   for (const el of elements) {
-    if (typeof el === 'string' || el.tagName !== 'measure') { out.push(el); continue; }
-    for (const partEl of el.children) {
+    if (typeof el === 'string') { out.push(el); continue; }
+    if (el.tagName === 'measure') { measures.push(el); continue; }
+    out.push(el);
+    if (el.tagName === 'part-list') {
+      for (const entry of el.children) {
+        if (typeof entry === 'string' || entry.tagName !== 'score-part') continue;
+        const id = (entry.attributes as Record<string, string>)['id'];
+        if (id !== undefined && !partIds.includes(id)) partIds.push(id);
+      }
+    }
+  }
+  for (const m of measures) {
+    for (const partEl of m.children) {
       if (typeof partEl === 'string' || partEl.tagName !== 'part') continue;
       const id = (partEl.attributes as Record<string, string>)['id'] ?? '';
-      let part = parts.get(id);
-      if (!part) {
-        part = { tagName: 'part', attributes: { id }, children: [] } as XmlNode;
-        parts.set(id, part);
-        out.push(part);
-      }
-      part.children.push({ tagName: 'measure', attributes: el.attributes, children: partEl.children } as XmlNode);
+      if (!partIds.includes(id)) partIds.push(id);
     }
+  }
+  for (const id of partIds) {
+    const part: XmlNode = { tagName: 'part', attributes: { id }, children: [] };
+    for (const m of measures) {
+      const partEl = m.children.find((c): c is XmlNode =>
+        typeof c !== 'string' && c.tagName === 'part' && ((c.attributes as Record<string, string>)['id'] ?? '') === id);
+      // The measure's `id` is an XML ID: it can stay on one of the measures
+      // split out of it, so the first part keeps it and the rest get fresh ones.
+      const { id: measureId, ...rest } = m.attributes as Record<string, string>;
+      const attributes = id === partIds[0] && measureId !== undefined ? { ...rest, id: measureId } : rest;
+      // A part missing from a measure still gets that measure (empty), so
+      // measure indices stay aligned across parts.
+      part.children.push({ tagName: 'measure', attributes, children: partEl ? partEl.children : [] });
+    }
+    out.push(part);
   }
   return out;
 }
@@ -989,6 +1012,7 @@ function parseDisplayTexts(elements: XmlChild[]): DisplayText[] {
     if (a['font-weight']) dt.fontWeight = a['font-weight'];
     if (a['xml:space']) dt.xmlSpace = a['xml:space'];
     if (a['color']) dt.color = a['color'];
+    if (el.tagName === 'accidental-text' && a['smufl']) dt.accidentalSmufl = a['smufl'];
     out.push(dt);
   }
   return out;
@@ -1932,7 +1956,9 @@ function parseNotations(elements: XmlChild[], notationsIndex: number = 0): Notat
             assignPosition(ornNotation, ornAttrs);
             if (ornAttrs['color']) ornNotation.color = ornAttrs['color'];
             if (ornAttrs['long'] === 'yes') ornNotation.long = true;
+            else if (ornAttrs['long'] === 'no') ornNotation.long = false;
             if (ornAttrs['slash'] === 'yes') ornNotation.slash = true;
+            else if (ornAttrs['slash'] === 'no') ornNotation.slash = false;
             // Attach accidental marks to the first ornament in the group
             if (accidentalMarks.length > 0 && notations.filter(n => n.type === 'ornament').length === 0) {
               ornNotation.accidentalMarks = accidentalMarks as any;
