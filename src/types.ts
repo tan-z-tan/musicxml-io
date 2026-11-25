@@ -199,6 +199,15 @@ export interface DisplayText {
   fontStyle?: string;
   fontWeight?: string;
   xmlSpace?: string;
+  /**
+   * Set when this entry is an `<accidental-text>` rather than a
+   * `<display-text>`: the accidental name (`flat`, `sharp`, ...). `text` is
+   * then empty. Entries keep document order, so "Clarinet in B" + `flat`
+   * reads as "Clarinet in B♭".
+   */
+  accidentalText?: string;
+  /** `smufl` on `<accidental-text>`: the glyph name, needed when the value is `other`. */
+  accidentalSmufl?: string;
   /** MusicXML `color` attribute on `<display-text>`. */
   color?: Color;
 }
@@ -578,6 +587,8 @@ export interface HarmonyEntry {
   root: { rootStep: string; rootAlter?: number };
   kind: string;
   kindText?: string;
+  /** MusicXML `use-symbols` on `<kind>`: render with symbols (△, °, ø, −, +). */
+  kindUseSymbols?: boolean;
   kindHalign?: string;
   bass?: { bassStep: string; bassAlter?: number; arrangement?: string };
   inversion?: number;
@@ -587,6 +598,8 @@ export interface HarmonyEntry {
   placement?: 'above' | 'below';
   offset?: number;
   printFrame?: boolean;
+  /** MusicXML `print-object` on `<harmony>`; `false` hides the chord symbol. */
+  printObject?: boolean;
   // Positioning attributes
   defaultX?: number;
   defaultY?: number;
@@ -802,6 +815,10 @@ export interface OrnamentNotation extends BaseNotation {
   // For tremolo
   tremoloMarks?: number;
   tremoloType?: 'start' | 'stop' | 'single' | 'unmeasured';
+  /** `long="yes"` on `<mordent>` / `<inverted-mordent>`. */
+  long?: boolean;
+  /** `slash="yes"` on the turn family. */
+  slash?: boolean;
   // Positioning
   defaultX?: number;
   defaultY?: number;
@@ -880,6 +897,8 @@ export interface TiedNotation extends BaseNotation {
   type: 'tied';
   tiedType: 'start' | 'stop' | 'continue' | 'let-ring';
   number?: number;
+  /** MusicXML `line-type` on `<tied>`. */
+  lineType?: 'solid' | 'dashed' | 'dotted' | 'wavy';
   orientation?: 'over' | 'under';
   defaultX?: number;
   defaultY?: number;
@@ -998,13 +1017,13 @@ export interface OtherNotation extends BaseNotation {
  */
 export type DirectionType =
   | { kind: 'dynamics'; value?: DynamicsValue; otherDynamics?: string; defaultX?: number; defaultY?: number; relativeX?: number; relativeY?: number; halign?: string; color?: Color }
-  | { kind: 'wedge'; type: 'crescendo' | 'diminuendo' | 'stop'; spread?: number; defaultX?: number; defaultY?: number; relativeX?: number; relativeY?: number; color?: Color }
+  | { kind: 'wedge'; type: 'crescendo' | 'diminuendo' | 'stop'; spread?: number; niente?: boolean; lineType?: 'solid' | 'dashed' | 'dotted' | 'wavy'; defaultX?: number; defaultY?: number; relativeX?: number; relativeY?: number; color?: Color }
   | { kind: 'metronome'; beatUnit: NoteType; perMinute?: number | string; beatUnitDot?: boolean; beatUnit2?: NoteType; beatUnitDot2?: boolean; parentheses?: boolean; printObject?: boolean; defaultX?: number; defaultY?: number; relativeX?: number; relativeY?: number; fontFamily?: string; fontSize?: string; color?: Color }
-  | { kind: 'words'; text: string; defaultX?: number; defaultY?: number; relativeX?: number; relativeY?: number; fontFamily?: string; fontSize?: string; fontStyle?: string; fontWeight?: string; xmlLang?: string; justify?: string; color?: Color; xmlSpace?: string; halign?: string }
+  | { kind: 'words'; text: string; defaultX?: number; defaultY?: number; relativeX?: number; relativeY?: number; fontFamily?: string; fontSize?: string; fontStyle?: string; fontWeight?: string; xmlLang?: string; justify?: string; color?: Color; xmlSpace?: string; halign?: string; enclosure?: string; underline?: number; overline?: number; lineThrough?: number }
   | { kind: 'rehearsal'; text: string; enclosure?: string; defaultX?: number; defaultY?: number; relativeX?: number; relativeY?: number; fontSize?: string; fontWeight?: string; color?: Color }
   | { kind: 'segno'; defaultX?: number; defaultY?: number; relativeX?: number; relativeY?: number; color?: Color }
   | { kind: 'coda'; defaultX?: number; defaultY?: number; relativeX?: number; relativeY?: number; color?: Color }
-  | { kind: 'pedal'; type: 'start' | 'stop' | 'change' | 'continue'; line?: boolean; defaultX?: number; defaultY?: number; relativeX?: number; relativeY?: number; halign?: string; color?: Color }
+  | { kind: 'pedal'; type: 'start' | 'stop' | 'change' | 'continue' | 'sostenuto' | 'discontinue' | 'resume'; line?: boolean; sign?: boolean; abbreviated?: boolean; defaultX?: number; defaultY?: number; relativeX?: number; relativeY?: number; halign?: string; color?: Color }
   | { kind: 'octave-shift'; type: 'up' | 'down' | 'stop'; size?: number; defaultX?: number; defaultY?: number; relativeX?: number; relativeY?: number; color?: Color }
   | { kind: 'bracket'; type: 'start' | 'stop' | 'continue'; number?: number; lineEnd?: 'up' | 'down' | 'both' | 'arrow' | 'none'; lineType?: 'solid' | 'dashed' | 'dotted' | 'wavy'; defaultX?: number; defaultY?: number; relativeX?: number; relativeY?: number; color?: Color }
   | { kind: 'dashes'; type: 'start' | 'stop' | 'continue'; number?: number; dashLength?: number; spaceLength?: number; defaultX?: number; defaultY?: number; relativeX?: number; relativeY?: number; color?: Color }
@@ -1078,6 +1097,8 @@ export interface Lyric {
   relativeY?: number;
   justify?: string;
   placement?: 'above' | 'below';
+  /** MusicXML `print-object` on `<lyric>`; `false` hides the lyric. */
+  printObject?: boolean;
   /** MusicXML `color` attribute on `<lyric>`. */
   color?: Color;
   /**
@@ -1249,7 +1270,7 @@ export interface TempoWithContext {
  * Pedal marking with context
  */
 export interface PedalWithContext {
-  pedalType: 'start' | 'stop' | 'change' | 'continue';
+  pedalType: 'start' | 'stop' | 'change' | 'continue' | 'sostenuto' | 'discontinue' | 'resume';
   direction: DirectionEntry;
   partIndex: number;
   measureIndex: number;
