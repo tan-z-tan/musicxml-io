@@ -488,7 +488,11 @@ function serializeDisplayTexts(texts: DisplayText[], indent: string, out: string
     if (dt.fontWeight) attrs += ` font-weight="${escapeXml(dt.fontWeight)}"`;
     if (dt.xmlSpace) attrs += ` xml:space="${escapeXml(dt.xmlSpace)}"`;
     if (dt.color) attrs += ` color="${escapeXml(dt.color)}"`;
-    out.push(`${indent}<display-text${attrs}>${escapeXml(dt.text)}</display-text>`);
+    if (dt.accidentalText !== undefined) {
+      out.push(`${indent}<accidental-text${attrs}>${escapeXml(dt.accidentalText)}</accidental-text>`);
+    } else {
+      out.push(`${indent}<display-text${attrs}>${escapeXml(dt.text)}</display-text>`);
+    }
   }
 }
 
@@ -1192,6 +1196,7 @@ function serializeStandaloneNotation(notation: Notation, indent: string, out: st
   if (notation.type === 'tied') {
     let attrs = ` type="${notation.tiedType}"`;
     if (notation.number !== undefined) attrs += ` number="${notation.number}"`;
+    if (notation.lineType) attrs += ` line-type="${notation.lineType}"`;
     if (notation.orientation) attrs += ` orientation="${notation.orientation}"`;
     attrs += positionAttrs(notation);
     attrs += bezierAttrs(notation);
@@ -1371,6 +1376,8 @@ function serializeOrnamentsGroup(ornaments: Notation[], indent: string, out: str
         }
       } else {
         let ornAttrs = placementAttr;
+        if (orn.long) ornAttrs += ' long="yes"';
+        if (orn.slash) ornAttrs += ' slash="yes"';
         ornAttrs += positionAttrs(orn);
         ornAttrs += colorAttr(orn.color);
         out.push(`${indent}    <${orn.ornament}${ornAttrs}/>`);
@@ -1476,6 +1483,7 @@ function serializeLyric(lyric: Lyric, indent: string, out: string[]): void {
   attrs += positionAttrs(lyric);
   if (lyric.justify) attrs += ` justify="${escapeXml(lyric.justify)}"`;
   if (lyric.placement) attrs += ` placement="${lyric.placement}"`;
+  if (lyric.printObject !== undefined) attrs += ` print-object="${lyric.printObject ? 'yes' : 'no'}"`;
   attrs += colorAttr(lyric.color);
   out.push(`${indent}<lyric${attrs}>`);
 
@@ -1631,6 +1639,8 @@ function serializeDirectionType(dirType: DirectionType, indent: string, out: str
     case 'wedge': {
       let wedgeAttrs = ` type="${dirType.type}"`;
       if (dirType.spread !== undefined) wedgeAttrs += ` spread="${dirType.spread}"`;
+      if (dirType.niente !== undefined) wedgeAttrs += ` niente="${dirType.niente ? 'yes' : 'no'}"`;
+      if (dirType.lineType) wedgeAttrs += ` line-type="${dirType.lineType}"`;
       wedgeAttrs += positionAttrs(dirType);
       wedgeAttrs += colorAttr(dirType.color);
       out.push(`${indent}  <wedge${wedgeAttrs}/>`);
@@ -1674,6 +1684,10 @@ function serializeDirectionType(dirType: DirectionType, indent: string, out: str
       if (dirType.color) wordAttrs += ` color="${escapeXml(dirType.color)}"`;
       if (dirType.xmlSpace) wordAttrs += ` xml:space="${escapeXml(dirType.xmlSpace)}"`;
       if (dirType.halign) wordAttrs += ` halign="${escapeXml(dirType.halign)}"`;
+      if (dirType.enclosure) wordAttrs += ` enclosure="${escapeXml(dirType.enclosure)}"`;
+      if (dirType.underline !== undefined) wordAttrs += ` underline="${dirType.underline}"`;
+      if (dirType.overline !== undefined) wordAttrs += ` overline="${dirType.overline}"`;
+      if (dirType.lineThrough !== undefined) wordAttrs += ` line-through="${dirType.lineThrough}"`;
       out.push(`${indent}  <words${wordAttrs}>${escapeXml(dirType.text)}</words>`);
       break;
     }
@@ -1803,6 +1817,8 @@ function serializeDirectionType(dirType: DirectionType, indent: string, out: str
     case 'pedal': {
       let pedalAttrs = ` type="${dirType.type}"`;
       if (dirType.line !== undefined) pedalAttrs += ` line="${dirType.line ? 'yes' : 'no'}"`;
+      if (dirType.sign !== undefined) pedalAttrs += ` sign="${dirType.sign ? 'yes' : 'no'}"`;
+      if (dirType.abbreviated !== undefined) pedalAttrs += ` abbreviated="${dirType.abbreviated ? 'yes' : 'no'}"`;
       pedalAttrs += positionAttrs(dirType);
       if (dirType.halign) pedalAttrs += ` halign="${dirType.halign}"`;
       pedalAttrs += colorAttr(dirType.color);
@@ -2039,6 +2055,7 @@ function serializeHarmony(harmony: HarmonyEntry, indent: string, out: string[]):
   const attrs = buildAttrs({
     id: harmony._id,
     placement: harmony.placement,
+    'print-object': harmony.printObject,
     'print-frame': harmony.printFrame,
     'default-x': harmony.defaultX,
     'default-y': harmony.defaultY,
@@ -2060,6 +2077,7 @@ function serializeHarmony(harmony: HarmonyEntry, indent: string, out: string[]):
 
   // Kind
   let kindAttrs = '';
+  if (harmony.kindUseSymbols !== undefined) kindAttrs += ` use-symbols="${harmony.kindUseSymbols ? 'yes' : 'no'}"`;
   if (harmony.kindText !== undefined) kindAttrs += ` text="${escapeXml(harmony.kindText)}"`;
   if (harmony.kindHalign) kindAttrs += ` halign="${escapeXml(harmony.kindHalign)}"`;
   kindAttrs += colorAttr(harmony.kindColor);

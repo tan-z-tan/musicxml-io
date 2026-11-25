@@ -3,6 +3,15 @@
 ## [Unreleased]
 
 ### Added
+- **`<score-timewise>` documents are read.** `parse` rearranges measures-containing-parts into the parts-containing-measures model; previously it threw. The score serializes as `<score-partwise>`.
+- Notation attributes a renderer needs, all round-tripped:
+  - `<words>`: `enclosure`, `underline`, `overline`, `line-through`.
+  - `<wedge>`: `niente`, `line-type`. `<tied>`: `line-type`.
+  - `<pedal>`: `sign`, `abbreviated`, and the `sostenuto`, `discontinue` and `resume` types. **A pedal of one of those three types used to be dropped on parse**; code that switches on a pedal's `type` (and `PedalInfo.pedalType`) now sees them.
+  - `<lyric print-object>` and `<harmony print-object>` (`printObject`), `<kind use-symbols>` (`kindUseSymbols`).
+  - `<mordent long>` / `<inverted-mordent long>` (`long`) and `slash` on the turn family.
+  - `<inverted-vertical-turn>`, which was dropped on parse.
+  - `<accidental-text>` inside `<part-name-display>` and the other display-text groups: an entry of `DisplayText[]` with `accidentalText` set and an empty `text`, in document order. **It used to be dropped**, so "Clarinet in B♭" came back as "Clarinet in B".
 - **Full MusicXML `%position` support.** `default-x`, `default-y`, `relative-x` and `relative-y` now round-trip on every element the `Score` model represents that the MusicXML schema gives them to, so the layout a notation program baked into a file can be read back from the `Score` alone. The values stay the producer's raw tenths — `default-*` is the engraver's computed position, `relative-*` the user's offset from it. Newly carried through:
   - Every `<direction-type>` child — dynamics, wedge, metronome, words, rehearsal, segno, coda, pedal, octave-shift, bracket, dashes, accordion-registration, eyeglasses, damp, damp-all, harp-pedals, image and other-direction. `<swing>` and `<scordatura>` have no position attributes in the schema; they declare the four keys as `undefined` so a `DirectionType` can be read without narrowing on `kind` first.
   - `<notations>` children — tuplets, ties, slurs, articulations, ornaments (including `<wavy-line>`, `<tremolo>` and `<accidental-mark>`), technicals, fermatas, arpeggios and standalone `<accidental-mark>`.

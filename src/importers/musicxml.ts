@@ -410,15 +410,15 @@ export function parse(input: string | Uint8Array): Score {
   let scorePartwise: XmlChild[] | undefined;
   for (const el of parsed) {
     if (typeof el === 'string') continue;
-    if (el.tagName === 'score-partwise') {
-      scorePartwise = el.children;
+    if (el.tagName === 'score-partwise' || el.tagName === 'score-timewise') {
+      scorePartwise = el.tagName === 'score-timewise' ? timewiseToPartwise(el.children) : el.children;
       const attrs = el.attributes as Record<string, string>;
       if (attrs['version']) scorePartwiseVersion = attrs['version'];
       break;
     }
   }
   if (!scorePartwise) {
-    throw new Error('Unsupported MusicXML format: only score-partwise is supported');
+    throw new Error('Unsupported MusicXML format: expected a score-partwise or score-timewise root');
   }
 
   const score = parseScorePartwise(scorePartwise);
@@ -576,6 +576,33 @@ function assignBezier(target: BezierTarget, attrs: Record<string, string>): void
   if (bezierOffset !== undefined) target.bezierOffset = bezierOffset;
   const bezierOffset2 = parseNumericAttr(attrs['bezier-offset2']);
   if (bezierOffset2 !== undefined) target.bezierOffset2 = bezierOffset2;
+}
+
+/**
+ * Rearrange the children of a `<score-timewise>` root (measures containing
+ * parts) into the `<score-partwise>` shape (parts containing measures) the
+ * rest of the importer reads. The two are the same data with the nesting
+ * swapped (MusicXML ships XSLTs for it). The score is serialized as
+ * score-partwise afterwards.
+ */
+function timewiseToPartwise(elements: XmlChild[]): XmlChild[] {
+  const out: XmlChild[] = [];
+  const parts = new Map<string, XmlNode>();
+  for (const el of elements) {
+    if (typeof el === 'string' || el.tagName !== 'measure') { out.push(el); continue; }
+    for (const partEl of el.children) {
+      if (typeof partEl === 'string' || partEl.tagName !== 'part') continue;
+      const id = (partEl.attributes as Record<string, string>)['id'] ?? '';
+      let part = parts.get(id);
+      if (!part) {
+        part = { tagName: 'part', attributes: { id }, children: [] } as XmlNode;
+        parts.set(id, part);
+        out.push(part);
+      }
+      part.children.push({ tagName: 'measure', attributes: el.attributes, children: partEl.children } as XmlNode);
+    }
+  }
+  return out;
 }
 
 function parseScorePartwise(elements: XmlChild[]): Score {
@@ -946,16 +973,25 @@ function parseCredits(elements: XmlChild[]): Credit[] | undefined {
 }
 
 function parseDisplayTexts(elements: XmlChild[]): DisplayText[] {
-  return collectElements(elements, 'display-text', (c, a) => {
-    const dt: DisplayText = { text: extractText(c) };
+  // <display-text> and <accidental-text> interleave ("Clarinet in B" + flat),
+  // so both are collected in document order.
+  const out: DisplayText[] = [];
+  for (const el of elements) {
+    if (typeof el === 'string') continue;
+    if (el.tagName !== 'display-text' && el.tagName !== 'accidental-text') continue;
+    const a = el.attributes as Record<string, string>;
+    const dt: DisplayText = el.tagName === 'display-text'
+      ? { text: extractText(el.children) }
+      : { text: '', accidentalText: extractText(el.children).trim() };
     if (a['font-family']) dt.fontFamily = a['font-family'];
     if (a['font-size']) dt.fontSize = a['font-size'];
     if (a['font-style']) dt.fontStyle = a['font-style'];
     if (a['font-weight']) dt.fontWeight = a['font-weight'];
     if (a['xml:space']) dt.xmlSpace = a['xml:space'];
     if (a['color']) dt.color = a['color'];
-    return dt;
-  });
+    out.push(dt);
+  }
+  return out;
 }
 
 function parsePartList(elements: XmlChild[]): PartListEntry[] {
@@ -1756,6 +1792,8 @@ function parseNotations(elements: XmlChild[], notationsIndex: number = 0): Notat
         color: attrs['color'],
         notationsIndex,
       };
+      const tiedLine = attrs['line-type'];
+      if (tiedLine === 'solid' || tiedLine === 'dashed' || tiedLine === 'dotted' || tiedLine === 'wavy') tied.lineType = tiedLine;
       assignPosition(tied, attrs);
       assignBezier(tied, attrs);
       notations.push(tied);
@@ -1862,7 +1900,7 @@ function parseNotations(elements: XmlChild[], notationsIndex: number = 0): Notat
       const ornContent = el.children;
       const simpleOrnamentTypes = [
         'trill-mark', 'mordent', 'inverted-mordent', 'turn', 'inverted-turn',
-        'delayed-turn', 'delayed-inverted-turn', 'vertical-turn', 'shake',
+        'delayed-turn', 'delayed-inverted-turn', 'vertical-turn', 'inverted-vertical-turn', 'shake',
         'schleifer', 'haydn',
       ];
 
@@ -1893,6 +1931,8 @@ function parseNotations(elements: XmlChild[], notationsIndex: number = 0): Notat
             };
             assignPosition(ornNotation, ornAttrs);
             if (ornAttrs['color']) ornNotation.color = ornAttrs['color'];
+            if (ornAttrs['long'] === 'yes') ornNotation.long = true;
+            if (ornAttrs['slash'] === 'yes') ornNotation.slash = true;
             // Attach accidental marks to the first ornament in the group
             if (accidentalMarks.length > 0 && notations.filter(n => n.type === 'ornament').length === 0) {
               ornNotation.accidentalMarks = accidentalMarks as any;
@@ -2229,6 +2269,8 @@ function parseLyric(elements: XmlChild[], attrs: Record<string, string>): Lyric 
   if (attrs['placement']) {
     lyric.placement = attrs['placement'] as 'above' | 'below';
   }
+  if (attrs['print-object'] === 'no') lyric.printObject = false;
+  else if (attrs['print-object'] === 'yes') lyric.printObject = true;
 
   if (attrs['color']) {
     lyric.color = attrs['color'];
@@ -2437,6 +2479,10 @@ function parseDirectionTypes(elements: XmlChild[]): DirectionType[] {
       if (wedgeType === 'crescendo' || wedgeType === 'diminuendo' || wedgeType === 'stop') {
         const result: DirectionType = { kind: 'wedge', type: wedgeType };
         if (wedgeAttrs['spread']) result.spread = parseFloat(wedgeAttrs['spread']);
+        if (wedgeAttrs['niente'] === 'yes') result.niente = true;
+        else if (wedgeAttrs['niente'] === 'no') result.niente = false;
+        const wedgeLine = wedgeAttrs['line-type'];
+        if (wedgeLine === 'solid' || wedgeLine === 'dashed' || wedgeLine === 'dotted' || wedgeLine === 'wavy') result.lineType = wedgeLine;
         assignPosition(result, wedgeAttrs);
         if (wedgeAttrs['color']) result.color = wedgeAttrs['color'];
         results.push(result);
@@ -2511,6 +2557,13 @@ function parseDirectionTypes(elements: XmlChild[]): DirectionType[] {
       if (a['color']) result.color = a['color'];
       if (a['xml:space']) result.xmlSpace = a['xml:space'];
       if (a['halign']) result.halign = a['halign'];
+      if (a['enclosure']) result.enclosure = a['enclosure'];
+      const underline = parseNumericAttr(a['underline']);
+      if (underline !== undefined) result.underline = underline;
+      const overline = parseNumericAttr(a['overline']);
+      if (overline !== undefined) result.overline = overline;
+      const lineThrough = parseNumericAttr(a['line-through']);
+      if (lineThrough !== undefined) result.lineThrough = lineThrough;
       results.push(result);
       continue;
     }
@@ -2697,10 +2750,15 @@ function parseDirectionTypes(elements: XmlChild[]): DirectionType[] {
     if (el.tagName === 'pedal') {
       const pedalAttrs = el.attributes as Record<string, string>;
       const pedalType = pedalAttrs['type'];
-      if (pedalType === 'start' || pedalType === 'stop' || pedalType === 'change' || pedalType === 'continue') {
+      if (pedalType === 'start' || pedalType === 'stop' || pedalType === 'change' || pedalType === 'continue'
+        || pedalType === 'sostenuto' || pedalType === 'discontinue' || pedalType === 'resume') {
         const result: DirectionType = { kind: 'pedal', type: pedalType };
         if (pedalAttrs['line'] === 'yes') result.line = true;
         else if (pedalAttrs['line'] === 'no') result.line = false;
+        if (pedalAttrs['sign'] === 'yes') result.sign = true;
+        else if (pedalAttrs['sign'] === 'no') result.sign = false;
+        if (pedalAttrs['abbreviated'] === 'yes') result.abbreviated = true;
+        else if (pedalAttrs['abbreviated'] === 'no') result.abbreviated = false;
         assignPosition(result, pedalAttrs);
         if (pedalAttrs['halign']) result.halign = pedalAttrs['halign'];
         if (pedalAttrs['color']) result.color = pedalAttrs['color'];
@@ -2975,6 +3033,8 @@ function parseHarmony(elements: XmlChild[], attrs: Record<string, string>): Harm
     harmony.placement = attrs['placement'];
   }
 
+  if (attrs['print-object'] === 'no') harmony.printObject = false;
+  else if (attrs['print-object'] === 'yes') harmony.printObject = true;
   if (attrs['print-frame'] === 'yes') {
     harmony.printFrame = true;
   } else if (attrs['print-frame'] === 'no') {
@@ -3007,6 +3067,8 @@ function parseHarmony(elements: XmlChild[], attrs: Record<string, string>): Harm
         }
       }
       if (kindAttrs['text'] !== undefined) harmony.kindText = kindAttrs['text'];
+      if (kindAttrs['use-symbols'] === 'yes') harmony.kindUseSymbols = true;
+      else if (kindAttrs['use-symbols'] === 'no') harmony.kindUseSymbols = false;
       if (kindAttrs['halign']) harmony.kindHalign = kindAttrs['halign'];
       if (kindAttrs['color']) harmony.kindColor = kindAttrs['color'];
       break;
